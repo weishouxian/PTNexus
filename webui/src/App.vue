@@ -530,12 +530,49 @@ watch(
   },
 )
 
+// 全局监听 Esc 键：关闭当前最上层的弹框（el-dialog / el-drawer）。
+// 通过点击弹框自带的关闭按钮来触发关闭，从而复用其 before-close / @close 逻辑；
+// 没有关闭按钮的弹框（如强制更新阻塞弹框 :show-close="false"）不会被关闭，符合预期。
+function handleGlobalEscClose(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+
+  const overlays = Array.from(
+    document.querySelectorAll<HTMLElement>('.el-overlay'),
+  ).filter((el) => {
+    const style = getComputedStyle(el)
+    return (
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number(style.opacity) > 0
+    )
+  })
+  if (overlays.length === 0) return
+
+  overlays.sort((a, b) => {
+    const za = Number(getComputedStyle(a).zIndex) || 0
+    const zb = Number(getComputedStyle(b).zIndex) || 0
+    return zb - za
+  })
+
+  const top = overlays[0]
+  const dialogClose = top.querySelector<HTMLElement>('.el-dialog__headerbtn')
+  if (dialogClose) {
+    dialogClose.click()
+    return
+  }
+  const drawerClose = top.querySelector<HTMLElement>('.el-drawer__close')
+  if (drawerClose) {
+    drawerClose.click()
+  }
+}
+
 onMounted(() => {
   updateIsMobile()
   loadBackgroundSettings()
   window.addEventListener('background-updated', handleBackgroundUpdate)
   window.addEventListener('app-global-refresh-loading', handleRefreshLoadingChange as EventListener)
   window.addEventListener('resize', updateIsMobile)
+  window.addEventListener('keydown', handleGlobalEscClose)
 })
 
 onUnmounted(() => {
@@ -545,6 +582,7 @@ onUnmounted(() => {
     'app-global-refresh-loading',
     handleRefreshLoadingChange as EventListener,
   )
+  window.removeEventListener('keydown', handleGlobalEscClose)
 })
 </script>
 
