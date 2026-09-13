@@ -1,0 +1,84 @@
+# yemapt (www.yemapt.org / YemaPT) 发种接口专属配置
+# 此文件由 server/internal/service/publish/publisher/sites/yemapt.go 自定义加载（非 NexusPHP 配置）。
+#
+# 发种端点: POST {base_url}/api/torrent/addTorrent  (multipart/form-data)
+# 鉴权:      Cookie 中的 auth / b_auth（由 webui 填写站点 cookie 提供）
+# 字段结构:  抓包自 Firefox 一次真实发种请求（Red Sonja 1985 2160p UHD BluRay Remux DoVi HDR10 x265 DTS-HD MA 5.1）
+#
+# 下方数字字典为「4K UHD BluRay Remux 电影」的实测值。发布其它类型（连续剧/1080p/不同编码/不同国家/不同标签）
+# 前，请打开 https://www.yemapt.org/#/torrent/add 对照表单下拉项的真实 value 进行核对与补充。
+# 每个维度: 键为 PTNexus 标准化参数值（medium./resolution.r 前缀已自动去掉），值为 yemapt 接口的数字 ID。
+# defaults 为无法命中映射时的兜底值（即实测示例值）。
+
+api_path: "/api/torrent/addTorrent"
+
+# 分类: 实测电影=4。其余类型请核对发种页后补充。
+category:
+  movie: "4"
+  # tv: ""
+  # documentary: ""
+  # anime: ""
+  # variety: ""
+
+# 媒介/来源: 实测 UHD BluRay Remux = 4
+medium:
+  uhd_bluray: "4"
+  remux: "4"
+  bluray: "4"
+  # webdl: ""
+  # hdtv: ""
+  # dvd: ""
+
+# 分辨率/标准: 实测 2160p = 7
+standard:
+  "2160p": "7"
+  # "1080p": ""
+  # "1080i": ""
+  # "720p": ""
+
+# 视频编码: 实测 HEVC/x265 = 2
+codec:
+  x265: "2"
+  hevc: "2"
+  # x264: ""
+  # h264: ""
+
+# 音频编码: 实测 DTS-HD MA = 4
+audiocodec:
+  dts_hd_ma: "4"
+  dts: "4"
+  truehd: "4"
+  # ac3: ""
+  # aac: ""
+
+# 地区: 实测 美国/荷兰 = 4
+region:
+  us: "4"
+  usa: "4"
+  gb: "4"
+  uk: "4"
+  # jp: ""
+  # hk: ""
+  # cn: ""
+  # tw: ""
+
+# 制作小组: 实测无小组 = 999
+team:
+  none: "999"
+  # 填入你自己的小组 ID（如站点有「个人/无」选项，通常就是 999）
+
+# 标签: 实测该种子 tagList=6,10,9（分别对应 HDR / REMUX / 4K 之类，需核对）
+# 键为 PTNexus 标签（小写），值为 yemapt 标签 ID；未配置的标签会被忽略。
+tags:
+  # hdr: "6"
+  # remux: "10"
+  # 4k: "9"
+
+defaults:
+  category: "4"
+  medium: "4"
+  standard: "7"
+  codec: "2"
+  audiocodec: "4"
+  region: "4"
+  team: "999"
