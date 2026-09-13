@@ -27,6 +27,26 @@ func DetectRestrictedTags(uploadData map[string]any) []string {
 	return processingtagging.DetectRestrictedTags(rawTags)
 }
 
+// reMovieParamsSectionStart 匹配源站简介中【影片参数】参数段落的起始标记（含 color/b 开启标签），用于发种前截断冗余 mediainfo 段。
+var reMovieParamsSectionStart = regexp.MustCompile(`(?i)\[color[^\]]*\]\s*\[b\]\s*【影片参数】`)
+
+// TrimDescriptionAtMovieParams 若简介包含【影片参数】参数段落标记，则删除该标记及其之后的全部内容（含标记本身），仅保留其前面的影片介绍。
+// 说明：源站简介常以 [color=blue][b]【影片参数】[/b][/color] 包裹一段 mediainfo 参数，发种时该段冗余，需截断。
+// 参数/返回：desc 为原始简介；未命中标记时原样返回。
+func TrimDescriptionAtMovieParams(desc string) string {
+	trimmed := strings.TrimSpace(desc)
+	if trimmed == "" {
+		return desc
+	}
+	if loc := reMovieParamsSectionStart.FindStringIndex(trimmed); loc != nil {
+		return strings.TrimSpace(trimmed[:loc[0]])
+	}
+	if idx := strings.Index(trimmed, "【影片参数】"); idx >= 0 {
+		return strings.TrimSpace(trimmed[:idx])
+	}
+	return desc
+}
+
 // BuildUploadDescription 按固定顺序拼接发布描述正文。
 // 参数/返回：siteCode 为目标站点 code（用于处理少数站点的 MediaInfo 内嵌规则）；uploadData 为发布参数。
 // 失败场景：无失败场景，字段缺失时自动跳过。
@@ -38,7 +58,7 @@ func BuildUploadDescription(siteCode string, uploadData map[string]any) string {
 	}
 
 	if strings.EqualFold(strings.TrimSpace(siteCode), "pterclub") {
-		return buildPTerClubUploadDescription(uploadData, intro)
+		return TrimDescriptionAtMovieParams(buildPTerClubUploadDescription(uploadData, intro))
 	}
 
 	statement := pickDescriptionSection(uploadData, intro, "statement")
@@ -65,7 +85,7 @@ func BuildUploadDescription(siteCode string, uploadData map[string]any) string {
 	if len(parts) == 0 {
 		return strings.TrimSpace(toStringAny(uploadData["subtitle"], ""))
 	}
-	return strings.Join(parts, "\n")
+	return TrimDescriptionAtMovieParams(strings.Join(parts, "\n"))
 }
 
 func buildPTerClubUploadDescription(uploadData map[string]any, intro map[string]any) string {

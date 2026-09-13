@@ -405,11 +405,11 @@
         <el-form-item label="Passkey" prop="passkey">
           <el-input v-model="siteForm.passkey" placeholder="站点的Passkey"></el-input>
           <div
-            v-if="siteForm.site === 'hddolby'"
+            v-if="siteForm.site === 'hddolby' || siteForm.site === 'pthome'"
             class="form-tip"
             style="color: #409eff; font-weight: bold"
           >
-            杜比的passkey为种子详情页复制种子链接时downhash=后的部分
+            杜比/铂金家的passkey为种子详情页复制种子链接时downhash=后的部分
           </div>
           <div
             v-else-if="siteForm.site === 'rousi'"

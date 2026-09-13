@@ -375,7 +375,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="150" align="center" header-align="center">
+      <el-table-column label="操作" width="200" align="center" header-align="center">
         <template #default="scope">
           <div
             style="
@@ -394,6 +394,14 @@
               :disabled="!isDevEnv && scope.row.progress < 100"
             >
               转种
+            </el-button>
+            <el-button
+              size="small"
+              @click.stop="resolveTorrentUrl(scope.row)"
+              :loading="resolvingUrlHash === scope.row.hash"
+              :disabled="!scope.row.hash"
+            >
+              地址
             </el-button>
             <el-button
               type="danger"
@@ -1658,8 +1666,56 @@ const startCrossSeed = async (row: Torrent) => {
   sourceSelectionDialogVisible.value = true
 }
 
-const deleteTorrentRow = async (row: Torrent) => {
-	const hash = (row.hash || '').trim()
+// 种子地址反查：调用后端按 info_hash 在站点内搜索同名种子并返回下载直链
+const resolvingUrlHash = ref('')
+const resolveTorrentUrl = async (row: Torrent) => {
+  const hash = (row.hash || '').trim()
+  if (!hash) {
+    ElMessage.warning('当前种子缺少 hash，无法反查种子地址')
+    return
+  }
+  resolvingUrlHash.value = hash
+  try {
+    const response = await axios.post('/api/data/resolve_torrent_url', {
+      hash,
+      name: row.name || '',
+      sites: Object.keys(row.sites || {}).join(','),
+    })
+    const result = response.data
+    if (result.success && result.data?.torrent_url) {
+      const { site, torrent_url: torrentUrl, detail_url: detailUrl } = result.data
+      let copied = false
+      try {
+        await navigator.clipboard.writeText(torrentUrl)
+        copied = true
+      } catch {
+        copied = false
+      }
+      if (copied) {
+        ElMessage.success(`已在站点「${site}」命中该种子，下载直链已复制到剪贴板`)
+      } else {
+        ElMessageBox.alert(
+          `${torrentUrl}${detailUrl ? `<br/><br/>详情页：${detailUrl}` : ''}`,
+          `种子地址（${site}）`,
+          { dangerouslyUseHTMLString: false, confirmButtonText: '知道了' },
+        ).catch(() => {})
+      }
+    } else {
+      ElMessage.warning(result.message || '未能获取到该种子的下载地址')
+    }
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string } | undefined)?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '反查失败'
+    ElMessage.error(message)
+  } finally {
+    resolvingUrlHash.value = ''
+  }
+}
+
+const deleteTorrentRow = async (row: Torrent) => {	const hash = (row.hash || '').trim()
 	const hashes = Array.from(new Set([...(row.hashes || []), hash].map((item) => item.trim()).filter(Boolean)))
 	if (hashes.length === 0) {
 		ElMessage.warning('当前种子缺少 hash，无法删除')
