@@ -28,7 +28,7 @@ var (
 	reHexHash             = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	reSearchPageDownload  = regexp.MustCompile(`download\.php\?id=(\d+)`)
 	reSiteNameSplitters   = regexp.MustCompile(`[,，、/|;；]+`)
-	reSearchNameSanitizer = regexp.MustCompile(`[^0-9A-Za-z\u4e00-\u9fa5.\- ]+`)
+	reSearchNameSanitizer = regexp.MustCompile(`[^0-9A-Za-z一-龥.\- ]+`)
 )
 
 // TorrentURLResolveRequest 表示一次种子地址反查请求。
