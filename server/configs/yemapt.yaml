@@ -5,10 +5,13 @@
 # 鉴权:      Cookie 中的 auth / b_auth（由 webui 填写站点 cookie 提供）
 # 字段结构:  抓包自 Firefox 一次真实发种请求（Red Sonja 1985 2160p UHD BluRay Remux DoVi HDR10 x265 DTS-HD MA 5.1）
 #
-# 下方数字字典为「4K UHD BluRay Remux 电影」的实测值。发布其它类型（连续剧/1080p/不同编码/不同国家/不同标签）
-# 前，请打开 https://www.yemapt.org/#/torrent/add 对照表单下拉项的真实 value 进行核对与补充。
+# 下方数字字典为实测值，样本来源两组真实发种抓包：
+#   - 4K UHD BluRay Remux 电影 (Red Sonja 1985): category=4 medium=4 standard=7 codec=2 audiocodec=4 region=4 team=999 tags=6,10,9
+#   - 1080p WEB-DL (Out of Place 2025):          category=4 medium=1 standard=4 codec=2 audiocodec=1 region=1 team=999 tags=5,6
+# 发布其它类型（连续剧/不同编码/不同国家/不同标签）前，请打开 https://www.yemapt.org/#/torrent/add
+# 对照表单下拉项的真实 value 进行核对与补充。
 # 每个维度: 键为 PTNexus 标准化参数值（medium./resolution.r 前缀已自动去掉），值为 yemapt 接口的数字 ID。
-# defaults 为无法命中映射时的兜底值（即实测示例值）。
+# defaults 为无法命中映射时的兜底值（即 4K UHD 电影示例值）。
 
 api_path: "/api/torrent/addTorrent"
 
@@ -25,14 +28,14 @@ medium:
   uhd_bluray: "4"
   remux: "4"
   bluray: "4"
-  # webdl: ""
+  webdl: "1"
   # hdtv: ""
   # dvd: ""
 
 # 分辨率/标准: 实测 2160p = 7
 standard:
   "2160p": "7"
-  # "1080p": ""
+  "1080p": "4"
   # "1080i": ""
   # "720p": ""
 
@@ -43,13 +46,14 @@ codec:
   # x264: ""
   # h264: ""
 
-# 音频编码: 实测 DTS-HD MA = 4
+# 音频编码: 实测 DTS-HD MA = 4, AAC = 1
 audiocodec:
   dts_hd_ma: "4"
   dts: "4"
   truehd: "4"
+  aac: "1"
   # ac3: ""
-  # aac: ""
+  # flac: ""
 
 # 地区: 实测 美国/荷兰 = 4
 region:
@@ -59,7 +63,7 @@ region:
   uk: "4"
   # jp: ""
   # hk: ""
-  # cn: ""
+  cn: "1"
   # tw: ""
 
 # 制作小组: 实测无小组 = 999

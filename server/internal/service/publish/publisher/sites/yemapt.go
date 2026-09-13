@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -87,7 +88,7 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 	// 对齐 PublishPublic：UPLOAD_TEST_MODE=true 时跳过真实发种，返回模拟成功。
 	if os.Getenv("UPLOAD_TEST_MODE") == "true" {
 		return publisher.PublishResult{
-			PublishURL:       strings.TrimRight(baseURL, "/") + "/torrent/999999999",
+			PublishURL:       strings.TrimRight(baseURL, "/") + "/#/torrent/999999999",
 			AttemptDetailLog: fmt.Sprintf("--- [yemapt] 测试模式：跳过实际发种（目标 %s）---", strings.TrimSpace(input.TargetName)),
 		}, nil
 	}
@@ -155,7 +156,7 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 			title, textFields["picture"], textFields["categoryId"], textFields["medium"], textFields["standard"], textFields["codec"], textFields["audiocodec"], textFields["regionList"], textFields["team"], tagIDs, textFields["uploadUserAnonymous"]),
 	}
 
-	publishURL, attemptDetail, publishErr := postYemaPTTorrent(uploadURL, baseURL, cookie, textFields, tagIDs, torrentBytes, filepath.Base(torrentPath))
+	publishURL, downloadURL, attemptDetail, publishErr := postYemaPTTorrent(uploadURL, baseURL, cookie, textFields, tagIDs, torrentBytes, filepath.Base(torrentPath))
 	if strings.TrimSpace(attemptDetail) != "" {
 		logLines = append(logLines, attemptDetail)
 	}
@@ -169,13 +170,14 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 
 	logLines = append(logLines, "发布结果：成功发布到 yemapt")
 	return publisher.PublishResult{
-		PublishURL:       publishURL,
-		AttemptDetailLog: strings.Join(logLines, "\n"),
+		PublishURL:        publishURL,
+		DirectDownloadURL: downloadURL,
+		AttemptDetailLog:  strings.Join(logLines, "\n"),
 	}, nil
 }
 
 // postYemaPTTorrent 以 multipart/form-data 提交发种请求到 yemapt 接口。
-func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]string, tagIDs []string, torrentBytes []byte, torrentName string) (string, string, error) {
+func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]string, tagIDs []string, torrentBytes []byte, torrentName string) (string, string, string, error) {
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
 
@@ -185,7 +187,7 @@ func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]
 			continue
 		}
 		if err := writer.WriteField(key, value); err != nil {
-			return "", "", fmt.Errorf("构造表单字段失败 %s: %w", key, err)
+			return "", "", "", fmt.Errorf("构造表单字段失败 %s: %w", key, err)
 		}
 	}
 	// 标签重复字段
@@ -194,24 +196,24 @@ func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]
 			continue
 		}
 		if err := writer.WriteField("tagList", id); err != nil {
-			return "", "", fmt.Errorf("构造 tagList 字段失败: %w", err)
+			return "", "", "", fmt.Errorf("构造 tagList 字段失败: %w", err)
 		}
 	}
 	// 种子文件
 	part, err := writer.CreateFormFile("file", torrentName)
 	if err != nil {
-		return "", "", fmt.Errorf("构造文件字段失败: %w", err)
+		return "", "", "", fmt.Errorf("构造文件字段失败: %w", err)
 	}
 	if _, err := part.Write(torrentBytes); err != nil {
-		return "", "", fmt.Errorf("写入种子文件失败: %w", err)
+		return "", "", "", fmt.Errorf("写入种子文件失败: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return "", "", fmt.Errorf("结束表单写入失败: %w", err)
+		return "", "", "", fmt.Errorf("结束表单写入失败: %w", err)
 	}
 
 	req, err := http.NewRequest(http.MethodPost, uploadURL, body)
 	if err != nil {
-		return "", "", fmt.Errorf("构造请求失败: %w", err)
+		return "", "", "", fmt.Errorf("构造请求失败: %w", err)
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0")
 	req.Header.Set("Accept", "application/json, text/plain, */*")
@@ -223,24 +225,24 @@ func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", fmt.Errorf("请求 yemapt 失败: %w", err)
+		return "", "", "", fmt.Errorf("请求 yemapt 失败: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", "", fmt.Errorf("读取响应失败: %w", err)
+		return "", "", "", fmt.Errorf("读取响应失败: %w", err)
 	}
 	raw := strings.TrimSpace(string(respBody))
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Sprintf("HTTP %d 响应: %s", resp.StatusCode, summarizeResponseBody(raw)), fmt.Errorf("yemapt 返回 HTTP %d", resp.StatusCode)
+		return "", "", fmt.Sprintf("HTTP %d 响应: %s", resp.StatusCode, summarizeResponseBody(raw)), fmt.Errorf("yemapt 返回 HTTP %d", resp.StatusCode)
 	}
 
 	var parsed yemaptAPIResponse
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		// 非 JSON（罕见）：把原始响应返回，方便排查
-		return "", fmt.Sprintf("响应(非 JSON): %s", summarizeResponseBody(raw)), fmt.Errorf("yemapt 响应解析失败: %w", err)
+		return "", "", fmt.Sprintf("响应(非 JSON): %s", summarizeResponseBody(raw)), fmt.Errorf("yemapt 响应解析失败: %w", err)
 	}
 	if !parsed.Success {
 		msg := strings.TrimSpace(parsed.Message)
@@ -250,28 +252,57 @@ func postYemaPTTorrent(uploadURL, baseURL, cookie string, textFields map[string]
 		if msg == "" {
 			msg = summarizeResponseBody(raw)
 		}
-		return "", fmt.Sprintf("接口返回失败: %s", msg), fmt.Errorf("yemapt 接口返回 success=false: %s", msg)
+		return "", "", fmt.Sprintf("接口返回失败: %s", msg), fmt.Errorf("yemapt 接口返回 success=false: %s", msg)
 	}
 
-	publishURL := ""
-	if parsed.Data.ID != 0 {
-		publishURL = strings.TrimRight(baseURL, "/") + "/torrent/" + fmt.Sprintf("%d", parsed.Data.ID)
-	} else if parsed.Data.TorrentID != 0 {
-		publishURL = strings.TrimRight(baseURL, "/") + "/torrent/" + fmt.Sprintf("%d", parsed.Data.TorrentID)
-	}
-	return publishURL, fmt.Sprintf("接口返回成功: %s", summarizeResponseBody(raw)), nil
+	torrentID, detailURL, downloadURL := resolveYemaPTTorrentResult(parsed.Data, baseURL)
+	return detailURL, downloadURL, fmt.Sprintf("接口返回成功: data=%d %s", torrentID, summarizeResponseBody(raw)), nil
 }
 
 type yemaptAPIResponse struct {
-	Success  bool   `json:"success"`
-	ShowType int    `json:"showType"`
-	Message  string `json:"message"`
-	Msg      string `json:"msg"`
-	Data     struct {
-		ID        int    `json:"id"`
-		TorrentID int    `json:"torrentId"`
-		DetailURL string `json:"detailUrl"`
-	} `json:"data"`
+	Success  bool            `json:"success"`
+	ShowType int             `json:"showType"`
+	Message  string          `json:"message"`
+	Msg      string          `json:"msg"`
+	Data     json.RawMessage `json:"data"`
+}
+
+// yemaptTorrentData 为发种成功时 data 字段（对象形态）的字段定义。
+// 实测 yemapt 的 data 为裸整数（即种子 ID），此处同时兼容对象形态（含 detailUrl/downloadUrl 等）。
+type yemaptTorrentData struct {
+	ID          int    `json:"id"`
+	TorrentID   int    `json:"torrentId"`
+	DetailURL   string `json:"detailUrl"`
+	DownloadURL string `json:"downloadUrl"`
+}
+
+// resolveYemaPTTorrentResult 从响应 data 中提取种子 ID 与详情/下载链接。
+// data 可能是裸整数（最常见，即种子 ID），也可能是对象。返回 torrentID、详情页 URL、直链下载 URL。
+// 详情页采用站点 hash 路由（/#/torrent/{id}），与发种页 /#/torrent/add 一致。
+func resolveYemaPTTorrentResult(rawData json.RawMessage, baseURL string) (int, string, string) {
+	trimmed := strings.TrimSpace(string(rawData))
+	if trimmed == "" || trimmed == "null" {
+		return 0, "", ""
+	}
+	// 裸整数：直接作为种子 ID
+	if n, err := strconv.Atoi(strings.Trim(trimmed, `"`)); err == nil {
+		detail := strings.TrimRight(baseURL, "/") + "/#/torrent/" + strconv.Itoa(n)
+		return n, detail, ""
+	}
+	// 对象形态：尝试解析 detailUrl/downloadUrl 等字段
+	var obj yemaptTorrentData
+	if err := json.Unmarshal(rawData, &obj); err == nil {
+		id := obj.ID
+		if id == 0 {
+			id = obj.TorrentID
+		}
+		detail := strings.TrimSpace(obj.DetailURL)
+		if detail == "" && id != 0 {
+			detail = strings.TrimRight(baseURL, "/") + "/#/torrent/" + strconv.Itoa(id)
+		}
+		return id, detail, strings.TrimSpace(obj.DownloadURL)
+	}
+	return 0, "", ""
 }
 
 // loadYemaPTConfig 读取 server/configs/yemapt.yaml 并将其中字典合并到默认配置之上。
