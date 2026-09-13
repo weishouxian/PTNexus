@@ -17,6 +17,13 @@ var (
 	rePublishURLExistingTable = regexp.MustCompile(`(?is)<table[^>]*class=["'][^"']*torrent-exists-tbl[^"']*["'][^>]*>.*?<a[^>]*href=["']([^"']*(?:details\.php\?[^"']*id=\d+|offers\.php\?[^"']*id=\d+|torrent/[0-9a-fA-F\-]{36})[^"']*)["']`)
 )
 
+// yemapt 声明转换相关正则：将 BBCode 声明（[quote][b][color][size]...[/quote]）转为 Markdown 块引用+加粗。
+var (
+	reYemaPTQuoteBlock = regexp.MustCompile(`(?is)\[quote\](.*?)\[/quote\]`)
+	// 仅剥离结构性标签（b/color/size/quote），保留 [u] 等源站内容标记（DIY 小组等）。
+	reYemaPTStripTags = regexp.MustCompile(`(?i)\[(?:b|/b|color|/color|size|/size|quote|/quote)\b[^\]]*\]`)
+)
+
 // DetectRestrictedTags 检测上传参数中的禁转/限转/分集标签。
 func DetectRestrictedTags(uploadData map[string]any) []string {
 	standardized := map[string]any{}
@@ -59,6 +66,12 @@ func BuildUploadDescription(siteCode string, uploadData map[string]any) string {
 
 	if strings.EqualFold(strings.TrimSpace(siteCode), "pterclub") {
 		return TrimDescriptionAtMovieParams(buildPTerClubUploadDescription(uploadData, intro))
+	}
+
+	// yemapt 为自研 Markdown 发种站，声明需用 Markdown 块引用+加粗（> **...**）呈现，
+	// 而其它站点沿用 BBCode 声明，因此在此单独处理，避免影响其它站。
+	if strings.EqualFold(strings.TrimSpace(siteCode), "yemapt") {
+		return buildYemaPTUploadDescription(uploadData, intro)
 	}
 
 	statement := pickDescriptionSection(uploadData, intro, "statement")
@@ -143,6 +156,77 @@ func buildPTerClubBDInfoBlock(mediaText string) string {
 		return ""
 	}
 	return "[hide=bdinfo]" + trimmed + "[/hide]"
+}
+
+// buildYemaPTUploadDescription 构建 yemapt 发种简介：声明由 BBCode 转为 Markdown 块引用+加粗（> **...**），
+// 其它段落（海报/正文/截图）保持原样拼接，mediainfo 由 adapter 作为独立字段发送，不内联。
+func buildYemaPTUploadDescription(uploadData map[string]any, intro map[string]any) string {
+	statement := pickDescriptionSection(uploadData, intro, "statement")
+	poster := pickDescriptionSection(uploadData, intro, "poster")
+	body := pickDescriptionSection(uploadData, intro, "body")
+	screenshots := pickDescriptionSection(uploadData, intro, "screenshots")
+
+	parts := make([]string, 0, 4)
+	if wrapped := convertYemaPTStatement(statement); wrapped != "" {
+		parts = append(parts, wrapped)
+	}
+	if strings.TrimSpace(poster) != "" {
+		parts = append(parts, poster)
+	}
+	if strings.TrimSpace(body) != "" {
+		parts = append(parts, body)
+	}
+	if strings.TrimSpace(screenshots) != "" {
+		parts = append(parts, screenshots)
+	}
+
+	if len(parts) == 0 {
+		return strings.TrimSpace(toStringAny(uploadData["subtitle"], ""))
+	}
+	return strings.Join(parts, "\n")
+}
+
+// convertYemaPTStatement 将 BBCode 声明（可能包含多个 [quote] 块）转为 yemapt 接受的 Markdown 块引用+加粗。
+// 每个 [quote] 块转换为一段「> ** 内容 **」，块内换行保留为「> 」前缀的续行；
+// 结构性标签 [b]/[color]/[size]/[quote] 被剥离，[u] 等源站内容标记予以保留。
+func convertYemaPTStatement(statement string) string {
+	trimmed := strings.TrimSpace(statement)
+	if trimmed == "" {
+		return ""
+	}
+
+	blocks := make([]string, 0, 2)
+	if matches := reYemaPTQuoteBlock.FindAllStringSubmatch(trimmed, -1); len(matches) > 0 {
+		for _, m := range matches {
+			blocks = append(blocks, m[1])
+		}
+	} else {
+		blocks = append(blocks, trimmed)
+	}
+
+	out := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		inner := reYemaPTStripTags.ReplaceAllString(block, "")
+		inner = strings.TrimSpace(inner)
+		if inner == "" {
+			continue
+		}
+		lines := strings.Split(inner, "\n")
+		cleaned := make([]string, 0, len(lines))
+		for _, ln := range lines {
+			s := strings.TrimSpace(ln)
+			// 去掉可能残留的 ** 标记，避免重复包裹
+			s = strings.TrimSpace(strings.TrimPrefix(strings.TrimSuffix(s, "**"), "**"))
+			if s != "" {
+				cleaned = append(cleaned, s)
+			}
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		out = append(out, "> **"+strings.Join(cleaned, "\n> ")+"**")
+	}
+	return strings.Join(out, "\n")
 }
 
 func pickDescriptionSection(uploadData map[string]any, intro map[string]any, key string) string {
