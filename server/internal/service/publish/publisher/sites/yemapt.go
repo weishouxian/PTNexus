@@ -111,7 +111,7 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 		std = s
 	}
 
-	poster := strings.TrimSpace(resolveUploadSection(input.UploadData, "poster"))
+	poster := stripYemaPTImageTags(resolveUploadSection(input.UploadData, "poster"))
 	imdb := extractYemaPTIMDbID(strings.TrimSpace(input.IMDbLink))
 	douban := extractYemaPTDoubanID(strings.TrimSpace(input.DoubanLink))
 	anonymousEnabled := publisher.ResolveAnonymousUploadEnabled(input.RootConfig)
@@ -119,7 +119,7 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 	textFields := map[string]string{
 		"showName": title,
 		"shortDesc": strings.TrimSpace(input.Subtitle),
-		"longDesc": strings.TrimSpace(input.Description),
+		"longDesc": normalizeYemaPTDescription(strings.TrimSpace(input.Description)),
 		"mediaInfo": strings.TrimSpace(input.MediaInfo),
 		"categoryId": pickYemaPTValue(cfg.Category, toStringAny(std["type"], ""), cfg.Defaults.Category),
 		"medium": pickYemaPTValue(cfg.Medium, normalizeYemaPTParam(toStringAny(std["medium"], ""), "medium."), cfg.Defaults.Medium),
@@ -151,8 +151,8 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 	logLines := []string{
 		fmt.Sprintf("--- [yemapt] 开始发布到 %s ---", strings.TrimSpace(input.TargetName)),
 		fmt.Sprintf("上传地址: %s", uploadURL),
-		fmt.Sprintf("字段摘要: showName=%q categoryId=%s medium=%s standard=%s codec=%s audiocodec=%s regionList=%s team=%s tags=%v anonymous=%s",
-			title, textFields["categoryId"], textFields["medium"], textFields["standard"], textFields["codec"], textFields["audiocodec"], textFields["regionList"], textFields["team"], tagIDs, textFields["uploadUserAnonymous"]),
+		fmt.Sprintf("字段摘要: showName=%q picture=%q categoryId=%s medium=%s standard=%s codec=%s audiocodec=%s regionList=%s team=%s tags=%v anonymous=%s",
+			title, textFields["picture"], textFields["categoryId"], textFields["medium"], textFields["standard"], textFields["codec"], textFields["audiocodec"], textFields["regionList"], textFields["team"], tagIDs, textFields["uploadUserAnonymous"]),
 	}
 
 	publishURL, attemptDetail, publishErr := postYemaPTTorrent(uploadURL, baseURL, cookie, textFields, tagIDs, torrentBytes, filepath.Base(torrentPath))
@@ -403,9 +403,55 @@ func resolveYemaPTTagIDs(cfg yemaptConfig, uploadData map[string]any) []string {
 }
 
 var (
-	reYemaPTIMDb = regexp.MustCompile(`tt(\d+)`)
+	reYemaPTIMDb  = regexp.MustCompile(`tt(\d+)`)
 	reYemaPTDouban = regexp.MustCompile(`subject/(\d+)`)
+	reYemaPTImgTag = regexp.MustCompile(`(?i)\[img(?:\=[^\]]*)?\]([\s\S]*?)\[/img\]`)
+	reYemaPTURL     = regexp.MustCompile(`https?://[^\s\)\]]+`)
 )
+
+// stripYemaPTImageTags 取出预览图的纯 URL。
+// 发种站点的 poster 常以 BBCode 包裹（如 [img]https://...[/img]），而 yemapt 的 picture 字段只接受纯 URL，
+// 因此需剥掉 [img] 标签；已经是纯 URL 则原样返回，找不到标签时退回提取首个 http(s) 链接。
+func stripYemaPTImageTags(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://") {
+		return trimmed
+	}
+	if m := reYemaPTImgTag.FindStringSubmatch(trimmed); m != nil {
+		inner := strings.TrimSpace(m[1])
+		if inner != "" {
+			return inner
+		}
+	}
+	if m := reYemaPTURL.FindString(trimmed); m != "" {
+		return m
+	}
+	return trimmed
+}
+
+// normalizeYemaPTDescription 将简介（longDesc）中的 BBCode 图片标签 [img]url[/img] 转为 yemapt 接受的
+// Markdown 图片语法 ![_](url)，避免 BBCode 泄漏到 Markdown 字段；Markdown 原生 ![alt](url) 保持不变。
+// 其它 BBCode（如 [u]/[b]/[color]）为源站自带标记，yemapt 可原样呈现，不做处理。
+func normalizeYemaPTDescription(body string) string {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return ""
+	}
+	return reYemaPTImgTag.ReplaceAllStringFunc(trimmed, func(match string) string {
+		sub := reYemaPTImgTag.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		url := strings.TrimSpace(sub[1])
+		if url == "" {
+			return ""
+		}
+		return fmt.Sprintf("![_](%s)", url)
+	})
+}
 
 // extractYemaPTIMDbID 从 IMDb 链接或 ID 中提取纯数字部分（保留前导零，例如 tt0089893 -> 0089893）。
 func extractYemaPTIMDbID(raw string) string {
