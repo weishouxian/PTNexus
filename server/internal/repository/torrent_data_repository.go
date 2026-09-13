@@ -67,6 +67,25 @@ func (r *TorrentDataRepository) ListSiteConfigs() ([]SiteConfig, error) {
 	return rows, nil
 }
 
+// GetSiteConnectionByName 按昵称或站点代码读取站点连接信息（cookie/passkey/base_url）。
+// 参数/返回：name 为站点昵称或站点代码；返回站点配置行（map 形式）。
+// 失败场景：站点不存在或数据库查询失败时返回错误。
+// 副作用：无副作用，仅读取 sites 表。
+func (r *TorrentDataRepository) GetSiteConnectionByName(name string) (map[string]any, error) {
+	row := map[string]any{}
+	err := r.store.DB.Table("sites").
+		Select("nickname, site, base_url, special_tracker_domain, cookie, passkey").
+		Where("nickname = ? OR site = ?", name, name).
+		Limit(1).Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(row) == 0 {
+		return nil, gorm.ErrRecordNotFound
+	}
+	return row, nil
+}
+
 func (r *TorrentDataRepository) SiteLinkRules() (map[string]any, error) {
 	rows := make([]SiteLinkRuleRow, 0)
 	if err := r.store.DB.Raw("SELECT nickname, base_url FROM sites").Scan(&rows).Error; err != nil {

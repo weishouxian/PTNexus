@@ -85,6 +85,20 @@ func (h *TorrentDataHandler) IYUUQuery(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+// ResolveTorrentURL 根据下载器种子的 info_hash 反查所属站点的种子下载直链。
+// 参数/返回：从 JSON 请求体读取 hash/name/sites/trackers/detail/comment；返回反查结果 JSON。
+// 失败场景：请求体格式错误、参数非法或候选站点均未命中时返回对应状态。
+// 副作用：会向候选站点发起网络请求。
+func (h *TorrentDataHandler) ResolveTorrentURL(c *gin.Context) {
+	payload := service.TorrentURLResolveRequest{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	result, status := h.service.ResolveTorrentURL(payload)
+	c.JSON(status, result)
+}
+
 func (h *TorrentDataHandler) IYUUQueryBatch(c *gin.Context) {
 	payload := struct {
 		Torrents   []map[string]any `json:"torrents"`

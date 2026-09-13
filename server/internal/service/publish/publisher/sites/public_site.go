@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	publishuploader "github.com/pt-nexus/server/internal/service/publish/uploader"
 	"github.com/pt-nexus/server/internal/service/publish/publisher"
 )
 
@@ -46,7 +47,7 @@ func (publicSiteDefaults) AdjustFormFields(input publisher.PublishInput, formFie
 // 副作用：可能记录站点日志、调整最终表单字段，并调用公共上传器发起真实发布。
 func publishWithPublicSite(input publisher.PublishInput, site publicSitePublisher) (publisher.PublishResult, error) {
 	next := input
-	next.Description = strings.TrimSpace(site.BuildDescription(input))
+	next.Description = publishuploader.TrimDescriptionAtMovieParams(strings.TrimSpace(site.BuildDescription(input)))
 
 	extra, err := site.BuildExtraFormFields(input)
 	if err != nil {

@@ -301,6 +301,7 @@ func registerRoutes(
 		api.POST("/data/update_publish_at", torrentDataHandler.UpdatePublishAt)
 		api.POST("/data/delete", torrentDataHandler.DeleteData)
 		api.POST("/iyuu_query", torrentDataHandler.IYUUQuery)
+		api.POST("/data/resolve_torrent_url", torrentDataHandler.ResolveTorrentURL)
 		api.POST("/iyuu_query_batch", torrentDataHandler.IYUUQueryBatch)
 		api.GET("/iyuu_query_batch_progress", torrentDataHandler.IYUUQueryBatchProgress)
 

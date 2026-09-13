@@ -117,7 +117,7 @@ func BuildDirectDownloadURLForPublished(baseURL string, passkey string, siteCode
 	}
 
 	switch {
-	case strings.Contains(trimmedSiteCode, "hddolby"):
+	case strings.Contains(trimmedSiteCode, "hddolby"), strings.Contains(trimmedSiteCode, "pthome"):
 		if trimmedPasskey == "" {
 			return ""
 		}
