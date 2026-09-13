@@ -430,7 +430,7 @@
       style="justify-content: flex-end"
       v-model:current-page="currentPage"
       v-model:page-size="pageSize"
-      :page-sizes="[5, 10, 20, 50, 100]"
+      :page-sizes="[5, 10, 20, 50, 100, 1000]"
       :total="totalTorrents"
       layout="total, sizes, prev, pager, next, jumper"
       @size-change="handleSizeChange"
