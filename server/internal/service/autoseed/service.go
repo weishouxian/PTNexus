@@ -1960,9 +1960,9 @@ func normalizeRule(rule *repository.AutoSeedRule) {
 	if rule.SeedRetentionMinutes < 0 {
 		rule.SeedRetentionMinutes = 0
 	}
-	if strings.TrimSpace(rule.NextRunAt) == "" {
-		rule.NextRunAt = time.Now().Format(repository.PublishQueueTimeLayout)
-	}
+	// next_run_at 来自前端时可能是 ISO 8601（如 2026-09-15T14:40:11Z 或带 T 分隔），
+	// 直接写入 MySQL DATETIME 会触发 Error 1292，统一归一化为空格分隔格式（去掉 T / Z）。
+	rule.NextRunAt = repository.NormalizeNextRunAt(rule.NextRunAt)
 }
 
 func inferTorrentID(item repository.AutoSeedItem) string {

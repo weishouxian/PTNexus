@@ -19,11 +19,11 @@ const (
 	ScheduledSeedStatusCompleted = "completed"
 )
 
-// normalizeNextRunAt 将任意常见时间字符串（ISO 8601 带 Z 后缀、带毫秒、
+// NormalizeNextRunAt 将任意常见时间字符串（ISO 8601 带 Z 后缀、带毫秒、
 // 空格分隔等）统一归一化为 MySQL DATETIME 兼容格式 "2006-01-02 15:04:05"。
 // 解析失败或为空时回退到当前时间，确保写入 next_run_at 不会触发
-// MySQL Error 1292 (Incorrect datetime value)。
-func normalizeNextRunAt(value string) string {
+// MySQL Error 1292 (Incorrect datetime value)。导出以便 auto-seed 复用。
+func NormalizeNextRunAt(value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
 		return time.Now().Format(scheduledSeedTimeLayout)
@@ -122,7 +122,7 @@ func (r *ScheduledSeedRepository) Create(task *ScheduledSeedTask) error {
 	}
 	// 归一化 next_run_at，兼容 ISO 8601 / 带时区 / 空格分隔等多种格式，
 	// 避免 MySQL Error 1292 (Incorrect datetime value)。
-	task.NextRunAt = normalizeNextRunAt(task.NextRunAt)
+	task.NextRunAt = NormalizeNextRunAt(task.NextRunAt)
 
 	if err := r.store.DB.Table("scheduled_seed_tasks").Create(task).Error; err != nil {
 		return fmt.Errorf("创建定时发种任务失败: %w", err)
@@ -191,7 +191,7 @@ func (r *ScheduledSeedRepository) Update(task *ScheduledSeedTask) error {
 	task.UpdatedAt = time.Now().Format(scheduledSeedTimeLayout)
 	// 归一化 next_run_at，兼容前端或历史数据可能传入的 ISO 8601 / 带时区格式，
 	// 避免 MySQL Error 1292 (Incorrect datetime value)。
-	task.NextRunAt = normalizeNextRunAt(task.NextRunAt)
+	task.NextRunAt = NormalizeNextRunAt(task.NextRunAt)
 	if err := r.store.DB.Table("scheduled_seed_tasks").
 		Where("id = ?", task.ID).
 		Updates(map[string]any{
