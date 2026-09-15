@@ -3,6 +3,8 @@ package sites
 import (
 	"regexp"
 	"strings"
+
+	"github.com/pt-nexus/server/internal/service/descclean"
 )
 
 // IntroData 表示详情页简介分段数据。
@@ -104,9 +106,9 @@ func (d SeedData) Normalize(fallbackTitle string) SeedData {
 	d.IMDbLink = strings.TrimSpace(d.IMDbLink)
 	d.DoubanLink = strings.TrimSpace(d.DoubanLink)
 	d.TMDbLink = strings.TrimSpace(d.TMDbLink)
-	d.Intro.Statement = strings.TrimSpace(d.Intro.Statement)
+	d.Intro.Statement = strings.TrimSpace(descclean.TrimDescriptionAtMovieParams(d.Intro.Statement))
 	d.Intro.Poster = strings.TrimSpace(d.Intro.Poster)
-	d.Intro.Body = strings.TrimSpace(d.Intro.Body)
+	d.Intro.Body = strings.TrimSpace(descclean.TrimDescriptionAtMovieParams(d.Intro.Body))
 	d.Intro.Screenshots = strings.TrimSpace(d.Intro.Screenshots)
 
 	if d.SourceParams == nil {

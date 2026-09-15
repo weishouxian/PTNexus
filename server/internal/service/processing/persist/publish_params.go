@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
+	"github.com/pt-nexus/server/internal/service/descclean"
 )
 
 // ComposeSeedID 组装种子唯一标识。
@@ -67,6 +68,8 @@ func BuildFinalPublishParameters(row map[string]any) map[string]any {
 }
 
 // BuildCompletePublishParams 组装完整发布参数。
+// 说明：简介正文/声明在此做一次读取期清洗（截断【影片参数】及其之后的冗余段），
+// 使历史入库数据无需重新抓取即可获得与新抓取一致的效果。
 func BuildCompletePublishParams(row map[string]any) map[string]any {
 	return map[string]any{
 		"title_components": row["title_components"],
@@ -75,15 +78,24 @@ func BuildCompletePublishParams(row map[string]any) map[string]any {
 		"douban_link":      row["douban_link"],
 		"tmdb_link":        row["tmdb_link"],
 		"intro": map[string]any{
-			"statement":                 row["statement"],
+			"statement":                 cleanDescriptionValue(row["statement"]),
 			"poster":                    row["poster"],
-			"body":                      row["body"],
+			"body":                      cleanDescriptionValue(row["body"]),
 			"screenshots":               row["screenshots"],
 			"removed_ardtudeclarations": row["removed_ardtudeclarations"],
 		},
 		"mediainfo":           row["mediainfo"],
 		"standardized_params": BuildStandardizedParams(row),
 	}
+}
+
+// cleanDescriptionValue 对简介字段做【影片参数】截断清洗；非字符串值原样返回。
+func cleanDescriptionValue(value any) any {
+	text, ok := value.(string)
+	if !ok {
+		return value
+	}
+	return descclean.TrimDescriptionAtMovieParams(text)
 }
 
 // BuildRawPreviewParams 组装原始预览参数。

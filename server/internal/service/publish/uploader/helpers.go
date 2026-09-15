@@ -8,6 +8,7 @@ import (
 
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
+	"github.com/pt-nexus/server/internal/service/descclean"
 )
 
 var (
@@ -34,24 +35,11 @@ func DetectRestrictedTags(uploadData map[string]any) []string {
 	return processingtagging.DetectRestrictedTags(rawTags)
 }
 
-// reMovieParamsSectionStart 匹配源站简介中【影片参数】参数段落的起始标记（含 color/b 开启标签），用于发种前截断冗余 mediainfo 段。
-var reMovieParamsSectionStart = regexp.MustCompile(`(?i)\[color[^\]]*\]\s*\[b\]\s*【影片参数】`)
-
 // TrimDescriptionAtMovieParams 若简介包含【影片参数】参数段落标记，则删除该标记及其之后的全部内容（含标记本身），仅保留其前面的影片介绍。
-// 说明：源站简介常以 [color=blue][b]【影片参数】[/b][/color] 包裹一段 mediainfo 参数，发种时该段冗余，需截断。
+// 说明：实现委托给 descclean 包（抓取向量与发种向共用同一份逻辑，单一真源）。
 // 参数/返回：desc 为原始简介；未命中标记时原样返回。
 func TrimDescriptionAtMovieParams(desc string) string {
-	trimmed := strings.TrimSpace(desc)
-	if trimmed == "" {
-		return desc
-	}
-	if loc := reMovieParamsSectionStart.FindStringIndex(trimmed); loc != nil {
-		return strings.TrimSpace(trimmed[:loc[0]])
-	}
-	if idx := strings.Index(trimmed, "【影片参数】"); idx >= 0 {
-		return strings.TrimSpace(trimmed[:idx])
-	}
-	return desc
+	return descclean.TrimDescriptionAtMovieParams(desc)
 }
 
 // BuildUploadDescription 按固定顺序拼接发布描述正文。
@@ -71,7 +59,7 @@ func BuildUploadDescription(siteCode string, uploadData map[string]any) string {
 	// yemapt 为自研 Markdown 发种站，声明需用 Markdown 块引用+加粗（> **...**）呈现，
 	// 而其它站点沿用 BBCode 声明，因此在此单独处理，避免影响其它站。
 	if strings.EqualFold(strings.TrimSpace(siteCode), "yemapt") {
-		return buildYemaPTUploadDescription(uploadData, intro)
+		return TrimDescriptionAtMovieParams(buildYemaPTUploadDescription(uploadData, intro))
 	}
 
 	statement := pickDescriptionSection(uploadData, intro, "statement")
