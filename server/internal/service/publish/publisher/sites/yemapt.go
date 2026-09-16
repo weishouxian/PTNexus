@@ -45,25 +45,94 @@ type yemaptDefaults struct {
 	Team     string `yaml:"team"`
 }
 
-// yemaptDefaultConfig 为「4K UHD BluRay Remux 电影」实测值，作为无法直接命中映射时的兜底默认值。
-// 发布其它类型前，请对照发种页表单在 server/configs/yemapt.yaml 中补充数字字典。
+// yemaptDefaultConfig 为 configs/yemapt.yaml 缺失或解析失败时的兜底字典。
+// 取值来自站点权威选项表（GET /api/torrent/fetchUploadOptions，2026-09-17 拉取），
+// 完整字典与选项表以 server/configs/yemapt.yaml 为准，改动请同步两处。
 var yemaptDefaultConfig = yemaptConfig{
-	APIPath:  "/api/torrent/addTorrent",
-	Category: map[string]string{"movie": "4"},
-	Medium:   map[string]string{"uhd_bluray": "4", "remux": "4", "bluray": "4"},
-	Standard: map[string]string{"2160p": "7"},
-	Codec:    map[string]string{"x265": "2", "hevc": "2"},
-	Audio:    map[string]string{"dts_hd_ma": "4", "dts": "4", "truehd": "4"},
-	Region:   map[string]string{"us": "4", "usa": "4", "gb": "4", "uk": "4"},
-	Team:     map[string]string{"none": "999"},
-	Tags:     map[string]string{},
+	APIPath: "/api/torrent/addTorrent",
+	// 分类：标准化值形如 category.movie / category.tv_series（见 configs/global_mappings.yaml），
+	// 键写去前缀后的形态。
+	Category: map[string]string{
+		"movie": "4", "tv_series": "5", "drama": "5", "tv_shows": "13",
+		"animation": "14", "cartoon": "14",
+		"documentary": "15", "documentaries": "15", "document": "15",
+		"sports": "17", "playlet": "6", "mv": "16",
+		"music": "8", "audiobook": "9", "books": "12", "ebook": "12",
+		"game": "10", "software": "3", "os": "3", "stage": "22", "other": "22",
+	},
+	// 媒介：标准化值形如 medium.remux / medium.uhd_bluray。
+	// 注意 4 是 Remux、3 才是 Blu-ray UHD 原盘（早期版本把 uhd_bluray 写成 4 是错的）。
+	Medium: map[string]string{
+		"webdl": "1", "webrip": "1",
+		"bluray": "2", "uhd_bluray": "3", "uhd_diy": "3",
+		"remux":  "4",
+		"encode": "5", "bdrip": "5", "minibd": "5", "minisd": "5",
+		"hdtv": "6", "uhdtv": "6", "tv": "6", "tvrip": "6",
+		"dvdr": "7", "cd": "8", "sacd": "8", "vinyl": "8", "track": "8",
+		"dvd": "9", "hddvd": "999", "vcd": "999", "other": "999",
+	},
+	// 分辨率：标准化值形如 resolution.r2160p，前缀 resolution.r 会先被去掉。
+	Standard: map[string]string{
+		"720i": "1", "720p": "2", "1080i": "3", "1080p": "4",
+		"sd": "5", "1440p": "6", "2160p": "7", "4320p": "8", "other": "999",
+	},
+	// 视频编码：标准化值为 video.h265 / video.h264，去前缀后缀是 h265/h264，
+	// 因此必须按 h265/h264 建键（只写 x265/hevc 会命中失败）。
+	Codec: map[string]string{
+		"h264": "1", "x264": "1", "h265": "2", "x265": "2",
+		"vc1": "3", "mpeg2": "6", "xvid": "7", "av1": "8", "vp9": "9", "h266": "10",
+		"h261": "999", "mpeg1": "999", "mpeg4": "999", "other": "999",
+	},
+	// 音频编码：标准化值为 audio.ac3 / audio.dts_hd_ma 等。
+	// 4 是 DTS-HD MA 而非通用兜底值，DTS→3、TrueHD→7、AC3→2（曾把三者都写成 4）。
+	Audio: map[string]string{
+		"aac": "1", "m4a": "1", "ac3": "2", "dts": "3",
+		"dts_hd": "4", "dts_hd_hr": "4", "dts_hd_ma": "4", "dtsx": "4",
+		"ddp": "5", "ddp_atmos": "6", "truehd": "7", "truehd_atmos": "8",
+		"lpcm": "9", "pcm": "9", "wav": "9", "flac": "10", "alac": "10", "ape": "11",
+		"mp3": "12", "ogg": "13", "opus": "14",
+		"dsd": "999", "tta": "999", "taa": "999", "other": "999",
+	},
+	// 地区：标准化值形如 source.china / source.japan（见 configs/global_mappings.yaml），
+	// 键必须同时覆盖「完整值」与「去前缀后缀」两种写法，否则命中失败会回落到默认地区。
+	Region: map[string]string{
+		"source.china": "1", "source.hongkong": "2", "source.hongkong_taiwan": "2",
+		"source.taiwan": "3", "source.western": "4", "source.canada": "4",
+		"source.uk": "5", "source.europe": "5", "source.france": "5", "source.germany": "5",
+		"source.italy": "5", "source.spain": "5", "source.sweden": "5", "source.denmark": "5",
+		"source.russia": "5", "source.japan": "6", "source.korea": "7",
+		"source.australia": "999", "source.brazil": "999", "source.india": "999",
+		"source.malaysia": "999", "source.singapore": "999", "source.thailand": "999",
+		"source.other": "999",
+		"china":        "1", "hongkong": "2", "hongkong_taiwan": "2", "taiwan": "3",
+		"western": "4", "canada": "4", "uk": "5", "europe": "5", "france": "5", "germany": "5",
+		"japan": "6", "korea": "7", "other": "999",
+	},
+	// 制作小组：站点只提供 10 个小组，其余一律是 Other(999)。
+	Team: map[string]string{
+		"ourbits": "1", "btshd": "2", "btstv": "3", "hdchina": "4", "cmct": "5",
+		"hhweb": "6", "frds": "7", "mteam": "8", "qhstudio": "9", "ubits": "10",
+		"none": "999", "other": "999",
+	},
+	// 标签：键为 PTNexus 标签名（比较时统一转小写），未配置的标签会被忽略。
+	Tags: map[string]string{
+		"禁转": "1", "禁止转载": "1", "首发": "2", "官组": "3", "diy": "4",
+		"国语": "5", "中字": "6", "粤语": "7", "英字": "8",
+		"hdr10": "9", "杜比视界": "10", "dolby vision": "10", "dv": "10",
+		"连载中": "11", "完结": "12", "多国字幕": "13", "hdr10+": "14",
+		"杜比全景声": "15", "atmos": "15", "dolby atmos": "15",
+		"dts-x": "16", "dtsx": "16", "5.1声道": "17", "7.1声道": "17",
+		"完结全集": "18", "sp": "19", "剧场版": "19", "ova": "19",
+	},
+	// 兜底值：站点对 medium/standard/codec/audiocodec/region/team 都提供 Other(999)，
+	// 未知项一律发 999，而不是假装是某个具体规格（例如把未知分辨率写成 2160p）。
 	Defaults: yemaptDefaults{
 		Category: "4",
-		Medium:   "4",
-		Standard: "7",
-		Codec:    "2",
-		Audio:    "4",
-		Region:   "4",
+		Medium:   "999",
+		Standard: "999",
+		Codec:    "999",
+		Audio:    "999",
+		Region:   "999",
 		Team:     "999",
 	},
 }
@@ -113,22 +182,38 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 	}
 
 	poster := stripYemaPTImageTags(resolveUploadSection(input.UploadData, "poster"))
-	imdb := extractYemaPTIMDbID(strings.TrimSpace(input.IMDbLink))
+	// imdb 参数必须是纯数字：yemapt 的 imdb 字段不接受 tt 前缀、也不接受完整链接
+	// （站点详情实测返回 "imdb":"0206013"，对应 https://www.imdb.com/title/tt0206013/）。
+	imdb := resolveYemaPTIMDbParam(input, std)
 	douban := extractYemaPTDoubanID(strings.TrimSpace(input.DoubanLink))
 	anonymousEnabled := publisher.ResolveAnonymousUploadEnabled(input.RootConfig)
 
+	// 各维度统一走 pickYemaPTValueEx：标准化值形如 source.china / category.tv_series / video.h265，
+	// 一旦与 configs/yemapt.yaml 的字典键不一致就会静默回落到 defaults，因此未命中的维度必须记录并告警。
+	fallbackNotes := make([]string, 0, 4)
+	pick := func(label string, mapping map[string]string, raw, fallback string) string {
+		value, matched := pickYemaPTValueEx(mapping, raw, fallback)
+		if !matched && strings.TrimSpace(raw) != "" {
+			fallbackNotes = append(fallbackNotes, fmt.Sprintf(
+				"⚠️ %s 映射未命中：标准化值 %q 不在 configs/yemapt.yaml 对应字典中，已回落默认值 %s。请核对发种页表单后补充映射。",
+				label, strings.TrimSpace(raw), value,
+			))
+		}
+		return value
+	}
+
 	textFields := map[string]string{
-		"showName": title,
-		"shortDesc": strings.TrimSpace(input.Subtitle),
-		"longDesc": normalizeYemaPTDescription(strings.TrimSpace(input.Description)),
-		"mediaInfo": strings.TrimSpace(input.MediaInfo),
-		"categoryId": pickYemaPTValue(cfg.Category, toStringAny(std["type"], ""), cfg.Defaults.Category),
-		"medium": pickYemaPTValue(cfg.Medium, normalizeYemaPTParam(toStringAny(std["medium"], ""), "medium."), cfg.Defaults.Medium),
-		"standard": pickYemaPTValue(cfg.Standard, normalizeYemaPTParam(toStringAny(std["resolution"], ""), "resolution.r"), cfg.Defaults.Standard),
-		"codec": pickYemaPTValue(cfg.Codec, strings.ToLower(strings.TrimSpace(toStringAny(std["video_codec"], ""))), cfg.Defaults.Codec),
-		"audiocodec": pickYemaPTValue(cfg.Audio, strings.ToLower(strings.TrimSpace(toStringAny(std["audio_codec"], ""))), cfg.Defaults.Audio),
-		"regionList": pickYemaPTValue(cfg.Region, strings.ToLower(strings.TrimSpace(toStringAny(std["source"], ""))), cfg.Defaults.Region),
-		"team": pickYemaPTTeam(cfg.Team, strings.ToLower(strings.TrimSpace(toStringAny(std["team"], ""))), cfg.Defaults.Team),
+		"showName":   title,
+		"shortDesc":  strings.TrimSpace(input.Subtitle),
+		"longDesc":   normalizeYemaPTDescription(strings.TrimSpace(input.Description)),
+		"mediaInfo":  strings.TrimSpace(input.MediaInfo),
+		"categoryId": pick("分类(categoryId)", cfg.Category, toStringAny(std["type"], ""), cfg.Defaults.Category),
+		"medium":     pick("媒介(medium)", cfg.Medium, normalizeYemaPTParam(toStringAny(std["medium"], ""), "medium."), cfg.Defaults.Medium),
+		"standard":   pick("分辨率(standard)", cfg.Standard, normalizeYemaPTParam(toStringAny(std["resolution"], ""), "resolution.r"), cfg.Defaults.Standard),
+		"codec":      pick("视频编码(codec)", cfg.Codec, strings.ToLower(strings.TrimSpace(toStringAny(std["video_codec"], ""))), cfg.Defaults.Codec),
+		"audiocodec": pick("音频编码(audiocodec)", cfg.Audio, strings.ToLower(strings.TrimSpace(toStringAny(std["audio_codec"], ""))), cfg.Defaults.Audio),
+		"regionList": pick("地区(regionList)", cfg.Region, strings.ToLower(strings.TrimSpace(toStringAny(std["source"], ""))), cfg.Defaults.Region),
+		"team":       pickYemaPTTeam(cfg.Team, strings.ToLower(strings.TrimSpace(toStringAny(std["team"], ""))), cfg.Defaults.Team),
 	}
 	if poster != "" {
 		textFields["picture"] = poster
@@ -154,7 +239,9 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 		fmt.Sprintf("上传地址: %s", uploadURL),
 		fmt.Sprintf("字段摘要: showName=%q picture=%q categoryId=%s medium=%s standard=%s codec=%s audiocodec=%s regionList=%s team=%s tags=%v anonymous=%s",
 			title, textFields["picture"], textFields["categoryId"], textFields["medium"], textFields["standard"], textFields["codec"], textFields["audiocodec"], textFields["regionList"], textFields["team"], tagIDs, textFields["uploadUserAnonymous"]),
+		fmt.Sprintf("外链字段: imdb=%q douban=%q（imdb 只发纯数字，已去掉 tt 前缀）", imdb, douban),
 	}
+	logLines = append(logLines, fallbackNotes...)
 
 	publishURL, downloadURL, attemptDetail, publishErr := postYemaPTTorrent(uploadURL, baseURL, cookie, textFields, tagIDs, torrentBytes, filepath.Base(torrentPath))
 	if strings.TrimSpace(attemptDetail) != "" {
@@ -366,23 +453,27 @@ func mergeYemaPTMap(base, override map[string]string) {
 	}
 }
 
-// pickYemaPTValue 在映射表中按标准化值查找 yemapt 数字 ID，未命中返回兜底默认值。
-func pickYemaPTValue(mapping map[string]string, standardized, fallback string) string {
+// pickYemaPTValueEx 在映射表中按标准化值查找 yemapt 数字 ID，并返回是否命中映射。
+// 参数/返回：mapping 为数字字典，standardized 为 PTNexus 标准化值（如 source.china、video.h265），
+// fallback 为兜底值；返回解析结果与「是否命中」，未命中等价于回落到兜底值。
+// 失败场景：不适用。
+// 副作用：无。
+func pickYemaPTValueEx(mapping map[string]string, standardized, fallback string) (string, bool) {
 	key := strings.ToLower(strings.TrimSpace(standardized))
 	if key == "" {
-		return strings.TrimSpace(fallback)
+		return strings.TrimSpace(fallback), false
 	}
 	if mapped, ok := mapping[key]; ok && strings.TrimSpace(mapped) != "" {
-		return strings.TrimSpace(mapped)
+		return strings.TrimSpace(mapped), true
 	}
-	// 去掉常见前缀再试一次
+	// 标准化值可能带 source./medium./resolution.r 等前缀，去掉后再试一次
 	if idx := strings.Index(key, "."); idx >= 0 {
 		suffix := key[idx+1:]
 		if mapped, ok := mapping[suffix]; ok && strings.TrimSpace(mapped) != "" {
-			return strings.TrimSpace(mapped)
+			return strings.TrimSpace(mapped), true
 		}
 	}
-	return strings.TrimSpace(fallback)
+	return strings.TrimSpace(fallback), false
 }
 
 // pickYemaPTTeam 解析制作小组：为空时回退到「无小组」默认值。
@@ -434,10 +525,11 @@ func resolveYemaPTTagIDs(cfg yemaptConfig, uploadData map[string]any) []string {
 }
 
 var (
-	reYemaPTIMDb  = regexp.MustCompile(`tt(\d+)`)
+	// IMDb ID：tt + 数字（大小写不敏感），只取数字部分，用于剥掉 tt 前缀。
+	reYemaPTIMDb   = regexp.MustCompile(`(?i)tt(\d+)`)
 	reYemaPTDouban = regexp.MustCompile(`subject/(\d+)`)
 	reYemaPTImgTag = regexp.MustCompile(`(?i)\[img(?:\=[^\]]*)?\]([\s\S]*?)\[/img\]`)
-	reYemaPTURL     = regexp.MustCompile(`https?://[^\s\)\]]+`)
+	reYemaPTURL    = regexp.MustCompile(`https?://[^\s\)\]]+`)
 )
 
 // stripYemaPTImageTags 取出预览图的纯 URL。
@@ -484,7 +576,35 @@ func normalizeYemaPTDescription(body string) string {
 	})
 }
 
+// resolveYemaPTIMDbParam 解析 yemapt 发种接口的 imdb 参数，**始终返回纯数字**（去掉 tt 前缀）。
+//
+// yemapt 的 imdb 字段只接受数字 ID：站点详情接口实测返回 "imdb":"0206013"，
+// 对应 https://www.imdb.com/title/tt0206013/ —— 若把 tt 一起发过去，站点会存成非法 ID。
+// 因此不论上游给的是完整链接、tt 前缀 ID，还是转种面板里的 imdb_id，
+// 统一在这里剥掉 tt，只提交数字串。
+//
+// 候选来源按优先级：发布输入的外部链接（已聚合 uploadData/standardized 的 imdb_link）
+// → 标准化参数 imdb / imdb_id → uploadData 原始字段（转种面板直接提交时用）。
+func resolveYemaPTIMDbParam(input publisher.PublishInput, std map[string]any) string {
+	candidates := []string{
+		input.IMDbLink,
+		toStringAny(std["imdb_link"], ""),
+		toStringAny(std["imdb"], ""),
+		toStringAny(std["imdb_id"], ""),
+		toStringAny(input.UploadData["imdb_link"], ""),
+		toStringAny(input.UploadData["imdb"], ""),
+		toStringAny(input.UploadData["imdb_id"], ""),
+	}
+	for _, candidate := range candidates {
+		if id := extractYemaPTIMDbID(candidate); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
 // extractYemaPTIMDbID 从 IMDb 链接或 ID 中提取纯数字部分（保留前导零，例如 tt0089893 -> 0089893）。
+// 已去掉 tt 前缀或本身就是数字串时原样返回；解析不出数字则返回空串（调用方会跳过 imdb 字段）。
 func extractYemaPTIMDbID(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

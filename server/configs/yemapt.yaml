@@ -1,88 +1,256 @@
 # yemapt (www.yemapt.org / YemaPT) 发种接口专属配置
-# 此文件由 server/internal/service/publish/publisher/sites/yemapt.go 自定义加载（非 NexusPHP 配置）。
+# 此文件由 server/internal/service/publish/publisher/sites/yemapt.go 加载（非 NexusPHP 配置）。
 #
 # 发种端点: POST {base_url}/api/torrent/addTorrent  (multipart/form-data)
 # 鉴权:      Cookie 中的 auth / b_auth（由 webui 填写站点 cookie 提供）
-# 字段结构:  抓包自 Firefox 一次真实发种请求（Red Sonja 1985 2160p UHD BluRay Remux DoVi HDR10 x265 DTS-HD MA 5.1）
+# 详情端点:  GET  {base_url}/api/torrent/fetchTorrentDetail?id={id}
+# 选项端点:  GET  {base_url}/api/torrent/fetchUploadOptions   ← 本文件字典的权威来源
 #
-# 下方数字字典为实测值，样本来源两组真实发种抓包：
-#   - 4K UHD BluRay Remux 电影 (Red Sonja 1985): category=4 medium=4 standard=7 codec=2 audiocodec=4 region=4 team=999 tags=6,10,9
-#   - 1080p WEB-DL (Out of Place 2025):          category=4 medium=1 standard=4 codec=2 audiocodec=1 region=1 team=999 tags=5,6
-# 发布其它类型（连续剧/不同编码/不同国家/不同标签）前，请打开 https://www.yemapt.org/#/torrent/add
-# 对照表单下拉项的真实 value 进行核对与补充。
-# 每个维度: 键为 PTNexus 标准化参数值（medium./resolution.r 前缀已自动去掉），值为 yemapt 接口的数字 ID。
-# defaults 为无法命中映射时的兜底值（即 4K UHD 电影示例值）。
+# ⚠️ 维护方式（重要）：字典不要靠猜、也不要靠逐个抓包试。
+#    直接 GET /api/torrent/fetchUploadOptions（带站点 cookie，只读）即可拿到发种页
+#    所有下拉项的 {label, value}，把 value 填到本文件对应维度即可。
+#
+# 每个维度: 键为 PTNexus 标准化参数值（前缀 category./medium./video./audio./resolution.r/source. 会先去掉），
+#           值为 yemapt 接口的数字 ID。键必须写成「去前缀后的形态」，例如 video.h265 → h265。
+# defaults 为无法命中映射时的兜底值；未命中的维度会在发布日志里逐条打印「⚠️ xx 映射未命中」。
 
 api_path: "/api/torrent/addTorrent"
 
-# 分类: 实测电影=4。其余类型请核对发种页后补充。
+# ============================================================================
+# 权威选项表（2026-09-17 取自 GET /api/torrent/fetchUploadOptions）
+# 下方各维度字典的取值必须来自这里，改动请先复查该接口。
+# ----------------------------------------------------------------------------
+# categoryId（父类: 1 影视 / 2 综合 / 7 音频 / 18 教育）:
+#   0 未分类 | 4 电影 | 5 剧集 | 13 综艺 | 14 动漫 | 15 纪录片 | 17 体育
+#   6 短剧 | 16 MV/演唱会 | 3 软件 | 10 游戏 | 12 书籍 | 22 其他
+#   8 音乐 | 9 广播剧 | 19 教育书籍 | 20 教育音频 | 21 教育视频
+# medium:      1 Web-DL/WebRip | 2 Blu-ray(1080p Complete) | 3 Blu-ray UHD(4K Complete)
+#              4 Remux | 5 Rip/Encode | 6 HDTV/TV Cap | 7 DVDRip | 8 Audio CD/Vinyl
+#              9 DVD(Complete/ISO) | 999 Other
+# standard:    1 720i | 2 720p | 3 1080i | 4 1080p | 5 SD | 6 2K/1440p | 7 4K/2160p | 8 8K | 999 Other
+# codec:       1 H.264/AVC | 2 H.265/HEVC | 3 VC-1(Blu-ray) | 4 Bluray(AVC) | 5 Bluray(HEVC)
+#              6 MPEG-2(Blu-ray/DVD) | 7 Xvid/DivX | 8 AV1 | 9 VP9 | 10 H.266/VVC | 999 Other
+# audiocodec:  1 AAC | 2 AC3(Dolby Digital) | 3 DTS | 4 DTS-HD MA | 5 E-AC3(Dolby Digital Plus)
+#              6 E-AC3 Atmos | 7 TrueHD | 8 TrueHD Atmos | 9 LPCM | 10 FLAC | 11 APE
+#              12 MP3 | 13 OGG | 14 Opus | 999 Other
+# region:      1 CN(中国) | 2 HK/CN(香港) | 3 TW/CN(台湾) | 4 US(美国) | 5 EU(欧洲)
+#              6 JP(日本) | 7 KR(韩国) | 999 Other      （多选字段）
+# team:        1 OurBits | 2 BtsHD | 3 BtsTV | 4 HDChina | 5 CMCT | 6 HHWEB
+#              7 FRDS | 8 MTeam | 9 QHstudio | 10 UBits | 999 Other
+# tags:        1 禁转 | 2 首发 | 3 官组 | 4 DIY | 5 国语 | 6 中字 | 7 粤语 | 8 英字
+#              9 HDR10 | 10 杜比视界 | 11 连载中 | 12 完结 | 13 多国字幕 | 14 HDR10+
+#              15 杜比全景声(Atmos) | 16 DTS-X | 17 5.1/7.1声道 | 18 完结全集 | 19 SP/剧场版/OVA
+# ============================================================================
+
+# 分类：取自标准化参数 type（category.movie / category.tv_series / ...），键写去前缀后的形态。
+# 实测样本：电影=4（torrent 14791 categoryName=电影）、动漫=14（torrent 14875 categoryName=动漫）。
 category:
-  movie: "4"
-  # tv: ""
-  # documentary: ""
-  # anime: ""
-  # variety: ""
+  movie: "4"          # 电影
+  tv_series: "5"      # 剧集
+  drama: "5"          # 剧集（部分站点的 drama 即剧集）
+  tv_shows: "13"      # 综艺
+  animation: "14"     # 动漫
+  cartoon: "14"       # 动漫
+  documentary: "15"   # 纪录片
+  documentaries: "15"
+  document: "15"
+  sports: "17"        # 体育
+  playlet: "6"        # 短剧
+  mv: "16"            # MV/演唱会
+  music: "8"          # 音频/音乐
+  audiobook: "9"      # 音频/广播剧
+  books: "12"         # 综合/书籍
+  ebook: "12"
+  game: "10"          # 综合/游戏
+  software: "3"       # 综合/软件
+  os: "3"
+  stage: "22"         # 综合/其他
+  other: "22"         # 综合/其他
 
-# 媒介/来源: 实测 UHD BluRay Remux = 4
+# 媒介/来源：取自标准化参数 medium（medium.webdl / medium.remux / ...）。
+# 注意 4 是 Remux、3 才是 Blu-ray UHD 原盘——早期版本把 uhd_bluray 写成 4 是错的。
 medium:
-  uhd_bluray: "4"
-  remux: "4"
-  bluray: "4"
-  webdl: "1"
-  # hdtv: ""
-  # dvd: ""
+  webdl: "1"          # Web-DL/WebRip
+  webrip: "1"
+  bluray: "2"         # Blu-ray (1080p Complete)
+  uhd_bluray: "3"     # Blu-ray UHD (4K Complete)
+  uhd_diy: "3"
+  remux: "4"          # Remux
+  encode: "5"         # Rip/Encode
+  bdrip: "5"
+  minibd: "5"
+  minisd: "5"
+  hdtv: "6"           # HDTV/TV Cap
+  uhdtv: "6"
+  tv: "6"
+  tvrip: "6"
+  dvdr: "7"           # DVDRip
+  cd: "8"             # Audio CD/Vinyl
+  sacd: "8"
+  vinyl: "8"
+  track: "8"
+  dvd: "9"            # DVD (Complete/ISO)
+  hddvd: "999"        # 站点无 HD DVD，归 Other
+  vcd: "999"
+  other: "999"
 
-# 分辨率/标准: 实测 2160p = 7
+# 分辨率/标准：取自标准化参数 resolution（resolution.r2160p，前缀 resolution.r 已去掉）。
 standard:
-  "2160p": "7"
+  "720i": "1"
+  "720p": "2"
+  "1080i": "3"
   "1080p": "4"
-  # "1080i": ""
-  # "720p": ""
+  sd: "5"
+  "1440p": "6"        # 2K/1440p
+  "2160p": "7"        # 4K/2160p
+  "4320p": "8"        # 8K
+  other: "999"
 
-# 视频编码: 实测 HEVC/x265 = 2
+# 视频编码：取自标准化参数 video_codec（video.h265 → 键 h265）。
+# 早期版本只有 h265，H.264 种子会回落到 HEVC，已修正。
 codec:
+  h264: "1"           # H.264/AVC
+  x264: "1"
+  h265: "2"           # H.265/HEVC
   x265: "2"
-  hevc: "2"
-  # x264: ""
-  # h264: ""
+  vc1: "3"
+  mpeg2: "6"
+  xvid: "7"
+  av1: "8"
+  vp9: "9"
+  h266: "10"
+  h261: "999"
+  mpeg1: "999"
+  mpeg4: "999"
+  other: "999"
 
-# 音频编码: 实测 DTS-HD MA = 4, AAC = 1
+# 音频编码：取自标准化参数 audio_codec（audio.ac3 → 键 ac3）。
+# ⚠️ 曾出现的错误：4 是 DTS-HD MA 而不是通用兜底值，AC-3/DTS/TrueHD 都被写成了 4，已按选项表修正。
 audiocodec:
-  dts_hd_ma: "4"
-  dts: "4"
-  truehd: "4"
   aac: "1"
-  # ac3: ""
-  # flac: ""
+  m4a: "1"
+  ac3: "2"            # AC3(Dolby Digital)
+  dts: "3"
+  dts_hd: "4"
+  dts_hd_hr: "4"
+  dts_hd_ma: "4"
+  dtsx: "4"           # 站点无 DTS:X 音频项，DTS:X 承载于 DTS-HD MA
+  ddp: "5"            # E-AC3
+  ddp_atmos: "6"
+  truehd: "7"
+  truehd_atmos: "8"
+  lpcm: "9"
+  pcm: "9"
+  wav: "9"
+  flac: "10"
+  alac: "10"
+  ape: "11"
+  mp3: "12"
+  ogg: "13"
+  opus: "14"
+  dsd: "999"
+  tta: "999"
+  taa: "999"
+  other: "999"
 
-# 地区: 实测 美国/荷兰 = 4
+# 地区：取自标准化参数 source，其值为完整前缀形式 source.china / source.japan（见 global_mappings.yaml）。
+# 键写「完整值」或「去前缀后缀」都能命中；只写 cn/us 这类简写会命中失败。
 region:
-  us: "4"
-  usa: "4"
-  gb: "4"
-  uk: "4"
-  # jp: ""
-  # hk: ""
-  cn: "1"
-  # tw: ""
+  source.china: "1"
+  source.hongkong: "2"
+  source.hongkong_taiwan: "2"   # 站点只有单值，港台合并时取「香港」
+  source.taiwan: "3"
+  source.western: "4"
+  source.canada: "4"            # 站点无加拿大，北美并入「美国」
+  source.uk: "5"
+  source.europe: "5"
+  source.france: "5"
+  source.germany: "5"
+  source.italy: "5"
+  source.spain: "5"
+  source.sweden: "5"
+  source.denmark: "5"
+  source.russia: "5"
+  source.japan: "6"
+  source.korea: "7"
+  source.australia: "999"
+  source.brazil: "999"
+  source.india: "999"
+  source.malaysia: "999"
+  source.singapore: "999"
+  source.thailand: "999"
+  source.other: "999"
+  china: "1"
+  hongkong: "2"
+  hongkong_taiwan: "2"
+  taiwan: "3"
+  western: "4"
+  canada: "4"
+  uk: "5"
+  europe: "5"
+  france: "5"
+  germany: "5"
+  japan: "6"
+  korea: "7"
+  other: "999"
 
-# 制作小组: 实测无小组 = 999
+# 制作小组：取自标准化参数 team（team.frds → 键 frds）。
+# 站点只提供 10 个小组，其余一律映射为 Other(999)，这是站点的正常取值而非降级。
 team:
+  ourbits: "1"
+  btshd: "2"
+  btstv: "3"
+  hdchina: "4"
+  cmct: "5"
+  hhweb: "6"
+  frds: "7"
+  mteam: "8"
+  qhstudio: "9"
+  ubits: "10"
   none: "999"
-  # 填入你自己的小组 ID（如站点有「个人/无」选项，通常就是 999）
+  other: "999"
 
-# 标签: 实测该种子 tagList=6,10,9（分别对应 HDR / REMUX / 4K 之类，需核对）
-# 键为 PTNexus 标签（小写），值为 yemapt 标签 ID；未配置的标签会被忽略。
+# 标签：键为 PTNexus 标签名（比较时统一转小写），值为 yemapt 标签 ID；未配置的标签直接忽略、不会报错。
+# 数据来源：torrent 14791 实测 tagList=[5,6] → 国语/中字；torrent 14875 实测 [5,8] → 国语/英字。
 tags:
-  # hdr: "6"
-  # remux: "10"
-  # 4k: "9"
+  "禁转": "1"
+  "禁止转载": "1"
+  "首发": "2"
+  "官组": "3"
+  "diy": "4"
+  "国语": "5"
+  "中字": "6"
+  "粤语": "7"
+  "英字": "8"
+  "hdr10": "9"
+  "杜比视界": "10"
+  "dolby vision": "10"
+  "dv": "10"
+  "连载中": "11"
+  "完结": "12"
+  "多国字幕": "13"
+  "hdr10+": "14"
+  "杜比全景声": "15"
+  "atmos": "15"
+  "dolby atmos": "15"
+  "dts-x": "16"
+  "dtsx": "16"
+  "5.1声道": "17"
+  "7.1声道": "17"
+  "完结全集": "18"
+  "sp": "19"
+  "剧场版": "19"
+  "ova": "19"
 
+# 兜底值：仅在标准化值缺失或未命中上面字典时使用。
+# 站点对 medium/standard/codec/audiocodec/region/team 都提供 Other(999)，
+# 因此未知项一律发 999 而不是「假装」是某个具体规格（例如把未知分辨率写成 4K/2160p）。
+# 命中失败时发布日志会逐条打印 ⚠️ 告警，请据日志补齐上面的字典。
 defaults:
-  category: "4"
-  medium: "4"
-  standard: "7"
-  codec: "2"
-  audiocodec: "4"
-  region: "4"
+  category: "4"       # 分类无 Other 项，缺失时按电影处理
+  medium: "999"
+  standard: "999"
+  codec: "999"
+  audiocodec: "999"
+  region: "999"
   team: "999"
