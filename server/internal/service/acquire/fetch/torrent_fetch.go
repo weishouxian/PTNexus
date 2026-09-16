@@ -3,6 +3,7 @@ package fetch
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +27,8 @@ var (
 	reUUIDInURL    = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
 	rePathUnsafe   = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 	reTTGDetailURL = regexp.MustCompile(`(?is)/dl/(\d+)(?:/([a-zA-Z0-9]+))?`)
+	// YemaPT 详情页为 SPA hash 路由：https://www.yemapt.org/#/torrent/detail/{id}
+	reYemaPTDetailID = regexp.MustCompile(`(?i)/torrent/detail/(\d+)`)
 )
 
 const sourceDownloadLogModule = "迁移-种子下载"
@@ -114,12 +117,27 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	}
 	logx.Infof(sourceDownloadLogModule, "详情页地址已确定 source_site=%s torrent_id=%s detail_url=%s", siteName, trimmedID, detailURL)
 
+	// YemaPT 为 UmiJS SPA + 自研 REST API：详情页是前端 hash 路由，
+	// 无法通过静态 HTML 解析下载链接，需先换取 token 再拼接 download1 直链。
+	isYemaPT := isYemaPTSource(siteCode, baseURL, detailURL)
+
 	downloadCandidates := make([]string, 0)
+	if isYemaPT {
+		if direct := resolveYemaPTDownloadURL(baseURL, cookie, detailURL, trimmedID); direct != "" {
+			downloadCandidates = append(downloadCandidates, direct)
+		}
+	}
 	if direct := buildDirectDownloadURL(baseURL, siteCode, detailURL, trimmedID, passkey); direct != "" {
 		downloadCandidates = append(downloadCandidates, direct)
 	}
 
-	html, htmlErr := fetchPageWithCookie(detailURL, cookie, 45*time.Second)
+	var html string
+	var htmlErr error
+	if isYemaPT {
+		logx.Infof(sourceDownloadLogModule, "YemaPT 详情页为 SPA，跳过 HTML 解析 source_site=%s torrent_id=%s", siteName, trimmedID)
+	} else {
+		html, htmlErr = fetchPageWithCookie(detailURL, cookie, 45*time.Second)
+	}
 	if htmlErr != nil && errors.Is(htmlErr, ErrSourceCookieExpired) && strings.TrimSpace(passkey) == "" {
 		logx.Warnf(sourceDownloadLogModule, "详情页鉴权失败 source_site=%s torrent_id=%s detail_url=%s err=%v", siteName, trimmedID, detailURL, htmlErr)
 		return "", detailURL, nil, htmlErr
@@ -138,6 +156,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		if htmlErr != nil {
 			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=详情页获取失败", siteName, trimmedID)
 			return "", detailURL, nil, fmt.Errorf("未能获取详情页并解析下载链接: %v", htmlErr)
+		}
+		if isYemaPT {
+			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=YemaPT 接口未返回下载 token", siteName, trimmedID)
+			return "", detailURL, nil, errors.New("YemaPT 未能通过接口换取下载 token")
 		}
 		logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=详情页无有效链接", siteName, trimmedID)
 		return "", detailURL, nil, errors.New("详情页中未找到可用下载链接")
@@ -499,6 +521,15 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 	if trimmed == "" {
 		return baseURL
 	}
+	// YemaPT: 详情页为 SPA hash 路由，需构造 /#/torrent/detail/{id}
+	if isYemaPTSource(siteCode, baseURL, trimmed) {
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+		if id := extractYemaPTTorrentID(trimmed); id != "" {
+			return fmt.Sprintf("%s/#/torrent/detail/%s", strings.TrimRight(baseURL, "/"), id)
+		}
+	}
 	if strings.Contains(trimmed, "details.php") || strings.Contains(trimmed, "torrent/") {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
 			return trimmed
@@ -526,6 +557,11 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 	if baseURL == "" {
 		return ""
 	}
+	// YemaPT 直链需先调用自研接口换取 token，由 resolveYemaPTDownloadURL 单独处理，
+	// 不走 NexusPHP 的 download.php 形式，避免生成无效候选。
+	if isYemaPTSource(siteCode, baseURL, detailURL) {
+		return ""
+	}
 	trimmedPasskey := strings.TrimSpace(passkey)
 	if strings.Contains(strings.ToLower(siteCode), "rousi") && trimmedPasskey != "" {
 		uuid := reUUIDInURL.FindString(detailURL)
@@ -547,6 +583,98 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return fmt.Sprintf("%s/download.php?id=%s&passkey=%s", strings.TrimRight(baseURL, "/"), id, neturl.QueryEscape(trimmedPasskey))
 	}
 	return fmt.Sprintf("%s/download.php?id=%s", strings.TrimRight(baseURL, "/"), id)
+}
+
+// isYemaPTSource 判断源站是否为 YemaPT。
+// 参数/返回：siteCode 为站点代码，baseURL/detailURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isYemaPTSource(siteCode, baseURL, detailURL string) bool {
+	needle := "yemapt"
+	if strings.Contains(strings.ToLower(strings.TrimSpace(siteCode)), needle) {
+		return true
+	}
+	for _, raw := range []string{baseURL, detailURL} {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(trimmed), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractYemaPTTorrentID 从 YemaPT 详情地址或裸 ID 中提取数字种子 ID。
+// 参数/返回：value 可为 /#/torrent/detail/{id} 形式的 URL、含 id= 的 URL 或纯数字；未命中返回空串。
+// 失败场景：输入为空或无法识别 ID。
+// 副作用：无。
+func extractYemaPTTorrentID(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if match := reYemaPTDetailID.FindStringSubmatch(trimmed); len(match) >= 2 {
+		return match[1]
+	}
+	if match := reIDInURL.FindStringSubmatch(trimmed); len(match) >= 2 {
+		return match[1]
+	}
+	if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+		return trimmed
+	}
+	return ""
+}
+
+// resolveYemaPTDownloadURL 通过 YemaPT 自研接口换取下载 token 并拼接直链。
+// 流程：GET /api/torrent/generateDownloadKey?id={id}（响应 data 即 token），
+// 再拼接 /api/torrent/download1?token={token} 作为 .torrent 直链。
+// 参数/返回：baseURL 站点根地址，cookie 登录态，detailURL/torrentID 用于提取数字种子 ID；返回直链，失败返回空串。
+// 失败场景：缺少站点地址、无法提取种子 ID、接口请求失败、响应解析失败或 token 为空。
+// 副作用：发起网络请求。
+func resolveYemaPTDownloadURL(baseURL, cookie, detailURL, torrentID string) string {
+	root := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if root == "" {
+		logx.Warnf(sourceDownloadLogModule, "YemaPT 换取下载直链失败 原因=缺少base_url")
+		return ""
+	}
+	id := extractYemaPTTorrentID(torrentID)
+	if id == "" {
+		id = extractYemaPTTorrentID(detailURL)
+	}
+	if id == "" {
+		logx.Warnf(sourceDownloadLogModule, "YemaPT 换取下载直链失败 detail_url=%s 原因=无法提取种子ID", detailURL)
+		return ""
+	}
+
+	keyURL := fmt.Sprintf("%s/api/torrent/generateDownloadKey?id=%s", root, id)
+	body, err := fetchBinaryWithCookie(keyURL, root+"/", cookie, 45*time.Second)
+	if err != nil {
+		logx.Warnf(sourceDownloadLogModule, "YemaPT 换取下载直链失败 torrent_id=%s err=%v", id, err)
+		return ""
+	}
+	var resp struct {
+		Success      bool   `json:"success"`
+		Data         string `json:"data"`
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		logx.Warnf(sourceDownloadLogModule, "YemaPT 换取下载直链失败 torrent_id=%s 原因=响应解析失败 err=%v", id, err)
+		return ""
+	}
+	token := strings.TrimSpace(resp.Data)
+	if !resp.Success || token == "" {
+		reason := strings.TrimSpace(resp.ErrorMessage)
+		if reason == "" {
+			reason = "接口未返回下载 token"
+		}
+		logx.Warnf(sourceDownloadLogModule, "YemaPT 换取下载直链失败 torrent_id=%s 原因=%s", id, reason)
+		return ""
+	}
+	downloadURL := fmt.Sprintf("%s/api/torrent/download1?token=%s", root, token)
+	logx.Infof(sourceDownloadLogModule, "YemaPT 下载直链已生成 torrent_id=%s", id)
+	return downloadURL
 }
 
 func extractDownloadCandidatesFromDetail(html, baseURL, siteCode, detailURL string) []string {
