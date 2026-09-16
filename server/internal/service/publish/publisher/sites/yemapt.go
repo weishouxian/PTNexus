@@ -88,7 +88,7 @@ func PublishYemaPT(input publisher.PublishInput) (publisher.PublishResult, error
 	// 对齐 PublishPublic：UPLOAD_TEST_MODE=true 时跳过真实发种，返回模拟成功。
 	if os.Getenv("UPLOAD_TEST_MODE") == "true" {
 		return publisher.PublishResult{
-			PublishURL:       strings.TrimRight(baseURL, "/") + "/#/torrent/999999999",
+			PublishURL:       strings.TrimRight(baseURL, "/") + "/#/torrent/detail/999999999",
 			AttemptDetailLog: fmt.Sprintf("--- [yemapt] 测试模式：跳过实际发种（目标 %s）---", strings.TrimSpace(input.TargetName)),
 		}, nil
 	}
@@ -278,7 +278,7 @@ type yemaptTorrentData struct {
 
 // resolveYemaPTTorrentResult 从响应 data 中提取种子 ID 与详情/下载链接。
 // data 可能是裸整数（最常见，即种子 ID），也可能是对象。返回 torrentID、详情页 URL、直链下载 URL。
-// 详情页采用站点 hash 路由（/#/torrent/{id}），与发种页 /#/torrent/add 一致。
+// 详情页采用站点 hash 路由（/#/torrent/detail/{id}），与发种页 /#/torrent/add 一致。
 func resolveYemaPTTorrentResult(rawData json.RawMessage, baseURL string) (int, string, string) {
 	trimmed := strings.TrimSpace(string(rawData))
 	if trimmed == "" || trimmed == "null" {
@@ -286,7 +286,7 @@ func resolveYemaPTTorrentResult(rawData json.RawMessage, baseURL string) (int, s
 	}
 	// 裸整数：直接作为种子 ID
 	if n, err := strconv.Atoi(strings.Trim(trimmed, `"`)); err == nil {
-		detail := strings.TrimRight(baseURL, "/") + "/#/torrent/" + strconv.Itoa(n)
+		detail := strings.TrimRight(baseURL, "/") + "/#/torrent/detail/" + strconv.Itoa(n)
 		return n, detail, ""
 	}
 	// 对象形态：尝试解析 detailUrl/downloadUrl 等字段
@@ -298,7 +298,7 @@ func resolveYemaPTTorrentResult(rawData json.RawMessage, baseURL string) (int, s
 		}
 		detail := strings.TrimSpace(obj.DetailURL)
 		if detail == "" && id != 0 {
-			detail = strings.TrimRight(baseURL, "/") + "/#/torrent/" + strconv.Itoa(id)
+			detail = strings.TrimRight(baseURL, "/") + "/#/torrent/detail/" + strconv.Itoa(id)
 		}
 		return id, detail, strings.TrimSpace(obj.DownloadURL)
 	}
