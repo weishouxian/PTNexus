@@ -200,13 +200,29 @@ mappings:
     "resolution.other": "@index:0"
     "default": "@index:0"
 
+  # tags[] 短代码: yc=原创 gy=国语 yy=粤语 gz=官字 zz=中字 tx=特效 ybyp=原生
+  #   lz=连载 wj=完结 diy=DIY db=杜比视界 hdr10=HDR10 hdrm=HDR10+ cc=Criterion
+  #   jz=禁转 xz=限转 sf=首发 yq=应求
   tag:
+    "tag.原创": "yc"
     "tag.国语": "gy"
     "tag.粤语": "yy"
+    "tag.官字": "gz"
     "tag.中字": "zz"
-    "tag.DIY": "diy"
+    "tag.特效": "tx"
     "tag.原生": "ybyp"
-    "tag.HDR10": "hdr10"
-    "tag.HDR10+": "hdr10"
+    "tag.连载": "lz"
+    "tag.完结": "wj"
+    "tag.DIY": "diy"
     "tag.杜比": "db"
+    "tag.DV": "db"
+    "tag.Dolby Vision": "db"
+    "tag.HDR": "hdr10"
+    "tag.HDR10": "hdr10"
+    "tag.HDR10+": "hdrm"
+    "tag.Criterion": "cc"
+    "tag.禁转": "jz"
+    "tag.限转": "xz"
+    "tag.首发": "sf"
+    "tag.应求": "yq"
     "default": null

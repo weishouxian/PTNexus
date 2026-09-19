@@ -371,9 +371,16 @@ const versionUpdateRef = ref()
 
 // 页面注册的刷新回调可接收刷新范围参数；不使用该参数的页面保持原有签名即可。
 type ComponentRefreshOptions = { downloaderId?: string }
-const activeComponentRefresher = ref<((options?: ComponentRefreshOptions) => Promise<void>) | null>(null)
+// 刷新结果：refresh_data 在任务互斥等情况会返回 HTTP 200 + success=false，
+// 页面回调需把它回传上来，顶部按钮才能给出真实提示而不是误报成功。
+type RefreshOutcome = { success?: boolean; message?: string }
+const activeComponentRefresher = ref<
+  ((options?: ComponentRefreshOptions) => Promise<RefreshOutcome | void>) | null
+>(null)
 
-const handleComponentReady = (refreshMethod: (options?: ComponentRefreshOptions) => Promise<void>) => {
+const handleComponentReady = (
+  refreshMethod: (options?: ComponentRefreshOptions) => Promise<RefreshOutcome | void>,
+) => {
   activeComponentRefresher.value = refreshMethod
 }
 
@@ -402,13 +409,22 @@ const handleGlobalRefresh = async () => {
   ElMessage.info(`后台正在刷新${scopeLabel}的缓存...`)
 
   try {
+    let outcome: RefreshOutcome | void
     if (shouldDelegateRefreshToComponent(route.path) && activeComponentRefresher.value) {
-      await activeComponentRefresher.value({ downloaderId })
+      outcome = await activeComponentRefresher.value({ downloaderId })
     } else {
-      await axios.post('/api/refresh_data', { downloader_id: downloaderId })
+      const response = await axios.post('/api/refresh_data', { downloader_id: downloaderId })
+      outcome = response.data as RefreshOutcome
       if (activeComponentRefresher.value) {
         await activeComponentRefresher.value({ downloaderId })
       }
+    }
+
+    // 后台已有刷新任务时接口返回 HTTP 200 + success=false，必须显式判断，
+    // 否则会出现「提示已刷新、数据其实没动」的假成功。
+    if (outcome && outcome.success === false) {
+      ElMessage.warning(outcome.message || '后台刷新未执行，请稍后再试。')
+      return
     }
 
     ElMessage.success(`${scopeLabel}数据已刷新！`)

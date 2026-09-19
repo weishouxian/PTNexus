@@ -14,6 +14,13 @@ import (
 
 const refreshLogModule = "种子刷新"
 
+// 刷新触发来源，用于忙碌提示与日志区分：定时任务会长时间全量同步，
+// 用户此时手动点刷新会被互斥拦住，提示里必须说清楚是谁占着。
+const (
+	refreshTriggerManual    = "手动刷新"
+	refreshTriggerScheduled = "定时刷新"
+)
+
 var (
 	commentURLPattern = regexp.MustCompile(`https?://[^\s/$.?#].[^\s]*`)
 	commentObTid      = regexp.MustCompile(`ob_tid=(\d+)`)
@@ -39,15 +46,12 @@ type refreshGroupMatcher struct {
 }
 
 // refreshFromDownloaders 执行下载器种子同步的主流程。
-// 参数/返回：targetDownloaderID 为空表示同步全部启用下载器，非空表示只同步该下载器；返回同步统计与失败明细。
+// 参数/返回：targetDownloaderID 为空表示同步全部启用下载器，非空表示只同步该下载器；trigger 为触发来源（手动/定时）。
 // 失败场景：已有刷新在运行、无可用下载器、指定下载器不存在/已停用时返回 success=false。
 // 副作用：请求下载器接口、写入 torrents 等数据表，并在处理期间持有刷新互斥标记。
-func (s *TorrentDataService) refreshFromDownloaders(targetDownloaderID string) map[string]any {
-	if !s.beginRefresh() {
-		return map[string]any{
-			"success": false,
-			"message": "种子数据更新正在进行中，请稍后再试",
-		}
+func (s *TorrentDataService) refreshFromDownloaders(targetDownloaderID string, trigger string) map[string]any {
+	if !s.beginRefresh(trigger) {
+		return s.refreshBusyResult()
 	}
 	defer s.finishRefresh()
 
@@ -66,6 +70,11 @@ func (s *TorrentDataService) refreshFromDownloaders(targetDownloaderID string) m
 			"message": narrowErr.Error(),
 		}
 	}
+
+	// 记录本次实际目标，供并发请求被互斥拦住时说明「正在同步谁」。
+	names := downloaderNames(scopes.fetchTargets)
+	s.setRefreshTargets(names)
+	logx.Infof(refreshLogModule, "开始刷新 trigger=%s downloader_id=%s downloaders=%s", trigger, targetID, strings.Join(names, "、"))
 
 	siteRows, err := s.repo.ListSiteIdentities()
 	if err != nil {
@@ -223,20 +232,106 @@ func (s *TorrentDataService) refreshFromDownloaders(targetDownloaderID string) m
 	}
 }
 
-func (s *TorrentDataService) beginRefresh() bool {
+// beginRefresh 抢占刷新互斥标记，并记录本次运行的触发来源与起始时间。
+func (s *TorrentDataService) beginRefresh(trigger string) bool {
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	if s.refreshRunning {
 		return false
 	}
 	s.refreshRunning = true
+	s.refreshTrigger = strings.TrimSpace(trigger)
+	s.refreshStartedAt = time.Now()
+	s.refreshTargets = nil
 	return true
 }
 
+// setRefreshTargets 更新本次刷新实际同步的下载器名称，供忙碌提示展示。
+func (s *TorrentDataService) setRefreshTargets(names []string) {
+	s.refreshMu.Lock()
+	s.refreshTargets = append([]string{}, names...)
+	s.refreshMu.Unlock()
+}
+
+// finishRefresh 释放刷新互斥标记并清空运行态快照。
 func (s *TorrentDataService) finishRefresh() {
 	s.refreshMu.Lock()
 	s.refreshRunning = false
+	s.refreshTrigger = ""
+	s.refreshStartedAt = time.Time{}
+	s.refreshTargets = nil
 	s.refreshMu.Unlock()
+}
+
+// refreshBusyResult 组装「刷新进行中」的响应，带上触发来源、目标下载器与已运行时长。
+// 参数/返回：无入参；返回 success=false 且 busy=true 的响应体。
+// 失败场景：无。
+// 副作用：无，仅读取运行态快照。
+func (s *TorrentDataService) refreshBusyResult() map[string]any {
+	s.refreshMu.Lock()
+	trigger := strings.TrimSpace(s.refreshTrigger)
+	startedAt := s.refreshStartedAt
+	targets := append([]string{}, s.refreshTargets...)
+	s.refreshMu.Unlock()
+
+	if trigger == "" {
+		trigger = refreshTriggerManual
+	}
+	label := "全部启用下载器"
+	if len(targets) > 0 {
+		label = strings.Join(targets, "、")
+	}
+	elapsed := time.Duration(0)
+	if !startedAt.IsZero() {
+		elapsed = time.Since(startedAt)
+	}
+	message := fmt.Sprintf(
+		"后台%s正在进行（目标：%s，已运行 %s），请稍后再试。",
+		trigger,
+		label,
+		formatRefreshElapsed(elapsed),
+	)
+	return map[string]any{
+		"success": false,
+		"busy":    true,
+		"message": message,
+		"running": map[string]any{
+			"trigger":     trigger,
+			"downloaders": targets,
+			"elapsed_ms":  elapsed.Milliseconds(),
+		},
+	}
+}
+
+// downloaderNames 提取下载器展示名（缺名时回退 ID），供日志与提示使用。
+func downloaderNames(items []downloaderclient.Downloader) []string {
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" {
+			name = strings.TrimSpace(item.ID)
+		}
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// formatRefreshElapsed 将运行时长格式化为中文可读文本。
+func formatRefreshElapsed(d time.Duration) string {
+	if d <= 0 {
+		return "刚刚开始"
+	}
+	totalSeconds := int(d.Seconds())
+	if totalSeconds < 60 {
+		return fmt.Sprintf("%d 秒", totalSeconds)
+	}
+	if totalSeconds < 3600 {
+		return fmt.Sprintf("%d 分 %d 秒", totalSeconds/60, totalSeconds%60)
+	}
+	return fmt.Sprintf("%d 小时 %d 分", totalSeconds/3600, (totalSeconds%3600)/60)
 }
 
 // downloaderScopes 汇总一次刷新涉及的两类下载器范围，二者必须分开维护：
