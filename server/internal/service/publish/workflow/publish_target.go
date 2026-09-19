@@ -15,7 +15,18 @@ import (
 	publishuploader "github.com/pt-nexus/server/internal/service/publish/uploader"
 )
 
-var publishTitleBitDepthPattern = regexp.MustCompile(`(?i)\b(?:8|10|12|16|24)bit\b`)
+// 青蛙站（qingwapt）发布主标题时需要剔除的技术标记。
+// 色深/剧集状态/帧率属于站点侧不希望在主标题中体现的参数，组件重建与文本兜底两条路径都要剔除。
+var (
+	publishTitleExcludedComponentKeys = []string{"色深", "剧集状态", "帧率"}
+
+	publishTitleBitDepthPattern  = regexp.MustCompile(`(?i)\b(?:8|10|12|16|24)bit\b`)
+	publishTitleStatusPattern    = regexp.MustCompile(`(?i)\bComplete\b`)
+	publishTitleFrameRatePattern = regexp.MustCompile(`(?i)\b\d{2,3}(?:\.\d+)?\s*FPS\b`)
+
+	// 移除标记后可能留下孤立的点号（如 "1080p. . . .WEB-DL"），折叠回单个分隔点。
+	publishTitleDanglingDotPattern = regexp.MustCompile(`(?:\.\s*){2,}`)
+)
 
 // PublishTorrentToTarget 将种子文件发布到目标站点，并返回发布 URL 与日志文案。
 // 参数/返回：targetInfo 为目标站配置，uploadData 为发布字段，torrentPath 为本地种子路径。
@@ -100,6 +111,7 @@ func PublishTorrentToTarget(
 // 参数/返回：siteCode 用于应用站点级标题修正；uploadData 为前端传入的发布参数；torrentPath 用于缺失标题时兜底文件名。
 // 失败场景：标题组件缺失或重建失败时回退到当前通用标题取值，不返回错误。
 // 副作用：无。
+// 站点差异：qingwapt 会用 title_components 重建主标题，并剔除色深、剧集状态、帧率标记；其他站点直接沿用通用标题取值。
 func resolvePublishMainTitle(siteCode string, uploadData map[string]any, torrentPath string) string {
 	baseTitle := firstNonEmpty(
 		extractPublishFinalMainTitle(uploadData),
@@ -115,14 +127,14 @@ func resolvePublishMainTitle(siteCode string, uploadData map[string]any, torrent
 
 	titleComponents := parsePublishTitleComponents(uploadData["title_components"])
 	if len(titleComponents) == 0 {
-		return stripPublishTitleBitDepth(baseTitle)
+		return stripPublishTitleExcludedTokens(baseTitle)
 	}
 
 	completed := processingtitle.CompleteTitleComponents(titleComponents, baseTitle)
-	filtered := filterPublishTitleComponents(completed, "色深")
+	filtered := filterPublishTitleComponents(completed, publishTitleExcludedComponentKeys...)
 	rebuilt := strings.TrimSpace(processingtitle.BuildPreviewTitleFromTitleComponents(filtered, baseTitle))
 	if rebuilt == "" || rebuilt == "-NOGROUP" {
-		return stripPublishTitleBitDepth(baseTitle)
+		return stripPublishTitleExcludedTokens(baseTitle)
 	}
 	return rebuilt
 }
@@ -214,14 +226,21 @@ func filterPublishTitleComponents(items []any, excludedKeys ...string) []any {
 	return filtered
 }
 
-// stripPublishTitleBitDepth 从标题文本中移除独立的色深标记，供缺少标题组件时兜底使用。
-func stripPublishTitleBitDepth(title string) string {
+// stripPublishTitleExcludedTokens 从标题文本中移除青蛙站不接受的技术标记（色深、剧集状态、帧率），供缺少标题组件时兜底使用。
+// 参数/返回：title 为待处理标题；返回清理标记并压缩空白后的标题。
+// 失败场景：空标题返回空字符串。
+// 副作用：无。
+func stripPublishTitleExcludedTokens(title string) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
 		return ""
 	}
 	stripped := publishTitleBitDepthPattern.ReplaceAllString(trimmed, " ")
-	return strings.Join(strings.Fields(stripped), " ")
+	stripped = publishTitleStatusPattern.ReplaceAllString(stripped, " ")
+	stripped = publishTitleFrameRatePattern.ReplaceAllString(stripped, " ")
+	stripped = strings.Join(strings.Fields(stripped), " ")
+	stripped = publishTitleDanglingDotPattern.ReplaceAllString(stripped, ".")
+	return strings.Trim(stripped, " .")
 }
 
 func mapStringAny(value any) map[string]any {
