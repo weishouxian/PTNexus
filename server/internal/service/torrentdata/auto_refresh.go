@@ -62,7 +62,7 @@ func (s *TorrentDataService) runAutoRefresh() {
 				continue
 			}
 			// 定时任务始终同步全部启用下载器，不受前端顶部下载器选择影响。
-			s.RefreshData("")
+			s.refreshScheduled()
 		}
 	}
 }

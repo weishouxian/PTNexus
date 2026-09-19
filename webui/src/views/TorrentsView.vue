@@ -1039,7 +1039,11 @@ const emitGlobalRefreshLoading = (refreshing: boolean) => {
 // 参数/返回：options.downloaderId 为空表示全量同步，非空时只同步该下载器（来自顶部下载器选择）。
 // 失败场景：同步接口报错时仅记录告警，仍会继续重新读取数据库。
 // 副作用：请求刷新接口、重新拉取下载器列表与站点状态，并更新表格数据。
-const syncDownloadersAndReload = async (options?: { downloaderId?: string }) => {
+// 顶部刷新按钮在 /torrents 会委托到这里：先触发下载器同步，再用最新缓存重载列表。
+// 返回 refresh_data 的结果，供顶部按钮区分「被后台任务互斥拦下」与「真的刷新成功」。
+const syncDownloadersAndReload = async (
+  options?: { downloaderId?: string },
+): Promise<{ success?: boolean; message?: string } | void> => {
   if (syncingDownloaderData.value) return
 
   const targetDownloaderId = (options?.downloaderId ?? globalDownloader.selectedDownloaderId).trim()
@@ -1048,15 +1052,24 @@ const syncDownloadersAndReload = async (options?: { downloaderId?: string }) => 
   loading.value = true
   emitGlobalRefreshLoading(true)
 
+  let outcome: { success?: boolean; message?: string } | undefined
   try {
-    await axios.post('/api/refresh_data', { downloader_id: targetDownloaderId })
+    const response = await axios.post('/api/refresh_data', { downloader_id: targetDownloaderId })
+    outcome = response.data
   } catch (error) {
     console.warn('种子数据刷新失败:', error)
+    outcome = {
+      success: false,
+      message: axios.isAxiosError(error)
+        ? (error.response?.data as { message?: string } | undefined)?.message || error.message
+        : '网络错误',
+    }
   }
 
   try {
     // 先获取下载器列表和站点状态，再获取数据
     // 使用 forceRefresh = true 强制刷新缓存
+    // 同步被拦下时同样重载一次，避免界面停留在旧数据上却不自知
     await Promise.all([fetchDownloadersList(true), fetchAllSitesStatus(true)])
     await fetchDataWithoutLoadingControl()
   } finally {
@@ -1064,6 +1077,8 @@ const syncDownloadersAndReload = async (options?: { downloaderId?: string }) => 
     emitGlobalRefreshLoading(false)
     syncingDownloaderData.value = false
   }
+
+  return outcome
 }
 
 const fetchDataWithSpinner = async () => {

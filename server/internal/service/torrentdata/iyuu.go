@@ -39,12 +39,20 @@ func ptrString(value *string) string {
 	return *value
 }
 
-// RefreshData 从下载器同步种子数据（对应 api/refresh_data 接口）。
+// RefreshData 从下载器同步种子数据（对应 api/refresh_data 接口，属手动触发）。
 // 参数/返回：downloaderID 为空时同步全部启用的下载器，非空时只同步该下载器；返回刷新统计与失败明细。
 // 失败场景：已有刷新任务在进行中、无可用下载器、指定下载器不存在或已停用时返回 success=false。
 // 副作用：请求各下载器 API 拉取种子快照，并写入 torrents / torrent_upload_stats 等表，耗时可能较长。
 func (s *TorrentDataService) RefreshData(downloaderID string) map[string]any {
-	return s.refreshFromDownloaders(downloaderID)
+	return s.refreshFromDownloaders(downloaderID, refreshTriggerManual)
+}
+
+// refreshScheduled 执行定时任务触发的全量刷新。
+// 参数/返回：无入参，固定同步全部启用下载器；返回刷新统计与失败明细。
+// 失败场景：与 RefreshData 相同，已有刷新在跑时返回 success=false。
+// 副作用：同 RefreshData。单独区分触发来源，便于手动刷新被互斥拦下时说明是定时任务占用。
+func (s *TorrentDataService) refreshScheduled() map[string]any {
+	return s.refreshFromDownloaders("", refreshTriggerScheduled)
 }
 
 func (s *TorrentDataService) QueryIYUU(payload map[string]any) (map[string]any, int) {

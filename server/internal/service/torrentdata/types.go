@@ -3,6 +3,7 @@ package torrentdata
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/repository"
@@ -57,6 +58,11 @@ type TorrentDataService struct {
 
 	refreshMu      sync.Mutex
 	refreshRunning bool
+	// 运行态快照：刷新进行中时供 refresh_data 返回「谁在跑、跑了多久」，
+	// 避免前端只能拿到一句笼统的「正在进行中」而不知道原因。
+	refreshTrigger   string
+	refreshStartedAt time.Time
+	refreshTargets   []string
 
 	refreshStopCh chan struct{}
 	refreshDoneCh chan struct{}

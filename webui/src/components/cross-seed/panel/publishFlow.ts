@@ -358,16 +358,9 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
               })
               logContent.value = siteLogs.join('\n\n')
 
-              try {
-                await axios.post('/api/refresh_data')
-                ElNotification.success({
-                  title: '数据刷新',
-                  message: '种子数据已刷新',
-                })
-              } catch (error) {
-                console.warn('刷新种子数据失败:', error)
-              }
-
+              // 发布后不再触发种子数据同步：全量同步耗时长（多下载器可达数分钟）且会占用刷新互斥锁，
+              // 使期间的手动刷新被拒。发布结果本身已落库，列表由 fetchData 读取即可；
+              // 下载器侧新增种子交给定时同步覆盖。
               isLoading.value = false
               return
             }
@@ -686,17 +679,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       downloaderStatus: downloaderStatusMap[result.siteName],
     }))
 
-    // 触发种子数据刷新
-    try {
-      await axios.post('/api/refresh_data')
-      ElNotification.success({
-        title: '数据刷新',
-        message: '种子数据已刷新',
-      })
-    } catch (error) {
-      console.warn('刷新种子数据失败:', error)
-    }
-
+    // 发布后不再触发种子数据同步（原因同批量发布分支：全量同步耗时长且会占用刷新互斥锁）
     isLoading.value = false
   }
 
