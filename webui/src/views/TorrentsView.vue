@@ -407,7 +407,8 @@
               type="danger"
               size="small"
               @click.stop="deleteTorrentRow(scope.row)"
-              :disabled="!scope.row.hash"
+              :loading="deletingRowHash === scope.row.hash"
+              :disabled="!scope.row.hash || deletingRowHash !== ''"
             >
               删除
             </el-button>
@@ -970,6 +971,7 @@ import type { ColumnDef } from '../components/ColumnToggle.vue'
 import { useCrossSeedStore } from '@/stores/crossSeed'
 import { useSiteDataStore } from '@/stores/siteData'
 import { useTorrentsViewState } from '@/stores/torrentsViewState'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { ISourceInfo, Torrent, SiteData, Downloader } from '@/types'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
 import { ElMessage } from '@/utils/uiNotify'
@@ -977,6 +979,7 @@ import { ElMessage } from '@/utils/uiNotify'
 const emits = defineEmits(['ready'])
 
 const torrentsViewState = useTorrentsViewState()
+const globalDownloader = useGlobalDownloaderStore()
 
 interface OtherSite {
   name: string
@@ -1033,15 +1036,20 @@ const emitGlobalRefreshLoading = (refreshing: boolean) => {
 }
 
 // 仅供页面顶部刷新按钮调用：先从下载器同步数据，再读取数据库。
-const syncDownloadersAndReload = async () => {
+// 参数/返回：options.downloaderId 为空表示全量同步，非空时只同步该下载器（来自顶部下载器选择）。
+// 失败场景：同步接口报错时仅记录告警，仍会继续重新读取数据库。
+// 副作用：请求刷新接口、重新拉取下载器列表与站点状态，并更新表格数据。
+const syncDownloadersAndReload = async (options?: { downloaderId?: string }) => {
   if (syncingDownloaderData.value) return
+
+  const targetDownloaderId = (options?.downloaderId ?? globalDownloader.selectedDownloaderId).trim()
 
   syncingDownloaderData.value = true
   loading.value = true
   emitGlobalRefreshLoading(true)
 
   try {
-    await axios.post('/api/refresh_data')
+    await axios.post('/api/refresh_data', { downloader_id: targetDownloaderId })
   } catch (error) {
     console.warn('种子数据刷新失败:', error)
   }
@@ -1668,6 +1676,8 @@ const startCrossSeed = async (row: Torrent) => {
 
 // 种子地址反查：调用后端按 info_hash 在站点内搜索同名种子并返回下载直链
 const resolvingUrlHash = ref('')
+// 删除按钮的 loading 标记：删除时后端会向各下载器核对同名副本，耗时比普通请求长。
+const deletingRowHash = ref('')
 const resolveTorrentUrl = async (row: Torrent) => {
   const hash = (row.hash || '').trim()
   if (!hash) {
@@ -1715,7 +1725,8 @@ const resolveTorrentUrl = async (row: Torrent) => {
   }
 }
 
-const deleteTorrentRow = async (row: Torrent) => {	const hash = (row.hash || '').trim()
+const deleteTorrentRow = async (row: Torrent) => {
+	const hash = (row.hash || '').trim()
 	const hashes = Array.from(new Set([...(row.hashes || []), hash].map((item) => item.trim()).filter(Boolean)))
 	if (hashes.length === 0) {
 		ElMessage.warning('当前种子缺少 hash，无法删除')
@@ -1725,7 +1736,7 @@ const deleteTorrentRow = async (row: Torrent) => {	const hash = (row.hash || '')
   let deleteFiles = false
   try {
     await ElMessageBox.confirm(
-      `确定要删除种子「${row.name}」吗？选择“删除记录和文件”会同时删除下载器里的种子任务和已下载文件。`,
+      `确定要删除「${row.name}」吗？“删除记录和文件”会删除它在所有下载器上的任务与文件，包含同名同大小、但此前未同步到本系统的副本。`,
       '删除种子',
       {
         confirmButtonText: '删除记录和文件',
@@ -1744,15 +1755,26 @@ const deleteTorrentRow = async (row: Torrent) => {	const hash = (row.hash || '')
     }
   }
 
+	if (deletingRowHash.value) return
+	deletingRowHash.value = hash
 	try {
 		const response = await axios.post('/api/data/delete', {
 			hash,
 			hashes,
 			delete_files: deleteFiles,
 		})
-    const result = response.data
+    const result = response.data as {
+      success?: boolean
+      message?: string
+      error?: string
+      warnings?: string[]
+    }
     if (result.success) {
       ElMessage.success(result.message || '删除成功')
+      const warnings = result.warnings || []
+      if (warnings.length > 0) {
+        ElMessage.warning(`部分下载器未核对完成：${warnings.join('；')}`)
+      }
       await fetchData()
     } else {
       ElMessage.error(result.error || '删除失败')
@@ -1766,6 +1788,8 @@ const deleteTorrentRow = async (row: Torrent) => {	const hash = (row.hash || '')
         ? error.message
         : '网络错误'
     ElMessage.error(message)
+  } finally {
+    deletingRowHash.value = ''
   }
 }
 
@@ -2576,6 +2600,12 @@ onMounted(async () => {
   try {
     const isFirstVisit = !torrentsViewState.hasInitializedOnce
     await loadUiSettings(isFirstVisit)
+    // 顶部已选下载器时以顶部为准；顶部为“全部”时保留页面自身保存的筛选。
+    const globalDownloaderId = await loadGlobalDownloaderSelection()
+    if (globalDownloaderId) {
+      activeFilters.downloaderIds = [globalDownloaderId]
+      tempFilters.downloaderIds = [globalDownloaderId]
+    }
     await Promise.all([fetchDownloadersList(false), fetchAllSitesStatus(false)])
     // 页面进入和普通查询只读数据库，不触发下载器同步。
     await fetchDataWithoutLoadingControl()
@@ -2596,6 +2626,46 @@ onMounted(async () => {
 const checkDevEnv = () => {
   isDevEnv.value = import.meta.env.DEV
 }
+
+// loadGlobalDownloaderSelection 读取顶部全局下载器选择（首次请求服务端，之后走内存缓存）。
+// 参数/返回：无参数；返回选中下载器 ID，读取失败时返回空字符串。
+// 失败场景：请求异常时降级为“全部下载器”，不阻断页面加载。
+// 副作用：可能发起一次 GET /api/ui_settings/global_downloader 请求。
+const loadGlobalDownloaderSelection = async () => {
+  try {
+    return (await globalDownloader.loadSelection()).trim()
+  } catch (e) {
+    console.error('读取全局下载器选择失败:', e)
+    return ''
+  }
+}
+
+// sameIdList 比较两个下载器 ID 列表内容是否一致（忽略顺序与重复）。
+const sameIdList = (left: string[], right: string[]) => {
+  const normalizedLeft = Array.from(new Set(left.map((item) => (item || '').trim()).filter(Boolean))).sort()
+  const normalizedRight = Array.from(
+    new Set(right.map((item) => (item || '').trim()).filter(Boolean)),
+  ).sort()
+  if (normalizedLeft.length !== normalizedRight.length) return false
+  return normalizedLeft.every((item, index) => item === normalizedRight[index])
+}
+
+// 顶部下载器切换即生效：收敛本页下载器筛选并重新查询。
+watch(
+  () => globalDownloader.selectedDownloaderId,
+  (id) => {
+    // 初始化阶段由 onMounted 统一处理，避免重复请求。
+    if (isInitializing.value) return
+    const nextId = (id || '').trim()
+    const expected = nextId ? [nextId] : []
+    if (sameIdList(activeFilters.downloaderIds, expected)) return
+    activeFilters.downloaderIds = expected
+    tempFilters.downloaderIds = [...expected]
+    currentPage.value = 1
+    fetchDataWithSpinner()
+    saveUiSettings()
+  },
+)
 
 watch(nameSearch, () => {
   // 在初始化期间跳过，避免 loadUiSettings 修改 nameSearch 时触发

@@ -665,6 +665,7 @@ func (s *Service) PushItems(ids []int64) (map[string]any, error) {
 			results = append(results, map[string]any{"id": id, "success": false, "message": "已推送或已进入后续流程"})
 			continue
 		}
+		// 注意：retained（保种到期已清理）不在拒绝列表内——这是用户手动重新保种/重新发种的唯一入口。
 
 		downloaderID, options, err := s.resolveAutoSeedPushSettings(item)
 		if err != nil {
@@ -936,7 +937,7 @@ func (s *Service) DeleteItems(ids []int64, deleteFiles bool) (int64, error) {
 // cleanupExpiredRetainedSeeds 清理超过规则保种时间的已发布种子，并同步删除下载器任务和文件。
 // 参数/返回：无入参；失败仅记录日志，避免阻断自动发种主轮询。
 // 失败场景：数据库查询失败、下载器连接失败或删除接口失败时记录告警并继续处理其他记录。
-// 副作用：会请求下载器删除种子和文件，并删除对应 auto_seed_items 记录。
+// 副作用：会请求下载器删除种子和文件，并把对应 auto_seed_items 记录标记为 retained（保留记录用于 RSS 去重）。
 func (s *Service) cleanupExpiredRetainedSeeds() {
 	if s == nil || s.repo == nil {
 		return
@@ -973,7 +974,7 @@ func (s *Service) cleanupExpiredRetainedSeeds() {
 	}
 
 	now := time.Now()
-	cleaned := 0
+	retired := 0
 	skipped := 0
 	for _, candidate := range candidates {
 		retention := candidate.SeedRetentionMinutes
@@ -992,35 +993,37 @@ func (s *Service) cleanupExpiredRetainedSeeds() {
 			skipped++
 			continue
 		}
-		// 保种清理：先删下载器任务和文件，成功后再删 DB 记录；
-		// 下载器删除失败时不删 DB，下一轮重试，避免"DB 删了但文件还在"。
-		deleted, err := s.deleteRetainedSeed(candidate.AutoSeedItem)
+		// 保种清理：先删下载器任务和文件，成功后再把记录标记为 retained（不删记录）；
+		// 保留记录是为了让 RSS 的 rule_id + guid 去重继续生效，否则站点 RSS 窗口内还能拉到同一条目时会被重新下载。
+		// 下载器删除失败时不改状态，下一轮重试，避免"记录标记了但文件还在"。
+		marked, err := s.retireExpiredSeed(candidate.AutoSeedItem)
 		if err != nil {
 			logx.Warnf(moduleAutoSeed, "保种到期清理失败(下载器未删除,下轮重试) item_id=%d rule_id=%d retention_minutes=%d err=%v", candidate.ID, candidate.RuleID, retention, err)
 			continue
 		}
-		if deleted > 0 {
-			cleaned += int(deleted)
-			logx.Infof(moduleAutoSeed, "保种到期已删除种子和文件 item_id=%d rule_id=%d retention_minutes=%d last_publish_at=%s", candidate.ID, candidate.RuleID, retention, lastPublishedAt.Format(repository.PublishQueueTimeLayout))
+		if marked > 0 {
+			retired += int(marked)
+			logx.Infof(moduleAutoSeed, "保种到期已删除种子和文件并保留记录 item_id=%d rule_id=%d retention_minutes=%d last_publish_at=%s", candidate.ID, candidate.RuleID, retention, lastPublishedAt.Format(repository.PublishQueueTimeLayout))
 		}
 	}
-	if cleaned > 0 || skipped > 0 {
-		logx.Infof(moduleAutoSeed, "保种到期清理完成 deleted=%d skipped=%d", cleaned, skipped)
+	if retired > 0 || skipped > 0 {
+		logx.Infof(moduleAutoSeed, "保种到期清理完成 retired=%d skipped=%d", retired, skipped)
 	}
 }
 
-// deleteRetainedSeed 删除保种到期的种子：先删下载器任务和文件，成功后再删 DB 记录。
-// 下载器删除失败时返回 error，不删 DB 记录，由调用方决定下一轮重试。
-// hash 为空时先尝试从下载器按 name 匹配补全，补全失败则直接删 DB（下载器里可能已无此任务）。
-func (s *Service) deleteRetainedSeed(item repository.AutoSeedItem) (int64, error) {
+// retireExpiredSeed 处理保种到期的种子：先删下载器任务和文件，成功后再把记录标记为已清理（retained）。
+// 记录不删除，使其继续参与 UpsertItem 的 rule_id + guid 去重；用户需要重新发种时可在列表里手动重新推送。
+// 下载器删除失败时返回 error 且不改状态，由调用方决定下一轮重试。
+// hash 为空时先尝试从下载器按 name 匹配补全，补全失败则直接标记（下载器里可能已无此任务）。
+func (s *Service) retireExpiredSeed(item repository.AutoSeedItem) (int64, error) {
 	if s == nil || s.repo == nil {
 		return 0, errors.New("service is nil")
 	}
 	downloaderID := strings.TrimSpace(item.DownloaderID)
 	downloaderHash := strings.TrimSpace(item.DownloaderHash)
 	if downloaderID == "" {
-		// 无下载器信息，直接删 DB 记录
-		return s.repo.DeleteItems([]int64{item.ID})
+		// 无下载器信息，直接标记为已清理
+		return s.repo.MarkItemRetained(item.ID)
 	}
 	// hash 为空时先尝试从下载器按 name 匹配补全
 	if downloaderHash == "" {
@@ -1031,9 +1034,9 @@ func (s *Service) deleteRetainedSeed(item repository.AutoSeedItem) (int64, error
 		if downloaderHash != "" {
 			_ = s.repo.UpdateItemDownloaderHash(item.ID, downloaderID, downloaderHash)
 		} else {
-			// 仍无法获取 hash，直接删 DB 记录（下载器里可能已无此任务）
-			logx.Warnf(moduleAutoSeed, "保种清理 hash 为空且无法补全，仅删 DB 记录 item_id=%d downloader_id=%s", item.ID, downloaderID)
-			return s.repo.DeleteItems([]int64{item.ID})
+			// 仍无法获取 hash，直接标记（下载器里可能已无此任务）
+			logx.Warnf(moduleAutoSeed, "保种清理 hash 为空且无法补全，直接标记为已清理 item_id=%d downloader_id=%s", item.ID, downloaderID)
+			return s.repo.MarkItemRetained(item.ID)
 		}
 	}
 	root := s.rootConfig()
@@ -1044,7 +1047,7 @@ func (s *Service) deleteRetainedSeed(item repository.AutoSeedItem) (int64, error
 	if err := d.DeleteTorrents([]string{downloaderHash}, true); err != nil {
 		return 0, fmt.Errorf("删除下载器任务失败: %w", err)
 	}
-	return s.repo.DeleteItems([]int64{item.ID})
+	return s.repo.MarkItemRetained(item.ID)
 }
 
 // Progress 返回下载器进度页数据。
@@ -1451,7 +1454,7 @@ func restrictedTagRejectReason(item *repository.AutoSeedItem) string {
 
 // shouldRetryAutoSeedItem 判断已存在的 RSS 记录是否应在下一轮重新尝试推送。
 // 参数/返回：item 为数据库中的现有记录；返回 true 表示允许重新抓取详情并添加到下载器。
-// 失败场景：空记录或已推送、已整理、已发布记录不会重试。
+// 失败场景：空记录或已推送、已整理、已发布、已保种清理记录不会重试。
 // 副作用：无，仅根据记录状态和失败原因做判断。
 func shouldRetryAutoSeedItem(item *repository.AutoSeedItem) bool {
 	if item == nil {
@@ -1462,6 +1465,9 @@ func shouldRetryAutoSeedItem(item *repository.AutoSeedItem) bool {
 		return true
 	case repository.AutoSeedItemStatusRejected:
 		return isRetryableAutoSeedRejectReason(item.RejectReason)
+	case repository.AutoSeedItemStatusRetained:
+		// 保种到期已清理：记录只用于 RSS 去重，不自动重新下载；需要重发时由用户在列表里手动重新推送。
+		return false
 	default:
 		return false
 	}
@@ -1603,6 +1609,12 @@ func (s *Service) enrichItemSavePaths(items []repository.AutoSeedItem) {
 			downloaderID := strings.TrimSpace(items[idx].DownloaderID)
 			downloaderHash := strings.TrimSpace(items[idx].DownloaderHash)
 			if downloaderID == "" || downloaderHash == "" {
+				continue
+			}
+			// retained 表示种子已从下载器删除（保种到期清理或「一种多站」手动删除），
+			// 直接按已删除处理，省掉一次必然落空的下载器列表查询。
+			if strings.TrimSpace(items[idx].Status) == repository.AutoSeedItemStatusRetained {
+				items[idx].DeletedFromDownloader = true
 				continue
 			}
 			record, err := s.repo.FindTorrentByDownloaderHash(downloaderID, downloaderHash)

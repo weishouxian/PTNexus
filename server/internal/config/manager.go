@@ -265,6 +265,10 @@ func defaultConfig() map[string]any {
 					"target_site":    "",
 				},
 			},
+			// 顶部全局下载器选择：空字符串表示“全部下载器”。
+			"global_downloader": map[string]any{
+				"downloader_id": "",
+			},
 		},
 		"iyuu_settings": map[string]any{
 			"path_filter_enabled": false,

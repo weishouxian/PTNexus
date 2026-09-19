@@ -18,6 +18,9 @@ const (
 	AutoSeedItemStatusOrganized = "organized"
 	AutoSeedItemStatusPublished = "published"
 	AutoSeedItemStatusRejected  = "rejected"
+	// AutoSeedItemStatusRetained 表示保种到期、种子与文件已从下载器删除，但记录保留下来继续参与 RSS 去重。
+	// 若这里直接删记录，UpsertItem 的 rule_id + guid 去重会失效，RSS 窗口内的同一条目会被重新下载一遍。
+	AutoSeedItemStatusRetained = "retained"
 )
 
 // AutoSeedRule 表示一条 RSS 自动发种规则，包含过滤条件、下载器和发布目标。
@@ -99,8 +102,10 @@ type AutoSeedItem struct {
 	PushedAt    *string `json:"pushed_at,omitempty" gorm:"column:pushed_at"`
 	OrganizedAt *string `json:"organized_at,omitempty" gorm:"column:organized_at"`
 	PublishedAt *string `json:"published_at,omitempty" gorm:"column:published_at"`
-	CreatedAt   string  `json:"created_at" gorm:"column:created_at"`
-	UpdatedAt   string  `json:"updated_at" gorm:"column:updated_at"`
+	// RetainedAt 记录保种到期清理时间；非空表示这条记录已被保种清理，仅保留用于 RSS 去重。
+	RetainedAt *string `json:"retained_at,omitempty" gorm:"column:retained_at"`
+	CreatedAt  string  `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt  string  `json:"updated_at" gorm:"column:updated_at"`
 }
 
 func (AutoSeedItem) TableName() string { return "auto_seed_items" }
@@ -207,13 +212,14 @@ func (r *AutoSeedRepository) UpdateRule(rule *AutoSeedRule) error {
 }
 
 // DeleteRule 删除规则以及该规则下尚未发布的 RSS 记录。
+// 已发布（published）与保种到期已清理（retained）的记录保留：前者是历史，后者还需要继续参与 RSS 去重。
 func (r *AutoSeedRepository) DeleteRule(id int64) error {
 	if r == nil || r.store == nil || r.store.DB == nil {
 		return errors.New("auto seed repo is nil")
 	}
 	return r.store.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Table("auto_seed_items").
-			Where("rule_id = ? AND status NOT IN ?", id, []string{AutoSeedItemStatusPublished}).
+			Where("rule_id = ? AND status NOT IN ?", id, []string{AutoSeedItemStatusPublished, AutoSeedItemStatusRetained}).
 			Delete(&AutoSeedItem{}).Error; err != nil {
 			return err
 		}
@@ -341,6 +347,7 @@ func (r *AutoSeedRepository) ResetItemForRetry(item *AutoSeedItem) error {
 		"downloader_hash":      "",
 		"progress":             0,
 		"downloaded":           false,
+		"retained_at":          nil,
 		"torrent_id":           item.TorrentID,
 		"site_name":            item.SiteName,
 		"pushed_at":            nil,
@@ -471,6 +478,7 @@ func (r *AutoSeedRepository) UpdateItemFetchedDetails(item *AutoSeedItem) error 
 }
 
 // MarkItemPushed 更新种子推送下载器后的状态。
+// 同时清空 retained_at：保种到期清理过的记录被手动重新推送后，应回到正常的推送生命周期。
 func (r *AutoSeedRepository) MarkItemPushed(id int64, downloaderID, downloaderHash, rejectReason string) error {
 	if r == nil || r.store == nil || r.store.DB == nil {
 		return errors.New("auto seed repo is nil")
@@ -481,6 +489,7 @@ func (r *AutoSeedRepository) MarkItemPushed(id int64, downloaderID, downloaderHa
 		"downloader_hash": strings.TrimSpace(downloaderHash),
 		"reject_reason":   strings.TrimSpace(rejectReason),
 		"pushed_at":       nowText,
+		"retained_at":     nil,
 		"updated_at":      nowText,
 	}
 	if value := strings.TrimSpace(downloaderID); value != "" {
@@ -499,6 +508,75 @@ func (r *AutoSeedRepository) MarkItemRejected(id int64, reason string) error {
 		"reject_reason": strings.TrimSpace(reason),
 		"updated_at":    time.Now().Format(PublishQueueTimeLayout),
 	}).Error
+}
+
+// MarkItemRetained 把保种到期清理的记录标记为 retained，保留记录本身用于后续 RSS 去重。
+// 参数/返回：id 为自动发种记录 ID；返回受影响行数与数据库错误。
+// 失败场景：仓储未初始化、id 非法或更新失败时返回 error。
+// 副作用：更新 auto_seed_items 的 status/retained_at/updated_at，不删除记录；downloader_hash 保留以便前端展示与手动重新推送。
+func (r *AutoSeedRepository) MarkItemRetained(id int64) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("auto seed repo is nil")
+	}
+	if id <= 0 {
+		return 0, errors.New("item id is invalid")
+	}
+	nowText := time.Now().Format(PublishQueueTimeLayout)
+	result := r.store.DB.Table("auto_seed_items").Where("id = ?", id).Updates(map[string]any{
+		"status":      AutoSeedItemStatusRetained,
+		"retained_at": nowText,
+		"updated_at":  nowText,
+	})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// MarkItemsRetainedByHashes 按下载器种子 hash 批量把自动发种记录标记为 retained。
+// 参数/返回：hashes 为已从下载器删除的种子 hash（大小写不敏感）；返回被标记的记录数与数据库错误。
+// 失败场景：仓储未初始化或更新失败时返回 error；hashes 为空时直接返回 0，不执行 SQL。
+// 副作用：更新匹配到的 auto_seed_items 记录 status/retained_at/updated_at，不删除记录，downloader_hash 保留。
+//
+// 只标记「种子确实进过下载器」的记录（pushed/organized/published）：
+// pending/rejected 表示尚未推送成功或等待重试，若一并标记会阻断后续重试，因此跳过。
+func (r *AutoSeedRepository) MarkItemsRetainedByHashes(hashes []string) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("auto seed repo is nil")
+	}
+	lowered := make([]string, 0, len(hashes))
+	seen := map[string]struct{}{}
+	for _, hash := range hashes {
+		trimmed := strings.ToLower(strings.TrimSpace(hash))
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		lowered = append(lowered, trimmed)
+	}
+	if len(lowered) == 0 {
+		return 0, nil
+	}
+	nowText := time.Now().Format(PublishQueueTimeLayout)
+	result := r.store.DB.Table("auto_seed_items").
+		Where("LOWER(downloader_hash) IN ?", lowered).
+		Where("status IN ?", []string{
+			AutoSeedItemStatusPushed,
+			AutoSeedItemStatusOrganized,
+			AutoSeedItemStatusPublished,
+		}).
+		Updates(map[string]any{
+			"status":      AutoSeedItemStatusRetained,
+			"retained_at": nowText,
+			"updated_at":  nowText,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
 
 // UpdateItemProgress 更新自动发种记录的下载进度。

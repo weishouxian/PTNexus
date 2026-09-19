@@ -411,6 +411,9 @@ import { Setting } from '@element-plus/icons-vue'
 import axios from 'axios'
 import type { ElTree } from 'element-plus'
 import { ElMessage } from '@/utils/uiNotify'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
+
+const globalDownloader = useGlobalDownloaderStore()
 
 const emit = defineEmits<{
   (e: 'cancel'): void
@@ -521,6 +524,9 @@ const activeFilters = ref({
   sourceSiteAvailability: [] as string[],
 })
 const tempFilters = ref({ ...activeFilters.value })
+
+// 初始化标记：避免加载顶部下载器选择时触发重复查询。
+const uiInitializing = ref(true)
 
 // 任务进度相关
 const currentTaskId = ref<string | null>(null)
@@ -1115,11 +1121,58 @@ const shortenPath = (path: string, maxLength: number = 50) => {
   return `${start}...${end}`
 }
 
+// loadGlobalDownloaderSelection 读取顶部全局下载器选择（首次请求服务端，之后走内存缓存）。
+// 参数/返回：无参数；返回选中的下载器 ID，读取失败时返回空字符串。
+// 失败场景：请求异常时降级为“全部下载器”，不阻断面板加载。
+// 副作用：可能发起一次 GET /api/ui_settings/global_downloader 请求。
+const loadGlobalDownloaderSelection = async () => {
+  try {
+    return (await globalDownloader.loadSelection()).trim()
+  } catch (e) {
+    console.error('读取全局下载器选择失败:', e)
+    return ''
+  }
+}
+
+// sameDownloaderIdList 比较两个下载器 ID 列表内容是否一致（忽略顺序与去重）。
+const sameDownloaderIdList = (left: string[], right: string[]) => {
+  const normalize = (items: string[]) =>
+    Array.from(new Set(items.map((item) => (item || '').trim()).filter(Boolean))).sort()
+  const normalizedLeft = normalize(left)
+  const normalizedRight = normalize(right)
+  if (normalizedLeft.length !== normalizedRight.length) return false
+  return normalizedLeft.every((item, index) => item === normalizedRight[index])
+}
+
+// 顶部下载器切换即生效：收敛面板的下载器筛选并重新查询。
+watch(
+  () => globalDownloader.selectedDownloaderId,
+  (id) => {
+    // 初始化阶段由 onMounted 统一处理，避免重复请求。
+    if (uiInitializing.value) return
+    const nextId = (id || '').trim()
+    const expected = nextId ? [nextId] : []
+    if (sameDownloaderIdList(activeFilters.value.downloaderIds || [], expected)) return
+    activeFilters.value = { ...activeFilters.value, downloaderIds: expected }
+    tempFilters.value = { ...tempFilters.value, downloaderIds: [...expected] }
+    currentPage.value = 1
+    fetchData()
+    saveFiltersToConfig()
+  },
+)
+
 onMounted(async () => {
   await fetchDownloadersList()
   await loadFiltersFromConfig()
+  // 顶部已选下载器时以顶部为准；顶部为“全部”时保留面板自身保存的筛选。
+  const globalDownloaderId = await loadGlobalDownloaderSelection()
+  if (globalDownloaderId) {
+    activeFilters.value = { ...activeFilters.value, downloaderIds: [globalDownloaderId] }
+    tempFilters.value = { ...tempFilters.value, downloaderIds: [globalDownloaderId] }
+  }
   await loadSiteStatuses() // 加载站点状态
   await fetchAllPaths() // 获取所有路径
+  uiInitializing.value = false
   fetchData()
 })
 

@@ -13,6 +13,7 @@
             <el-option label="已推送" value="pushed" />
             <el-option label="已整理" value="organized" />
             <el-option label="已发布" value="published" />
+            <el-option label="保种到期（已清理）" value="retained" />
             <el-option label="有未推送原因" value="rejected" />
           </el-select>
           <el-select v-model="filters.downloader_id" placeholder="下载器" clearable class="filter">
@@ -138,7 +139,9 @@
           </el-table-column>
           <el-table-column label="操作" width="290" fixed="right">
             <template #default="{ row }">
-              <el-button size="small" @click="openOrganizeDialog(row)">整理</el-button>
+              <el-button size="small" :disabled="isRetained(row.status)" @click="openOrganizeDialog(row)"
+                >整理</el-button
+              >
               <el-button
                 size="small"
                 type="primary"
@@ -146,9 +149,13 @@
                 :disabled="isWorkflowStarted(row.status)"
                 @click="pushItems([row])"
               >
-                推送
+                {{ isRetained(row.status) ? '重新推送' : '推送' }}
               </el-button>
-              <el-button size="small" type="success" @click="openPublishDialog([row])"
+              <el-button
+                size="small"
+                type="success"
+                :disabled="isRetained(row.status)"
+                @click="openPublishDialog([row])"
                 >发布</el-button
               >
               <el-button size="small" type="info" @click="openLogs(row)">发布日志</el-button>
@@ -279,7 +286,7 @@
               <el-button
                 size="small"
                 type="success"
-                :disabled="row.status === 'published'"
+                :disabled="row.status === 'published' || isRetained(row.status)"
                 @click="openPublishDialog([row])"
               >
                 立即发布
@@ -523,7 +530,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import CrossSeedPanel from '@/components/CrossSeedPanel.vue'
 import { useCrossSeedStore } from '@/stores/crossSeed'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { WorkingTorrent } from '@/components/cross-seed/panel/types'
+
+const globalDownloader = useGlobalDownloaderStore()
 
 type Downloader = { id: string; name: string }
 type SiteItem = { name: string; can_publish: boolean }
@@ -582,6 +592,7 @@ type Item = {
   downloaded: boolean
   deleted_from_downloader?: boolean
   pushed_at?: string
+  retained_at?: string
   torrent_id: string
   site_name: string
 }
@@ -608,6 +619,9 @@ const filters = ref({
   search: '',
 })
 const progressDownloader = ref('')
+
+// 初始化标记：避免加载顶部下载器选择时触发重复查询。
+const uiInitializing = ref(true)
 
 const ruleDialogVisible = ref(false)
 const manualDialogVisible = ref(false)
@@ -927,8 +941,12 @@ const pushItems = async (rows: Item[]) => {
     ElMessage.warning('选中的记录都已经进入后续流程了')
     return
   }
+  const retainedCount = candidates.filter((row) => isRetained(row.status)).length
+  const hint = retainedCount
+    ? `其中 ${retainedCount} 条是已清理的记录，会重新抓取种子并再次下载。`
+    : ''
   await ElMessageBox.confirm(
-    `确定将 ${candidates.length} 条记录推送到下载器并进入后续流程吗？`,
+    `确定将 ${candidates.length} 条记录推送到下载器并进入后续流程吗？${hint}`,
     '推送种子',
   )
   await axios.post('/api/auto-seed/items/push', {
@@ -974,6 +992,8 @@ const displayType = (value: string) => typeDisplayMap[(value || '').trim()] || v
 const displayMedium = (value: string) => mediumDisplayMap[(value || '').trim()] || value || '-'
 const isWorkflowStarted = (status: string) =>
   ['pushed', 'organized', 'published'].includes((status || '').trim())
+// 保种到期已清理：记录保留仅用于 RSS 去重，种子与文件已从下载器删除；重新推送可将它拉回正常流程。
+const isRetained = (status: string) => (status || '').trim() === 'retained'
 const subtitlePreview = (value: string) => {
   const text = (value || '').trim()
   if (!text) return '-'
@@ -981,8 +1001,10 @@ const subtitlePreview = (value: string) => {
   return chars.length > 20 ? `${chars.slice(0, 20).join('')}...` : text
 }
 const statusText = (row: Item) => {
+  // retained 比 deleted_from_downloader 更具体：保种清理后下载器里自然也没有该种子，优先显示保种状态。
+  const status = (row.status || '').trim()
+  if (status === 'retained') return '保种到期'
   if (row.deleted_from_downloader) return '已删除'
-  const status = row.status
   return (
     ({
       pending: '未推送',
@@ -994,8 +1016,9 @@ const statusText = (row: Item) => {
   )
 }
 const statusType = (row: Item) => {
+  const status = (row.status || '').trim()
+  if (status === 'retained') return 'info'
   if (row.deleted_from_downloader) return 'danger'
-  const status = row.status
   return (
     ({
       pending: 'info',
@@ -1007,6 +1030,7 @@ const statusType = (row: Item) => {
   )
 }
 const progressGroup = (row: Item) => {
+  if ((row.status || '').trim() === 'retained') return '已清理'
   if (row.deleted_from_downloader) return '已删除'
   if (row.status === 'published') return '已发布'
   if (row.downloaded || Number(row.progress) >= 99.9) return '待发布'
@@ -1056,9 +1080,52 @@ watch(activeTab, (tab) => {
   if (tab === 'progress') fetchProgress()
 })
 
+// loadGlobalDownloaderSelection 读取顶部全局下载器选择（首次请求服务端，之后走内存缓存）。
+// 参数/返回：无参数；返回选中的下载器 ID，读取失败时返回空字符串。
+// 失败场景：请求异常时降级为“全部下载器”，不阻断页面加载。
+// 副作用：可能发起一次 GET /api/ui_settings/global_downloader 请求。
+const loadGlobalDownloaderSelection = async () => {
+  try {
+    return (await globalDownloader.loadSelection()).trim()
+  } catch (e) {
+    console.error('读取全局下载器选择失败:', e)
+    return ''
+  }
+}
+
+// 顶部下载器切换即生效：同步「任务列表」与「下载器进度」两个页签的下载器筛选。
+watch(
+  () => globalDownloader.selectedDownloaderId,
+  (id) => {
+    // 初始化阶段由 onMounted 统一处理，避免重复请求。
+    if (uiInitializing.value) return
+    const normalized = (id || '').trim()
+    let changed = false
+    if ((filters.value.downloader_id || '') !== normalized) {
+      filters.value.downloader_id = normalized
+      changed = true
+    }
+    if ((progressDownloader.value || '') !== normalized) {
+      progressDownloader.value = normalized
+      changed = true
+    }
+    if (!changed) return
+    page.value = 1
+    fetchItems()
+    if (activeTab.value === 'progress') fetchProgress()
+  },
+)
+
 onMounted(async () => {
   await Promise.all([fetchDownloaders(), fetchSiteOptions()])
+  // 顶部已选下载器时以顶部为准；顶部为“全部”时保持页面默认值。
+  const globalDownloaderId = await loadGlobalDownloaderSelection()
+  if (globalDownloaderId) {
+    filters.value.downloader_id = globalDownloaderId
+    progressDownloader.value = globalDownloaderId
+  }
   await Promise.all([fetchItems(), fetchRules()])
+  uiInitializing.value = false
 })
 </script>
 

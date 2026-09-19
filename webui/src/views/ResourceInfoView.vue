@@ -407,7 +407,7 @@ function openPoster(url: string) {
 // cleanPoster 将 BBCode 形式 [img]url[/img] 的海报文本剥出纯 URL，避免 <img src> 失效。
 function cleanPoster(raw: string): string {
   if (!raw) return ''
-  const m = raw.match(/\[img(?:\=[^\]]*)?\]([\s\S]*?)\[\/img\]/i)
+  const m = raw.match(/\[img(?:=[^\]]*)?\]([\s\S]*?)\[\/img\]/i)
   if (m && m[1] && m[1].trim()) return m[1].trim()
   return raw
 }

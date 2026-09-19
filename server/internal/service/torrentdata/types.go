@@ -52,6 +52,8 @@ type TorrentDataService struct {
 	repo      *repository.TorrentDataRepository
 	cfg       *config.Manager
 	iyuuTasks *IYUUTaskService
+	// autoSeedRepo 用于「一种多站」删除种子后把对应的自动发种记录标记为 retained，可缺省（为 nil 时跳过标记）。
+	autoSeedRepo *repository.AutoSeedRepository
 
 	refreshMu      sync.Mutex
 	refreshRunning bool
@@ -74,6 +76,17 @@ func NewTorrentDataService(repo *repository.TorrentDataRepository, cfg *config.M
 		refreshStopCh: make(chan struct{}),
 		refreshDoneCh: make(chan struct{}),
 	}
+}
+
+// SetAutoSeedRepository 注入自动发种仓储，用于删除种子时同步标记 auto_seed_items 记录。
+// 参数/返回：repo 为自动发种仓储实例；无返回值。
+// 失败场景：无。
+// 副作用：后续「一种多站」删除操作会把命中的自动发种记录标记为 retained。
+func (s *TorrentDataService) SetAutoSeedRepository(repo *repository.AutoSeedRepository) {
+	if s == nil {
+		return
+	}
+	s.autoSeedRepo = repo
 }
 
 // SetIYUULogger 设置 IYUU 查询过程的日志回调，便于在设置页展示进度信息。
