@@ -43,8 +43,21 @@ func (h *TorrentDataHandler) Data(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// RefreshData 触发种子数据刷新（对应 POST /api/refresh_data）。
+// 参数/返回：支持 query 或 JSON body 传入 downloader_id，为空表示同步全部启用下载器；HTTP 200 返回刷新统计。
+// 失败场景：请求体为空或格式错误时按全量刷新处理，不返回 4xx；同步失败信息通过返回体的 success/message 表达。
+// 副作用：触发下载器同步并写入数据库，耗时可能达到分钟级。
 func (h *TorrentDataHandler) RefreshData(c *gin.Context) {
-	c.JSON(http.StatusOK, h.service.RefreshData())
+	downloaderID := strings.TrimSpace(c.Query("downloader_id"))
+	if downloaderID == "" {
+		payload := map[string]any{}
+		if err := c.ShouldBindJSON(&payload); err == nil {
+			if raw, ok := payload["downloader_id"].(string); ok {
+				downloaderID = strings.TrimSpace(raw)
+			}
+		}
+	}
+	c.JSON(http.StatusOK, h.service.RefreshData(downloaderID))
 }
 
 func (h *TorrentDataHandler) CachedSites(c *gin.Context) {

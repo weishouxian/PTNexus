@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"gorm.io/gorm/clause"
 )
 
@@ -15,6 +16,8 @@ const (
 	torrentHideReasonRemovedDownloader  = "removed_downloader"
 	torrentHideReasonDisabledDownloader = "disabled_downloader"
 )
+
+const torrentSyncLogModule = "种子同步"
 
 // SiteIdentity 描述站点识别所需的基础字段，用于从 tracker/comment 反查站点昵称。
 type SiteIdentity struct {
@@ -362,7 +365,9 @@ func (r *TorrentDataRepository) SyncDownloaderTorrents(downloaderID string, reco
 }
 
 // HideDisabledDownloaderData 将停用下载器的种子数据统一标记为隐藏。
-// 参数/返回：enabledDownloaderIDs 为当前启用下载器，configuredDownloaderIDs 为配置内全部下载器。
+// 参数/返回：enabledDownloaderIDs 为当前启用下载器，configuredDownloaderIDs 为配置内全部下载器，
+// 两者都必须是配置的完整快照，不能传入被收窄的子集（例如只刷新单个下载器时的目标列表），
+// 否则未出现在列表中的下载器会被误判为停用；返回本次隐藏的 torrents 行数。
 // 失败场景：查询或更新数据库失败时返回错误。
 // 副作用：更新 torrents/torrent_upload_stats 的隐藏字段，不做物理删除。
 func (r *TorrentDataRepository) HideDisabledDownloaderData(enabledDownloaderIDs []string, configuredDownloaderIDs []string) (int64, error) {
@@ -396,7 +401,8 @@ func (r *TorrentDataRepository) HideDisabledDownloaderData(enabledDownloaderIDs 
 }
 
 // HideRemovedDownloaderData 将已从配置移除的下载器数据标记为隐藏。
-// 参数/返回：configuredDownloaderIDs 为当前配置内仍存在的下载器 ID 列表，返回本次隐藏的 torrents 行数。
+// 参数/返回：configuredDownloaderIDs 为当前配置内仍存在的下载器 ID 列表，必须是配置的完整快照，
+// 不能传入被收窄的子集（例如只刷新单个下载器时的目标列表）；返回本次隐藏的 torrents 行数。
 // 失败场景：读取现存 downloader_id 或更新 SQL 失败时返回错误。
 // 副作用：更新 torrents 与 torrent_upload_stats 的隐藏字段，不做物理删除。
 func (r *TorrentDataRepository) HideRemovedDownloaderData(configuredDownloaderIDs []string) (int64, error) {
@@ -407,6 +413,13 @@ func (r *TorrentDataRepository) HideRemovedDownloaderData(configuredDownloaderID
 			continue
 		}
 		configuredSet[trimmed] = struct{}{}
+	}
+
+	// 空名单直接跳过：配置尚未加载、读取失败，或调用方误传空切片时都会走到这里。
+	// 此时「库内 downloader_id 不在配置内」的判定对每个下载器都成立，继续执行会把全部历史种子隐藏。
+	if len(configuredSet) == 0 {
+		logx.Warnf(torrentSyncLogModule, "跳过已删除下载器数据隐藏：配置内下载器列表为空")
+		return 0, nil
 	}
 
 	existingDownloaderIDs := make([]string, 0)

@@ -418,6 +418,42 @@ func (r *TorrentDataRepository) ListTorrentsByHashes(hashes []string) ([]Torrent
 	return rows, nil
 }
 
+// TorrentContentKey 描述「一种多站」聚合行的内容标识。
+// 参数/返回：Name 为下载器种子名，Size 为种子字节数，二者组合即列表页一行的聚合口径。
+// 失败场景：无直接失败场景。
+// 副作用：无副作用，仅承载数据。
+type TorrentContentKey struct {
+	Name string
+	Size int64
+}
+
+// ListTorrentHashesByContent 按内容标识读取全部种子 hash，包含已隐藏记录。
+// 参数/返回：keys 为「名称+大小」组合列表；返回去重后的 hash 列表与查询错误。
+// 失败场景：keys 为空或全部非法时返回空列表；数据库查询失败时返回 error。
+// 副作用：只读取数据库，不修改下载器或文件。
+func (r *TorrentDataRepository) ListTorrentHashesByContent(keys []TorrentContentKey) ([]string, error) {
+	conditions := make([]string, 0, len(keys))
+	args := make([]any, 0, len(keys)*2)
+	for _, key := range keys {
+		name := strings.TrimSpace(key.Name)
+		if name == "" || key.Size <= 0 {
+			continue
+		}
+		conditions = append(conditions, "(name = ? AND size = ?)")
+		args = append(args, name, key.Size)
+	}
+	if len(conditions) == 0 {
+		return []string{}, nil
+	}
+
+	rows := make([]string, 0)
+	query := "SELECT DISTINCT hash FROM torrents WHERE " + strings.Join(conditions, " OR ")
+	if err := r.store.DB.Raw(query, args...).Pluck("hash", &rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
 // DeleteTorrentByHash 删除 hash 对应的一种多站当前记录和上传统计。
 // 参数/返回：hash 为 torrents.hash；返回删除的 torrents 记录数与错误。
 // 失败场景：数据库删除失败时返回 error。

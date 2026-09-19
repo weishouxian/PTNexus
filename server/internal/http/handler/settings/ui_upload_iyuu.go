@@ -33,6 +33,31 @@ func (h *Handler) SaveUISettings(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "UI 设置已成功保存。"})
 }
 
+// GetGlobalDownloaderUISettings 返回顶部全局下载器选择（跨页面共享，服务端持久化）。
+// 参数/返回：无参数；HTTP 200 返回 {"downloader_id": "..."}，空字符串表示“全部下载器”。
+// 失败场景：无，配置缺失时由 service 返回默认值。
+// 副作用：无。
+func (h *Handler) GetGlobalDownloaderUISettings(c *gin.Context) {
+	c.JSON(http.StatusOK, h.settings.GetGlobalDownloaderUISettings())
+}
+
+// SaveGlobalDownloaderUISettings 保存顶部全局下载器选择。
+// 参数/返回：请求体为 {"downloader_id": "..."}；成功返回 success=true。
+// 失败场景：请求体解析失败返回 400；配置保存失败返回 500。
+// 副作用：写入配置文件并持久化。
+func (h *Handler) SaveGlobalDownloaderUISettings(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	if err := h.settings.SaveGlobalDownloaderUISettings(payload); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "无法保存全局下载器设置。"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "全局下载器设置已成功保存。"})
+}
+
 func (h *Handler) GetCrossSeedUISettings(c *gin.Context) {
 	c.JSON(http.StatusOK, h.settings.GetCrossSeedUIViewSettings())
 }

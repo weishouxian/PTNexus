@@ -107,6 +107,8 @@ func NewApp() (*App, error) {
 	scheduledSeedHandler := handler.NewScheduledSeedHandler(scheduledSeedRepo, scheduledSeedScheduler)
 
 	autoSeedRepo := repository.NewAutoSeedRepository(store)
+	// 「一种多站」删除种子时，需要把命中的自动发种记录一并标记为 retained。
+	torrentDataService.SetAutoSeedRepository(autoSeedRepo)
 	autoSeedService := autoseed.NewService(autoSeedRepo, cfgManager)
 	autoSeedService.SetEnqueueFn(migrateService.EnqueuePublishQueueBatch)
 	autoSeedService.SetFetchSeedFn(migrateService.FetchAndStore)
@@ -277,6 +279,8 @@ func registerRoutes(
 		api.GET("/all_downloaders", settingsHandler.AllDownloaders)
 		api.GET("/ui_settings", settingsHandler.GetUISettings)
 		api.POST("/ui_settings", settingsHandler.SaveUISettings)
+		api.GET("/ui_settings/global_downloader", settingsHandler.GetGlobalDownloaderUISettings)
+		api.POST("/ui_settings/global_downloader", settingsHandler.SaveGlobalDownloaderUISettings)
 		api.GET("/ui_settings/cross_seed", settingsHandler.GetCrossSeedUISettings)
 		api.POST("/ui_settings/cross_seed", settingsHandler.SaveCrossSeedUISettings)
 		api.GET("/ui_settings/publish_logs", settingsHandler.GetPublishLogsUISettings)

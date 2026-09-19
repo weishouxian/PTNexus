@@ -891,6 +891,7 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "pushed_at", definition: map[string]string{"sqlite": "TEXT NULL", "mysql": "DATETIME NULL", "postgresql": "TIMESTAMP NULL"}},
 			{name: "organized_at", definition: map[string]string{"sqlite": "TEXT NULL", "mysql": "DATETIME NULL", "postgresql": "TIMESTAMP NULL"}},
 			{name: "published_at", definition: map[string]string{"sqlite": "TEXT NULL", "mysql": "DATETIME NULL", "postgresql": "TIMESTAMP NULL"}},
+			{name: "retained_at", definition: map[string]string{"sqlite": "TEXT NULL", "mysql": "DATETIME NULL", "postgresql": "TIMESTAMP NULL"}},
 			{name: "created_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
 			{name: "updated_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
 		},
@@ -1286,6 +1287,7 @@ func (m *SchemaManager) createAutoSeedMySQLTables() error {
 			pushed_at DATETIME NULL,
 			organized_at DATETIME NULL,
 			published_at DATETIME NULL,
+			retained_at DATETIME NULL,
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL
 		) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
@@ -1315,6 +1317,7 @@ func (m *SchemaManager) fixAutoSeedMySQLColumnTypes() error {
 		"UPDATE `auto_seed_items` SET `pushed_at` = NULL WHERE CAST(`pushed_at` AS CHAR) = ''",
 		"UPDATE `auto_seed_items` SET `organized_at` = NULL WHERE CAST(`organized_at` AS CHAR) = ''",
 		"UPDATE `auto_seed_items` SET `published_at` = NULL WHERE CAST(`published_at` AS CHAR) = ''",
+		"UPDATE `auto_seed_items` SET `retained_at` = NULL WHERE CAST(`retained_at` AS CHAR) = ''",
 		"UPDATE `auto_seed_items` SET `created_at` = NOW() WHERE `created_at` IS NULL OR CAST(`created_at` AS CHAR) = ''",
 		"UPDATE `auto_seed_items` SET `updated_at` = NOW() WHERE `updated_at` IS NULL OR CAST(`updated_at` AS CHAR) = ''",
 		"ALTER TABLE `auto_seed_rules` MODIFY COLUMN `name` VARCHAR(255)",
@@ -1341,6 +1344,7 @@ func (m *SchemaManager) fixAutoSeedMySQLColumnTypes() error {
 		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `pushed_at` DATETIME NULL",
 		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `organized_at` DATETIME NULL",
 		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `published_at` DATETIME NULL",
+		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `retained_at` DATETIME NULL",
 		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `created_at` DATETIME NOT NULL",
 		"ALTER TABLE `auto_seed_items` MODIFY COLUMN `updated_at` DATETIME NOT NULL",
 	}

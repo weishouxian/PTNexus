@@ -88,6 +88,21 @@
         >
           <el-button type="primary" plain>反馈</el-button>
         </el-link>
+        <el-select
+          v-model="selectedDownloaderIdProxy"
+          class="global-downloader-select"
+          placeholder="全部下载器"
+          clearable
+          :disabled="globalDownloaderOptions.length === 0"
+          :title="globalDownloaderTitle"
+        >
+          <el-option
+            v-for="item in globalDownloaderOptions"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </el-select>
         <el-button
           type="success"
           @click="handleGlobalRefresh"
@@ -146,6 +161,25 @@
         <el-tag size="small" style="cursor: pointer" @click="showVersionDialog">{{
           currentVersion
         }}</el-tag>
+      </div>
+
+      <div class="drawer-downloader">
+        <span class="drawer-downloader__label">下载器</span>
+        <el-select
+          v-model="selectedDownloaderIdProxy"
+          class="drawer-downloader__select"
+          size="small"
+          placeholder="全部下载器"
+          clearable
+          :disabled="globalDownloaderOptions.length === 0"
+        >
+          <el-option
+            v-for="item in globalDownloaderOptions"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </el-select>
       </div>
 
       <el-menu
@@ -237,8 +271,10 @@ import DesktopWindowControls from '@/components/desktop/DesktopWindowControls.vu
 import { useDesktopWindowControls } from '@/desktop/windowControls'
 import VersionUpdate from '@/components/VersionUpdate.vue'
 import { ElMessage } from '@/utils/uiNotify'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 
 const route = useRoute()
+const globalDownloader = useGlobalDownloaderStore()
 const {
   hideWindowToTray,
   isDesktopShell,
@@ -291,6 +327,34 @@ const showDesktopWindowControlsInNav = computed(() => isWindowsDesktop.value && 
 const isRefreshing = ref(false)
 const exportingLogs = ref(false)
 
+// 顶部全局下载器选择：只列出已启用的下载器（停用下载器无法刷新数据）。
+const globalDownloaderOptions = computed(() =>
+  globalDownloader.downloaders.filter((item) => item.enabled !== false),
+)
+
+const globalDownloaderTitle = computed(() =>
+  globalDownloader.selectedDownloaderId
+    ? '当前只显示与刷新该下载器，切换后各页面筛选会同步跟随'
+    : '当前为全部下载器，选择后各页面筛选与刷新范围会收窄到该下载器',
+)
+
+// 下拉框双向绑定：写入时先本地生效再持久化到服务端，失败时由 store 回滚。
+const selectedDownloaderIdProxy = computed<string>({
+  get: () => globalDownloader.selectedDownloaderId,
+  set: (value) => {
+    void applyGlobalDownloader(value)
+  },
+})
+
+const applyGlobalDownloader = async (value: string | null | undefined) => {
+  try {
+    await globalDownloader.setSelectedDownloaderId(value ?? '')
+  } catch (error) {
+    console.error('保存全局下载器选择失败:', error)
+    ElMessage.error('保存下载器选择失败，请重试')
+  }
+}
+
 const isRefreshSupportedRoute = (path: string) => {
   return (
     path.startsWith('/torrents') ||
@@ -305,15 +369,23 @@ const isRefreshSupportedRoute = (path: string) => {
 // VersionUpdate组件引用
 const versionUpdateRef = ref()
 
-const activeComponentRefresher = ref<(() => Promise<void>) | null>(null)
+// 页面注册的刷新回调可接收刷新范围参数；不使用该参数的页面保持原有签名即可。
+type ComponentRefreshOptions = { downloaderId?: string }
+const activeComponentRefresher = ref<((options?: ComponentRefreshOptions) => Promise<void>) | null>(null)
 
-const handleComponentReady = (refreshMethod: () => Promise<void>) => {
+const handleComponentReady = (refreshMethod: (options?: ComponentRefreshOptions) => Promise<void>) => {
   activeComponentRefresher.value = refreshMethod
 }
 
 const shouldDelegateRefreshToComponent = (path: string) => {
   return path.startsWith('/torrents')
 }
+
+const currentGlobalDownloaderName = computed(() => {
+  const id = globalDownloader.selectedDownloaderId
+  if (!id) return '全部下载器'
+  return globalDownloaderOptions.value.find((item) => item.id === id)?.name || id
+})
 
 const handleGlobalRefresh = async () => {
   if (isRefreshing.value) return
@@ -324,19 +396,22 @@ const handleGlobalRefresh = async () => {
   }
 
   isRefreshing.value = true
-  ElMessage.info('后台正在刷新缓存...')
+  // 顶部选中下载器后只刷新该下载器的数据，未选中时保持全量刷新。
+  const downloaderId = globalDownloader.selectedDownloaderId
+  const scopeLabel = downloaderId ? `下载器「${currentGlobalDownloaderName.value}」` : '全部下载器'
+  ElMessage.info(`后台正在刷新${scopeLabel}的缓存...`)
 
   try {
     if (shouldDelegateRefreshToComponent(route.path) && activeComponentRefresher.value) {
-      await activeComponentRefresher.value()
+      await activeComponentRefresher.value({ downloaderId })
     } else {
-      await axios.post('/api/refresh_data')
+      await axios.post('/api/refresh_data', { downloader_id: downloaderId })
       if (activeComponentRefresher.value) {
-        await activeComponentRefresher.value()
+        await activeComponentRefresher.value({ downloaderId })
       }
     }
 
-    ElMessage.success('数据已刷新！')
+    ElMessage.success(`${scopeLabel}数据已刷新！`)
   } catch (error: unknown) {
     const message = axios.isAxiosError(error)
       ? (error.response?.data as { message?: string } | undefined)?.message || error.message
@@ -569,6 +644,9 @@ function handleGlobalEscClose(event: KeyboardEvent): void {
 onMounted(() => {
   updateIsMobile()
   loadBackgroundSettings()
+  // 顶部下载器选择与候选列表：选择结果由服务端持久化，页面侧会 await 同一份缓存。
+  void globalDownloader.loadSelection()
+  void globalDownloader.fetchDownloaders()
   window.addEventListener('background-updated', handleBackgroundUpdate)
   window.addEventListener('app-global-refresh-loading', handleRefreshLoadingChange as EventListener)
   window.addEventListener('resize', updateIsMobile)
@@ -686,6 +764,11 @@ body {
 
 .right-buttons-container--with-window-controls {
   right: 150px;
+}
+
+.global-downloader-select {
+  width: 150px;
+  flex-shrink: 0;
 }
 
 .desktop-link-action {
@@ -822,6 +905,23 @@ body {
   font-size: 16px;
   font-weight: 600;
   color: #303133;
+}
+
+.drawer-downloader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.drawer-downloader__label {
+  font-size: 13px;
+  color: #606266;
+  flex-shrink: 0;
+}
+
+.drawer-downloader__select {
+  flex: 1 1 auto;
 }
 
 .mobile-nav-menu {

@@ -49,6 +49,33 @@ func (s *SettingsService) SaveTorrentsUIViewSettings(newSettings map[string]any)
 	return s.cfg.Save(cfg)
 }
 
+// GetGlobalDownloaderUISettings 返回顶部全局下载器选择的持久化设置。
+// 参数/返回：无参数；返回 {"downloader_id": "..."}，空字符串代表“全部下载器”。
+// 失败场景：配置缺失或结构异常时返回默认值。
+// 副作用：无，仅读取内存中的配置。
+func (s *SettingsService) GetGlobalDownloaderUISettings() map[string]any {
+	defaults := map[string]any{"downloader_id": ""}
+	cfg := s.cfg.Get()
+	if ui, ok := cfg["ui_settings"].(map[string]any); ok {
+		if view, ok := ui["global_downloader"].(map[string]any); ok {
+			return view
+		}
+	}
+	return defaults
+}
+
+// SaveGlobalDownloaderUISettings 保存顶部全局下载器选择。
+// 参数/返回：newSettings 为前端提交的设置对象（含 downloader_id）；返回错误表示写入失败。
+// 失败场景：配置文件保存失败时返回错误。
+// 副作用：写入配置并持久化到磁盘。
+func (s *SettingsService) SaveGlobalDownloaderUISettings(newSettings map[string]any) error {
+	cfg := s.cfg.Get()
+	ui := ensureMap(cfg, "ui_settings")
+	ui["global_downloader"] = newSettings
+	cfg["ui_settings"] = ui
+	return s.cfg.Save(cfg)
+}
+
 func (s *SettingsService) GetCrossSeedUIViewSettings() map[string]any {
 	defaults := map[string]any{
 		"page_size":    20,
