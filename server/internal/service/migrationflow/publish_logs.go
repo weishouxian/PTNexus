@@ -438,13 +438,13 @@ func (s *MigrateService) updateSeedParameterLastPublishAtFromEntry(entry *reposi
 	}
 }
 
+// isSuccessfulPublishLogStatus 判断发种日志状态是否属于「已发布」家族（success/edited/exists）。
+// 参数/返回：status 为 publish_logs.status；返回 true 表示该种子已落在目标站点。
+// 失败场景：无。
+// 副作用：无。
+// 说明：口径统一收敛到 repository.IsPublishedPublishLogStatus，避免多处维护同一份状态列表。
 func isSuccessfulPublishLogStatus(status string) bool {
-	switch strings.TrimSpace(status) {
-	case "success", "edited", "exists":
-		return true
-	default:
-		return false
-	}
+	return repository.IsPublishedPublishLogStatus(status)
 }
 
 func (s *MigrateService) updateSeedParameterLastPublishAtByTorrentID(name, hash, torrentID, sourceSite, status, publishAt string) int64 {

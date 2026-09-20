@@ -371,15 +371,36 @@ func (r *ScheduledSeedRepository) ClaimAndAdvance(
 }
 
 // CheckDuplicate 查询发种日志，判断该种子是否已成功发布到目标站点。
+// 参数/返回：torrentID/sourceSite/targetSite 为种子与站点标识；返回 true 表示已处理过，应当跳过重复发种。
+// 失败场景：仓储未初始化或查询失败时返回 error。
+// 副作用：无（只读）。
+//
+// 判定口径（与「一种多站」删种作废联动）：
+//  1. 不再限定 scene：无论由定时发种、自动发种还是一种多站发布成功，同一「种子→站点」组合都不再重复发布，
+//     避免已被其它流程发过的种子到点又被定时发种发一遍并重新加回下载器。
+//  2. 状态取「已发布」家族（success/edited/exists）外加 invalidated（已作废）：
+//     作废表示种子已删除、记录失效，但绝不能因此被判定为「未发布」而重新发种。
+//  3. 种子标识与站点名按去空格 + 忽略大小写比较，避免命名差异导致去重失效。
 func (r *ScheduledSeedRepository) CheckDuplicate(torrentID string, sourceSite string, targetSite string) (bool, error) {
 	if r == nil || r.store == nil || r.store.DB == nil {
 		return false, errors.New("scheduled seed repo is nil")
 	}
 
+	torrentKey := strings.ToLower(strings.TrimSpace(torrentID))
+	targetKey := strings.ToLower(strings.TrimSpace(targetSite))
+	sourceKey := strings.ToLower(strings.TrimSpace(sourceSite))
+	// 缺少种子或目标站点标识时无法可靠查重，直接按「未发布过」处理，由后续流程自行校验。
+	if torrentKey == "" || targetKey == "" {
+		return false, nil
+	}
+
+	statuses := append(PublishedPublishLogStatuses(), PublishLogStatusInvalidated)
+
 	var count int64
 	if err := r.store.DB.Table("publish_logs").
-		Where("torrent_id = ? AND source_site = ? AND target_site = ? AND scene = ? AND status = ?",
-			torrentID, sourceSite, targetSite, "scheduled_seeding", "success").
+		Where("LOWER(TRIM(torrent_id)) = ? AND LOWER(TRIM(source_site)) = ? AND LOWER(TRIM(target_site)) = ?",
+			torrentKey, sourceKey, targetKey).
+		Where("status IN ?", statuses).
 		Count(&count).Error; err != nil {
 		return false, fmt.Errorf("查重发种日志失败: %w", err)
 	}

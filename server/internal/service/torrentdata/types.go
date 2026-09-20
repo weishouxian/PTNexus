@@ -55,6 +55,8 @@ type TorrentDataService struct {
 	iyuuTasks *IYUUTaskService
 	// autoSeedRepo 用于「一种多站」删除种子后把对应的自动发种记录标记为 retained，可缺省（为 nil 时跳过标记）。
 	autoSeedRepo *repository.AutoSeedRepository
+	// publishLogRepo 用于「一种多站」删除种子后把对应的发种日志标记为作废，可缺省（为 nil 时跳过作废）。
+	publishLogRepo *repository.PublishLogRepository
 
 	refreshMu      sync.Mutex
 	refreshRunning bool
@@ -93,6 +95,17 @@ func (s *TorrentDataService) SetAutoSeedRepository(repo *repository.AutoSeedRepo
 		return
 	}
 	s.autoSeedRepo = repo
+}
+
+// SetPublishLogRepository 注入发种日志仓储，用于删除种子时同步作废对应的发种日志。
+// 参数/返回：repo 为发种日志仓储实例；无返回值。
+// 失败场景：无。
+// 副作用：后续「一种多站」删除操作会把命中种子的「已发布」日志标记为已作废。
+func (s *TorrentDataService) SetPublishLogRepository(repo *repository.PublishLogRepository) {
+	if s == nil {
+		return
+	}
+	s.publishLogRepo = repo
 }
 
 // SetIYUULogger 设置 IYUU 查询过程的日志回调，便于在设置页展示进度信息。

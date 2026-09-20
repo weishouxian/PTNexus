@@ -1866,6 +1866,8 @@ func autoSeedPublishStatusText(status string) string {
 		return "发布中"
 	case "cancelled":
 		return "已取消"
+	case "invalidated":
+		return "已作废"
 	default:
 		return strings.TrimSpace(status)
 	}
