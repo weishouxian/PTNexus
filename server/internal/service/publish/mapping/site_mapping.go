@@ -21,6 +21,8 @@ type SitePublishConfig struct {
 	Mappings           map[string]map[string]string
 	GenreOptionsByType map[string][]string
 	Anonymous          SiteAnonymousConfig
+	// TagRequires 定义标签联动规则：命中 key 标签时必须同时提交 value 中的标签。
+	TagRequires map[string][]string
 }
 
 // SiteAnonymousConfig 表示站点匿名发布字段配置。
@@ -79,6 +81,7 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		Mappings:           mapStringNestedMap(raw["mappings"]),
 		GenreOptionsByType: mapStringSliceNestedMap(raw["genre_options_by_type"]),
 		Anonymous:          mapAnonymousConfig(raw["anonymous"]),
+		TagRequires:        mapStringSliceNestedMap(raw["tag_requires"]),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil

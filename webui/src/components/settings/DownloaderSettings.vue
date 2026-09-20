@@ -205,6 +205,23 @@
               </el-tooltip>
             </div>
           </el-form-item>
+          <el-form-item label="删除前核对副本">
+            <div class="fetch-copies-row">
+              <el-tooltip
+                content="开启后，删除该下载器上的种子时会先读取这台下载器的种子列表，把同名同大小、但尚未同步到本系统的副本一并删除；关闭则直接按系统记录删除。核对范围仅限本下载器，不涉及其它下载器。"
+                placement="top"
+                :hide-after="0"
+              >
+                <el-switch
+                  v-model="downloader.fetch_copies_before_delete"
+                  inline-prompt
+                  active-text="开"
+                  inactive-text="关"
+                />
+              </el-tooltip>
+              <span class="fetch-copies-hint">开启后每次删除会多读取一次本下载器种子列表，种子较多时删除耗时更长</span>
+            </div>
+          </el-form-item>
           <el-form-item label="主机地址">
             <el-input
               v-model="downloader.host"
@@ -328,6 +345,7 @@ type DownloaderConfig = {
   color: string
   path_mappings: PathMapping[]
   enable_ratio_limiter: boolean
+  fetch_copies_before_delete: boolean
   publish_interval_minutes: number
   publish_concurrency: number
   [key: string]: unknown
@@ -476,6 +494,10 @@ const fetchSettings = async () => {
         path_mappings: pathMappings,
         enable_ratio_limiter:
           typeof record.enable_ratio_limiter === 'boolean' ? record.enable_ratio_limiter : false,
+        fetch_copies_before_delete:
+          typeof record.fetch_copies_before_delete === 'boolean'
+            ? record.fetch_copies_before_delete
+            : false,
         publish_interval_minutes:
           typeof record.publish_interval_minutes === 'number'
             ? record.publish_interval_minutes
@@ -540,6 +562,7 @@ const addDownloader = () => {
     color: deriveDownloaderColor(id),
     path_mappings: [], // 初始化空的路径映射数组
     enable_ratio_limiter: false, // 默认关闭出种限速
+    fetch_copies_before_delete: false, // 默认直接删除，不读取下载器副本
     publish_interval_minutes: 0,
     publish_concurrency: 1,
   })
@@ -836,6 +859,20 @@ const savePathMappings = async () => {
 .ratio-limiter-text {
   color: #606266;
   white-space: nowrap;
+}
+
+/* 「删除前核对副本」：开关 + 说明文字同一行 */
+.fetch-copies-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.fetch-copies-hint {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .publish-controls-row {

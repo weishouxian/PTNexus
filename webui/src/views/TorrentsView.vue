@@ -1691,7 +1691,7 @@ const startCrossSeed = async (row: Torrent) => {
 
 // 种子地址反查：调用后端按 info_hash 在站点内搜索同名种子并返回下载直链
 const resolvingUrlHash = ref('')
-// 删除按钮的 loading 标记：删除时后端会向各下载器核对同名副本，耗时比普通请求长。
+// 删除按钮的 loading 标记：删除时会向相关下载器下发删除任务，耗时比普通请求长。
 const deletingRowHash = ref('')
 const resolveTorrentUrl = async (row: Torrent) => {
   const hash = (row.hash || '').trim()
@@ -1751,7 +1751,7 @@ const deleteTorrentRow = async (row: Torrent) => {
   let deleteFiles = false
   try {
     await ElMessageBox.confirm(
-      `确定要删除「${row.name}」吗？“删除记录和文件”会删除它在所有下载器上的任务与文件，包含同名同大小、但此前未同步到本系统的副本。`,
+      `确定要删除「${row.name}」吗？“删除记录和文件”会删除本系统已记录的全部下载器任务与文件（含同名同大小的隐藏残留记录）；若该下载器在设置中开启了“删除前核对副本”，未同步入库的副本也会一并删除。`,
       '删除种子',
       {
         confirmButtonText: '删除记录和文件',
@@ -1782,14 +1782,9 @@ const deleteTorrentRow = async (row: Torrent) => {
       success?: boolean
       message?: string
       error?: string
-      warnings?: string[]
     }
     if (result.success) {
       ElMessage.success(result.message || '删除成功')
-      const warnings = result.warnings || []
-      if (warnings.length > 0) {
-        ElMessage.warning(`部分下载器未核对完成：${warnings.join('；')}`)
-      }
       await fetchData()
     } else {
       ElMessage.error(result.error || '删除失败')
