@@ -6,9 +6,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pt-nexus/server/internal/service/descclean"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
-	"github.com/pt-nexus/server/internal/service/descclean"
 )
 
 var (
@@ -227,7 +227,7 @@ func pickDescriptionSection(uploadData map[string]any, intro map[string]any, key
 
 func shouldInlineMediainfo(siteCode string) bool {
 	switch strings.ToLower(strings.TrimSpace(siteCode)) {
-	case "audiences", "btschool", "carpt", "kufei", "lemon", "muxuege", "oshen", "ptskit", "sewerpt", "ttg", "upxin", "zmpt", "xdypt", "pthome":
+	case "audiences", "btschool", "carpt", "kufei", "lemon", "oshen", "ptskit", "sewerpt", "ttg", "upxin", "zmpt", "xdypt", "pthome":
 		return true
 	default:
 		return false
