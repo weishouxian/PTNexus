@@ -110,6 +110,7 @@ func applyTags(mappingKey string, siteCfg *SitePublishConfig, mapped map[string]
 	if len(allTags) == 0 {
 		return
 	}
+	allTags = expandRequiredTags(allTags, siteCfg.TagRequires)
 
 	tagIDs := make([]string, 0, len(allTags))
 	seen := map[string]struct{}{}
@@ -153,6 +154,59 @@ func applyTags(mappingKey string, siteCfg *SitePublishConfig, mapped map[string]
 	for idx, id := range tagIDs {
 		mapped[fmt.Sprintf("%s[%d]", base, idx)] = id
 	}
+}
+
+// expandRequiredTags 按站点配置的标签联动规则补齐必须同时勾选的标签。
+// 参数/返回：tags 为待映射的标签集合；requires 为“命中某个标签时必须同时包含的标签”规则表；返回补齐后的标签集合。
+// 失败场景：规则为空或标签集合为空时原样返回；规则出现环时按规则条数限制展开轮次，避免死循环。
+// 副作用：无。
+func expandRequiredTags(tags []string, requires map[string][]string) []string {
+	if len(tags) == 0 || len(requires) == 0 {
+		return tags
+	}
+	result := append([]string{}, tags...)
+	for round := 0; round <= len(requires); round++ {
+		added := false
+		for _, tag := range result {
+			normalized := normalizeTagKeyForRequire(tag)
+			if normalized == "" {
+				continue
+			}
+			for requireKey, requiredTags := range requires {
+				if normalizeTagKeyForRequire(requireKey) != normalized {
+					continue
+				}
+				for _, required := range requiredTags {
+					target := strings.TrimSpace(required)
+					if target == "" || containsTagFold(result, target) {
+						continue
+					}
+					result = append(result, target)
+					added = true
+				}
+			}
+		}
+		if !added {
+			break
+		}
+	}
+	return result
+}
+
+func normalizeTagKeyForRequire(tag string) string {
+	trimmed := strings.ToLower(strings.TrimSpace(tag))
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "tag."))
+	return trimmed
+}
+
+func containsTagFold(tags []string, target string) bool {
+	normalizedTarget := normalizeTagKeyForRequire(target)
+	for _, tag := range tags {
+		if normalizeTagKeyForRequire(tag) == normalizedTarget {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveTagFieldBase(siteCfg *SitePublishConfig) string {

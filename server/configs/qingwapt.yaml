@@ -226,3 +226,9 @@ mappings:
     "tag.HDR10+": 13
     "tag.HDR": 7
     "default": null
+
+# 标签联动规则：命中 key 标签时必须同时勾选 value 中列出的标签
+# 青蛙站规则：种子带 HDR10+ 时，必须同时勾选 HDR 与 HDR10+
+tag_requires:
+  "tag.HDR10+":
+    - "tag.HDR"
