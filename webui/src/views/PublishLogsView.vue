@@ -63,6 +63,7 @@
         <el-option label="已存在" value="exists" />
         <el-option label="已编辑" value="edited" />
         <el-option label="已取消" value="cancelled" />
+        <el-option label="已作废" value="invalidated" />
         <el-option label="预检查限制" value="pre_check_limit" />
       </el-select>
 
@@ -327,6 +328,7 @@ const publishStatusTagType = (status: string) => {
   if (status === 'filtered') return 'warning'
   if (status === 'pre_check_limit') return 'danger'
   if (status === 'cancelled') return 'info'
+  if (status === 'invalidated') return 'info'
   if (status === 'failed') return 'danger'
   return 'info'
 }
@@ -340,6 +342,7 @@ const formatPublishStatus = (status: string) => {
   if (status === 'edited') return '已编辑'
   if (status === 'pre_check_limit') return '预检查限制'
   if (status === 'cancelled') return '已取消'
+  if (status === 'invalidated') return '已作废'
   return status || '未知'
 }
 

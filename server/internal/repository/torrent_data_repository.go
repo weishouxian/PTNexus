@@ -489,6 +489,48 @@ func (r *TorrentDataRepository) DeleteTorrentsByHashes(hashes []string) (int64, 
 	return deleted, nil
 }
 
+// ListSeedTorrentIDsByHashes 按种子 infohash 查询 seed_parameters 中的站点侧种子标识（torrent_id）。
+// 参数/返回：hashes 为 torrents.hash（大小写与首尾空格不敏感、自动去重）；返回命中的 torrent_id 列表（已去重）与 error。
+// 失败场景：DB 未初始化或查询失败时返回 error；入参无有效值时返回空列表，不执行 SQL。
+// 副作用：无（只读）。
+//
+// 用途：publish_logs.torrent_id 记录的是站点侧种子标识（部分站点为数字 ID，并不等于 infohash），
+// 「一种多站」删除种子时只有先经 seed_parameters.hash → torrent_id 映射，才能准确作废对应的发种日志。
+func (r *TorrentDataRepository) ListSeedTorrentIDsByHashes(hashes []string) ([]string, error) {
+	cleaned := compactLowerStrings(hashes)
+	if len(cleaned) == 0 {
+		return []string{}, nil
+	}
+
+	rows := make([]string, 0)
+	if err := r.store.DB.Table("seed_parameters").
+		Distinct().
+		Where("LOWER(TRIM(hash)) IN ?", cleaned).
+		Pluck("torrent_id", &rows).Error; err != nil {
+		return nil, err
+	}
+	return compactStringsPreserveCase(rows), nil
+}
+
+// compactStringsPreserveCase 去空格去重但保留原始大小写，用于站点侧标识这类大小写敏感的值。
+func compactStringsPreserveCase(values []string) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, trimmed)
+	}
+	return result
+}
+
 func compactLowerStrings(values []string) []string {
 	seen := map[string]struct{}{}
 	result := make([]string, 0, len(values))

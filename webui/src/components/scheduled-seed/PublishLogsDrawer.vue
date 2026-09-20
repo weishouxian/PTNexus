@@ -136,6 +136,7 @@ const statusTagType = (status: string) => {
   if (status === 'filtered') return 'warning'
   if (status === 'failed') return 'danger'
   if (status === 'cancelled') return 'info'
+  if (status === 'invalidated') return 'info'
   if (status === 'pre_check_limit') return 'danger'
   return 'info'
 }
@@ -149,6 +150,7 @@ const formatStatus = (status: string) => {
   if (status === 'edited') return '已编辑'
   if (status === 'pre_check_limit') return '预检查限制'
   if (status === 'cancelled') return '已取消'
+  if (status === 'invalidated') return '已作废'
   return status || '未知'
 }
 

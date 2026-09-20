@@ -9,6 +9,38 @@ import (
 
 const publishLogTimeLayout = "2006-01-02 15:04:05"
 
+// PublishLogStatusInvalidated 表示该发种记录已作废：
+// 对应种子已被「一种多站」删除（含下载器任务与文件），原「发布成功」不再代表当前有效状态。
+const PublishLogStatusInvalidated = "invalidated"
+
+// publishedPublishLogStatuses 定义「已发布」家族状态：
+// success（发布成功）、edited（发布后经编辑）、exists（站点已存在该种子，等效已发布）。
+var publishedPublishLogStatuses = []string{"success", "edited", "exists"}
+
+// IsPublishedPublishLogStatus 判断发种日志状态是否属于「已发布」家族。
+// 参数/返回：status 为 publish_logs.status；返回 true 表示该种子已成功落在目标站点。
+// 失败场景：无（仅字符串比较）。
+// 副作用：无。
+func IsPublishedPublishLogStatus(status string) bool {
+	trimmed := strings.TrimSpace(status)
+	for _, item := range publishedPublishLogStatuses {
+		if trimmed == item {
+			return true
+		}
+	}
+	return false
+}
+
+// PublishedPublishLogStatuses 返回「已发布」家族状态的副本，供外部拼装查询条件。
+// 参数/返回：返回状态字符串切片副本；调用方可安全修改。
+// 失败场景：无。
+// 副作用：无。
+func PublishedPublishLogStatuses() []string {
+	result := make([]string, len(publishedPublishLogStatuses))
+	copy(result, publishedPublishLogStatuses)
+	return result
+}
+
 // PublishLogEntry 表示一条发种（发布）记录，通常按“单站点发布一次”为一条。
 type PublishLogEntry struct {
 	ID uint64 `json:"id" gorm:"column:id;primaryKey"`
@@ -318,6 +350,59 @@ func (r *PublishLogRepository) DeleteByIDs(ids []uint64) (int64, error) {
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
+}
+
+// InvalidatePublishedByTorrentIDs 把指定种子在 publish_logs 中的「已发布」记录批量标记为已作废。
+// 参数/返回：torrentIDs 为种子标识（seed_parameters.torrent_id，大小写与首尾空格不敏感、自动去重）；
+// reason 为作废原因，会追加到 logs 末尾便于追溯；返回被作废的记录条数与 error。
+// 失败场景：仓储/DB 未初始化或读写失败时返回 error；入参无有效值时直接返回 0，不执行 SQL。
+// 副作用：更新 publish_logs 的 status（invalidated）与 logs/updated_at；不删除记录，保留追溯信息。
+//
+// 语义说明：作废只表示「这条历史发布记录不再有效」，并不解除去重：
+// 定时发种查重把 invalidated 也视为已处理，避免删种后反而被重新发一遍。
+func (r *PublishLogRepository) InvalidatePublishedByTorrentIDs(torrentIDs []string, reason string) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish log repo is nil")
+	}
+
+	lowered := compactLowerStrings(torrentIDs)
+	if len(lowered) == 0 {
+		return 0, nil
+	}
+
+	// 先取出待作废记录的 id 与 logs：避免依赖各数据库方言的字符串拼接函数。
+	rows := make([]PublishLogEntry, 0)
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Select("id, logs").
+		Where("LOWER(TRIM(torrent_id)) IN ?", lowered).
+		Where("status IN ?", publishedPublishLogStatuses).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().Format(publishLogTimeLayout)
+	suffix := "\n[" + now + "] 种子已删除，该发布记录作废"
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		suffix = "\n[" + now + "] 种子已删除（" + trimmed + "），该发布记录作废"
+	}
+
+	affected := int64(0)
+	for _, row := range rows {
+		updates := map[string]any{
+			"status":     PublishLogStatusInvalidated,
+			"logs":       strings.TrimSpace(row.Logs) + suffix,
+			"updated_at": now,
+		}
+		result := r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", row.ID).Updates(updates)
+		if result.Error != nil {
+			return affected, result.Error
+		}
+		affected += result.RowsAffected
+	}
+	return affected, nil
 }
 
 // FindByIDs 按主键列表批量查询发种日志记录（仅返回 ID/Status/QueueTaskID）。

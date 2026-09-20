@@ -80,6 +80,8 @@ func NewApp() (*App, error) {
 	migrateRepo := repository.NewMigrateRepository(store)
 	queueRepo := repository.NewPublishQueueRepository(store)
 	publishLogRepo := repository.NewPublishLogRepository(store)
+	// 「一种多站」删除种子（含文件）时，需要把命中的发种日志标记为已作废，避免定时发种又发一遍。
+	torrentDataService.SetPublishLogRepository(publishLogRepo)
 
 	migrateService := migrationflow.NewMigrateService(migrateRepo, cfgManager)
 	migrateService.InitPublishQueue(queueRepo, statsRepo)
