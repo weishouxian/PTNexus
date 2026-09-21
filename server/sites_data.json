@@ -181,7 +181,7 @@
     "special_tracker_domain": "rainbowisland,ptchdbits,chdbits",
     "group": "-CHDBits,-CHDWEB,-CHD",
     "description": "CHDBits",
-    "migration": 1,
+    "migration": 3,
     "speed_limit": 95
   },
   {
