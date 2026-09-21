@@ -2,11 +2,14 @@
 #
 # 站点类型：自研 REST API（非 NexusPHP），发种走 multipart/form-data 上传到 /api/torrent/createOredit。
 # 鉴权：API Access Token（控制台 → 实验室 → 存取令牌），以 x-api-key 请求头传递。
-#       在 PTNexus 的 webui 站点配置里，把 token 填进「Cookie」栏即可（适配器会容错解析）。
-# 字典来源：2026-09-21 用真实 token 拉取
+#       在 PTNexus 的 webui 站点配置里，把令牌填进「Passkey」或「Cookie」栏都行，适配器会自动识别。
+# 字典来源：2026-09-21 用真实令牌拉取
 #   /api/torrent/{categoryList,sourceList,mediumList,standardList,videoCodecList,audioCodecList,teamList,processingList}
 #   + /api/system/{countryList,getConf(TORRENT_LABEL_CONFIG)}
 # 注意：站点发种页已不再要求 medium 字段（实测线上种子 medium 全为 null），故本配置不提交 medium。
+#
+# 映射键统一写「带前缀的完整标准值」（如 resolution.r1080p）；
+# 代码会在加载时自动为每个带点号的键补充去前缀别名（r1080p），两种上游形态都能命中，无需重复书写。
 
 site_name: "M-Team"
 
@@ -45,7 +48,7 @@ category:
   default: "409"        # 未识别分类兜底
 
 # 来源（source）：站点按「来源」分 Web-DL / Bluray / Remux / HDTV-TV / DVD / CD / Other。
-# 键同时写完整标准值与去前缀后缀，两种形态都能命中。
+# 输入是 PTNexus 的 medium.* 标准化值。
 source:
   "medium.bluray": "1"
   "medium.uhd_bluray": "1"
@@ -73,32 +76,6 @@ source:
   "medium.vinyl": "10"
   "medium.track": "10"
   "medium.other": "6"
-  "bluray": "1"
-  "uhd_bluray": "1"
-  "uhd_diy": "1"
-  "bdrip": "1"
-  "encode": "1"
-  "minibd": "1"
-  "minisd": "1"
-  "hddvd": "1"
-  "remux": "4"
-  "webdl": "8"
-  "webrip": "8"
-  "feed": "8"
-  "hdtv": "5"
-  "tv": "5"
-  "tvrip": "5"
-  "uhdtv": "5"
-  "dvd": "3"
-  "dvdr": "3"
-  "vcd": "3"
-  "cd_dvd": "3"
-  "cd_vcd": "3"
-  "cd": "10"
-  "sacd": "10"
-  "vinyl": "10"
-  "track": "10"
-  "other": "6"
 
 # 分辨率（standard）：站点只有 1080p/1080i/720p/SD/4K/8K，没有 Other(4 号位已下线)
 standard:
@@ -131,7 +108,7 @@ video_codec:
   "video.h266": "1"
   "video.other": "1"
 
-# 音频编码（audiocodec）
+# 音频编码（audio_codec）
 audio_codec:
   "audio.aac": "6"
   "audio.m4a": "6"
