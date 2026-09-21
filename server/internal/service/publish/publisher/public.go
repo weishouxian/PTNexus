@@ -182,9 +182,25 @@ func buildPublishFieldSummary(siteCode string, siteCfg *publishmapping.SitePubli
 			tagCount++
 		}
 	}
+	// 独立 checkbox 型标签站点：按去重后的字段名统计实际勾选数量，便于排查标签是否生效。
+	checkboxTagCount := 0
+	seenCheckboxFields := map[string]struct{}{}
+	for _, field := range siteCfg.CheckboxTags {
+		name := strings.TrimSpace(field)
+		if name == "" {
+			continue
+		}
+		if _, exists := seenCheckboxFields[name]; exists {
+			continue
+		}
+		seenCheckboxFields[name] = struct{}{}
+		if strings.TrimSpace(formFields[name]) != "" {
+			checkboxTagCount++
+		}
+	}
 
 	return fmt.Sprintf(
-		"发布字段摘要: site=%s config=%s category=%s:%s region=%s:%s tags=%d",
+		"发布字段摘要: site=%s config=%s category=%s:%s region=%s:%s tags=%d checkbox_tags=%d",
 		strings.TrimSpace(siteCode),
 		strings.TrimSpace(siteCfg.SourcePath),
 		categoryField,
@@ -192,6 +208,7 @@ func buildPublishFieldSummary(siteCode string, siteCfg *publishmapping.SitePubli
 		regionField,
 		regionValue,
 		tagCount,
+		checkboxTagCount,
 	)
 }
 
