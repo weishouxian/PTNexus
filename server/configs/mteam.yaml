@@ -1,0 +1,251 @@
+# M-Team（馒头）发种配置
+#
+# 站点类型：自研 REST API（非 NexusPHP），发种走 multipart/form-data 上传到 /api/torrent/createOredit。
+# 鉴权：API Access Token（控制台 → 实验室 → 存取令牌），以 x-api-key 请求头传递。
+#       在 PTNexus 的 webui 站点配置里，把 token 填进「Cookie」栏即可（适配器会容错解析）。
+# 字典来源：2026-09-21 用真实 token 拉取
+#   /api/torrent/{categoryList,sourceList,mediumList,standardList,videoCodecList,audioCodecList,teamList,processingList}
+#   + /api/system/{countryList,getConf(TORRENT_LABEL_CONFIG)}
+# 注意：站点发种页已不再要求 medium 字段（实测线上种子 medium 全为 null），故本配置不提交 medium。
+
+site_name: "M-Team"
+
+# API 与网页不同域：网页 kp.m-team.cc，接口 api.m-team.cc（带 UA 请求头，否则 302 跳 google）
+api_base: "https://api.m-team.cc"
+api_path: "/api/torrent/createOredit"
+
+# 分类：站点分类按「类型 + 介质」二维划分，因此先按 PTNexus 的 category 定大类，
+# 再由 medium / resolution 细分到具体 ID（见 mteam.go 的 resolveMTeamCategory）。
+category:
+  # 电影：SD / HD / DVDiSo / BluRay / Remux
+  movie: "419"          # 电影/HD（兜底：WEB-DL、HDTV、Encode 等）
+  movie_sd: "401"       # 电影/SD
+  movie_dvd: "420"      # 电影/DVDiSo
+  movie_bluray: "421"   # 电影/BluRay
+  movie_remux: "439"    # 电影/Remux
+  # 影剧/综艺：SD / HD / DVDiSo / BluRay（Remux 并入 BluRay）
+  tv: "402"             # 影剧/综艺/HD（兜底）
+  tv_sd: "403"          # 影剧/综艺/SD
+  tv_dvd: "435"         # 影剧/综艺/DVDiSo
+  tv_bluray: "438"      # 影剧/综艺/BluRay
+  # 动画：BluRay / 其他
+  anime: "405"          # 动画
+  anime_bluray: "453"   # 动画/BluRay
+  # 单值分类
+  documentary: "404"    # 纪录
+  music: "434"          # Music(无损)
+  mv: "406"             # 演唱
+  sports: "407"         # 运动
+  game: "423"           # PC游戏
+  software: "422"       # 软件
+  ebook: "427"          # 電子書
+  audiobook: "442"      # 有聲書
+  study: "451"          # 教育影片
+  other: "409"          # Misc(其他)
+  default: "409"        # 未识别分类兜底
+
+# 来源（source）：站点按「来源」分 Web-DL / Bluray / Remux / HDTV-TV / DVD / CD / Other。
+# 键同时写完整标准值与去前缀后缀，两种形态都能命中。
+source:
+  "medium.bluray": "1"
+  "medium.uhd_bluray": "1"
+  "medium.uhd_diy": "1"
+  "medium.bdrip": "1"
+  "medium.encode": "1"
+  "medium.minibd": "1"
+  "medium.minisd": "1"
+  "medium.hddvd": "1"
+  "medium.remux": "4"
+  "medium.webdl": "8"
+  "medium.webrip": "8"
+  "medium.feed": "8"
+  "medium.hdtv": "5"
+  "medium.tv": "5"
+  "medium.tvrip": "5"
+  "medium.uhdtv": "5"
+  "medium.dvd": "3"
+  "medium.dvdr": "3"
+  "medium.vcd": "3"
+  "medium.cd_dvd": "3"
+  "medium.cd_vcd": "3"
+  "medium.cd": "10"
+  "medium.sacd": "10"
+  "medium.vinyl": "10"
+  "medium.track": "10"
+  "medium.other": "6"
+  "bluray": "1"
+  "uhd_bluray": "1"
+  "uhd_diy": "1"
+  "bdrip": "1"
+  "encode": "1"
+  "minibd": "1"
+  "minisd": "1"
+  "hddvd": "1"
+  "remux": "4"
+  "webdl": "8"
+  "webrip": "8"
+  "feed": "8"
+  "hdtv": "5"
+  "tv": "5"
+  "tvrip": "5"
+  "uhdtv": "5"
+  "dvd": "3"
+  "dvdr": "3"
+  "vcd": "3"
+  "cd_dvd": "3"
+  "cd_vcd": "3"
+  "cd": "10"
+  "sacd": "10"
+  "vinyl": "10"
+  "track": "10"
+  "other": "6"
+
+# 分辨率（standard）：站点只有 1080p/1080i/720p/SD/4K/8K，没有 Other(4 号位已下线)
+standard:
+  "resolution.r1080p": "1"
+  "resolution.r1080i": "2"
+  "resolution.r720p": "3"
+  "resolution.sd": "5"
+  "resolution.r480p": "5"
+  "resolution.r540p": "5"
+  "resolution.other": "5"
+  "resolution.ipad": "5"
+  "resolution.r1440p": "1"   # 站点无 2K 选项，归入 1080p
+  "resolution.r2160p": "6"
+  "resolution.r4320p": "7"
+
+# 视频编码（videoCodec）：站点无 Other 项
+video_codec:
+  "video.h264": "1"
+  "video.x264": "1"
+  "video.h265": "16"
+  "video.x265": "16"
+  "video.vc1": "2"
+  "video.mpeg2": "4"
+  "video.xvid": "3"
+  "video.av1": "19"
+  "video.vp9": "21"
+  "video.h261": "1"
+  "video.mpeg1": "1"
+  "video.mpeg4": "1"
+  "video.h266": "1"
+  "video.other": "1"
+
+# 音频编码（audiocodec）
+audio_codec:
+  "audio.aac": "6"
+  "audio.m4a": "6"
+  "audio.ac3": "8"
+  "audio.dts": "3"
+  "audio.dts_hd": "11"
+  "audio.dts_hd_hr": "11"
+  "audio.dts_hd_ma": "11"
+  "audio.dtsx": "11"
+  "audio.ddp": "12"
+  "audio.ddp_atmos": "13"
+  "audio.truehd": "9"
+  "audio.truehd_atmos": "10"
+  "audio.lpcm": "14"
+  "audio.pcm": "14"
+  "audio.wav": "15"
+  "audio.flac": "1"
+  "audio.ape": "2"
+  "audio.mp3": "4"
+  "audio.mpeg": "4"
+  "audio.ogg": "5"
+  "audio.opus": "5"
+  "audio.alac": "7"
+  "audio.other": "7"
+
+# 制作组（team）：站点仅有下列小组，未命中则不提交该字段
+team:
+  "team.mteam": "9"
+  "team.mweb": "44"
+  "team.bmdru": "6"
+  "team.catedu": "25"
+  "team.jkct": "31"
+  "team.7acg": "30"
+  "team.pack": "8"
+  "team.dstudio": "64"
+  "team.starfall": "59"
+  "team.starfallweb": "59"
+  "team.other": ""
+
+# 地区（processing）：站点按 CN / US-EU / HK-TW / JP / KR / OT 归类
+processing:
+  "source.china": "1"
+  "source.hongkong": "3"
+  "source.hongkong_taiwan": "3"
+  "source.taiwan": "3"
+  "source.western": "2"
+  "source.canada": "2"
+  "source.uk": "2"
+  "source.france": "2"
+  "source.germany": "2"
+  "source.italy": "2"
+  "source.spain": "2"
+  "source.sweden": "2"
+  "source.denmark": "2"
+  "source.europe": "2"
+  "source.russia": "2"
+  "source.japan": "4"
+  "source.korea": "5"
+  "source.australia": "6"
+  "source.brazil": "6"
+  "source.india": "6"
+  "source.malaysia": "6"
+  "source.singapore": "6"
+  "source.thailand": "6"
+  "source.other": "6"
+
+# 国家（countries）：站点国家 ID（/api/system/countryList）。
+# 注意站点国家表里中国为 8，香港/台湾不单列（同属中国），符合一个中国原则。
+country:
+  "source.china": "8"
+  "source.hongkong": "8"
+  "source.hongkong_taiwan": "8"
+  "source.taiwan": "8"
+  "source.western": "2"
+  "source.canada": "5"
+  "source.uk": "12"
+  "source.france": "6"
+  "source.germany": "7"
+  "source.italy": "9"
+  "source.spain": "23"
+  "source.sweden": "1"
+  "source.denmark": "10"
+  "source.russia": "3"
+  "source.japan": "17"
+  "source.korea": "30"
+  "source.australia": "20"
+  "source.brazil": "18"
+  "source.india": "70"
+  "source.singapore": "26"
+  "source.malaysia": "40"
+  "source.thailand": "93"
+
+# 标签（labelsNew）：站点标签表来自 /api/system/getConf 的 TORRENT_LABEL_CONFIG。
+# 4k/8k/hdr/hdr10/hdr10+/hlg/DoVi/HDRVi 是技术标签（站点前端本会按 mediainfo 自动补），
+# 中字/中配/AI破解 是用户可选标签。键为 PTNexus 标签名（比较时忽略大小写与 tag. 前缀）。
+tags:
+  "4K": "4k"
+  "8K": "8k"
+  "HDR": "hdr"
+  "HDR10": "hdr10"
+  "HDR10+": "hdr10+"
+  "HLG": "hlg"
+  "DV": "DoVi"
+  "杜比": "DoVi"
+  "菁彩HDR": "HDRVi"
+  "中字": "中字"
+  "国语": "中配"
+  "中配": "中配"
+
+# 兜底值：仅当标准化值缺失或未命中时使用。
+defaults:
+  category: "409"   # Misc(其他)
+  source: "6"       # Other
+  standard: "1"     # 站点无 Other，回落最常见的 1080p
+  video_codec: "1"  # 站点无 Other，回落最常见的 H.264
+  audio_codec: "7"  # Other
+  processing: "6"   # OT
