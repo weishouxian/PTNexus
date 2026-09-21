@@ -48,6 +48,8 @@ func ResolveBasicPublishMappings(siteCode string, uploadData map[string]any) map
 	apply("region", "region", strings.TrimSpace(toStringAnyBasic(standardized["source"], "")), "region_sel", true)
 
 	applyTags("tag", siteCfg, mapped, uploadData, standardized)
+	applyCheckboxTags(siteCfg, mapped, uploadData, standardized)
+	applyStaticFields(siteCfg, mapped)
 	return mapped
 }
 
@@ -154,6 +156,75 @@ func applyTags(mappingKey string, siteCfg *SitePublishConfig, mapped map[string]
 	for idx, id := range tagIDs {
 		mapped[fmt.Sprintf("%s[%d]", base, idx)] = id
 	}
+}
+
+// applyCheckboxTags 把标准化标签映射成站点上"独立命名"的 checkbox 字段。
+// 参数/返回：siteCfg 提供 checkbox_tags 表；mapped 为待提交字段；uploadData/standardized 提供标签来源；无返回。
+// 说明：部分老 NexusPHP 站点（如 CHDBits）每个标签是一个独立 checkbox（name=first/oneself/... 且 value=yes），
+// 而非其它站点的 tags[] 数组，applyTags 生成的 tags[N]=id 对这种站点无效，故单独处理。
+// 失败场景：站点未配 checkbox_tags、标签集合为空时直接返回。
+// 副作用：直接改写 mapped（命中即写入 <字段名>=<checkbox_tag_value>，重复命中同一字段时幂等）。
+func applyCheckboxTags(siteCfg *SitePublishConfig, mapped map[string]string, uploadData map[string]any, standardized map[string]any) {
+	if mapped == nil || siteCfg == nil || len(siteCfg.CheckboxTags) == 0 {
+		return
+	}
+
+	allTags := collectAllTags(uploadData, standardized)
+	if len(allTags) == 0 {
+		return
+	}
+	allTags = expandRequiredTags(allTags, siteCfg.TagRequires)
+
+	value := resolveCheckboxTagValue(siteCfg)
+	for _, tag := range allTags {
+		candidates := []string{tag}
+		if strings.HasPrefix(tag, "tag.") {
+			candidates = append(candidates, strings.TrimPrefix(tag, "tag."))
+		} else {
+			candidates = append(candidates, "tag."+tag)
+		}
+		for _, candidate := range candidates {
+			field, ok := pickMappingValueIgnoreCase(siteCfg.CheckboxTags, candidate)
+			if !ok {
+				continue
+			}
+			mapped[field] = value
+			break
+		}
+	}
+}
+
+// applyStaticFields 写入站点固定字段（无语义映射来源的字段默认值）。
+// 参数/返回：siteCfg 提供 static_fields 表；mapped 为待提交字段；无返回。
+// 失败场景：站点未配 static_fields 时直接返回。
+// 副作用：直接改写 mapped；已被其它映射命中的字段不会被覆盖。
+func applyStaticFields(siteCfg *SitePublishConfig, mapped map[string]string) {
+	if mapped == nil || siteCfg == nil || len(siteCfg.StaticFields) == 0 {
+		return
+	}
+	for key, value := range siteCfg.StaticFields {
+		field := strings.TrimSpace(key)
+		if field == "" {
+			continue
+		}
+		if _, exists := mapped[field]; exists {
+			continue
+		}
+		mapped[field] = strings.TrimSpace(value)
+	}
+}
+
+// resolveCheckboxTagValue 返回独立 checkbox 标签命中时提交的值。
+// 参数/返回：siteCfg 提供 checkbox_tag_value；返回提交值，未配置时返回 NexusPHP 默认值 yes。
+// 失败场景：无。
+// 副作用：无。
+func resolveCheckboxTagValue(siteCfg *SitePublishConfig) string {
+	if siteCfg != nil {
+		if value := strings.TrimSpace(siteCfg.CheckboxTagValue); value != "" {
+			return value
+		}
+	}
+	return "yes"
 }
 
 // expandRequiredTags 按站点配置的标签联动规则补齐必须同时勾选的标签。

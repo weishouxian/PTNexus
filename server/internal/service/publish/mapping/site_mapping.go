@@ -23,6 +23,13 @@ type SitePublishConfig struct {
 	Anonymous          SiteAnonymousConfig
 	// TagRequires 定义标签联动规则：命中 key 标签时必须同时提交 value 中的标签。
 	TagRequires map[string][]string
+	// StaticFields 定义站点固定字段：无语义映射来源的字段（如必填的"来源性质"select）直接提交固定值。
+	StaticFields map[string]string
+	// CheckboxTags 定义"独立 checkbox 型"标签字段：标准标签值 → 站点 checkbox 字段名。
+	// 部分老 NexusPHP 站点每个标签是独立命名的 checkbox（value=yes），无法用 tags[] 数组表达。
+	CheckboxTags map[string]string
+	// CheckboxTagValue 独立 checkbox 命中时提交的值，默认 yes。
+	CheckboxTagValue string
 }
 
 // SiteAnonymousConfig 表示站点匿名发布字段配置。
@@ -82,6 +89,9 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		GenreOptionsByType: mapStringSliceNestedMap(raw["genre_options_by_type"]),
 		Anonymous:          mapAnonymousConfig(raw["anonymous"]),
 		TagRequires:        mapStringSliceNestedMap(raw["tag_requires"]),
+		StaticFields:       mapStringMap(raw["static_fields"]),
+		CheckboxTags:       mapStringMap(raw["checkbox_tags"]),
+		CheckboxTagValue:   strings.TrimSpace(toStringAny(raw["checkbox_tag_value"])),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil

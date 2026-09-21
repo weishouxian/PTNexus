@@ -1,15 +1,59 @@
 site_name: "CHDBits"
 
-# 彩虹岛上传页文件字段为 torrentfile，提交目标仍为 takeupload.php。
+# 彩虹岛 (CHDBits, ptchdbits.co) 发种映射配置
+# 抓取来源: https://ptchdbits.co/upload.php  (2026-09-21 登录态实测)
+# 表单: action=takeupload.php  method=post  enctype=multipart/form-data
+#
+# 关键差异（与其它已接入 NexusPHP 站点不同处）:
+#   1. 文件字段是 torrentfile，不是 NexusPHP 标准的 file
+#   2. select 字段名【不带】[N] 后缀（同 pthome/ourbits，不同于 aling/mypt/lemon/1ptba）
+#   3. 分类 type 走 401+ 段位，不是从 1 开始：
+#      401=电影 402=电视剧 403=TV Shows 404=纪录片 405=动画
+#      406=音乐 407=体育 408=HQ Audio 409=Demo 410=游戏
+#   4. 地区字段是 processing_sel（美剧/日剧/港剧/韩剧/英剧/国剧/台剧/新剧/马剧/合集/3D）；
+#      另有一个 source_sel 是「来源性质」（1=官方 7=转载 8=复活区 9=原创），
+#      与 PTNexus 的 source.*（地区）语义无关，故用 static_fields 固定提交 7=转载
+#   5. 标签是 8 个【独立 checkbox】（name 各自独立、value 均为 yes），
+#      不是其它站的 tags[] 数组，无法用 mappings.tag 表达，改走 checkbox_tags 表
+#   6. 站点无 DVD/Other 媒介：未知媒介回落 Encode(4)；
+#      分辨率有 Other(5)，未知分辨率直接兜底到 Other
+#   7. 无 pt_gen、无 dburl，只有 url（IMDb 链接文本框）；无 CD/DVD 之外的豆瓣字段
+
 upload_file_field: "torrentfile"
 
 form_fields:
   category: "type"
-  source: "source_sel"
   medium: "medium_sel"
-  resolution: "standard_sel"
   video_codec: "codec_sel"
   audio_codec: "audiocodec_sel"
+  resolution: "standard_sel"
+  # 地区/剧种：PTNexus 的 source.*（source.china 等）落在这个字段
+  processing: "processing_sel"
+  team: "team_sel"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"
+
+# 站点固定字段：无语义映射来源的必填字段的默认值（已由其它映射命中的字段不会被覆盖）
+# source_sel 期望 1=官方 / 7=转载 / 8=复活区 / 9=原创，默认按转载提交
+static_fields:
+  source_sel: "7"
+
+# 独立 checkbox 型标签：PTNexus 标准标签值 → 站点 checkbox 字段名
+# 命中即提交 <字段名>=yes；未命中不提交该字段（服务端视为未勾选）
+checkbox_tags:
+  "tag.官方": "perent"
+  "tag.官组": "perent"
+  "tag.官字": "perent"
+  "tag.首发": "first"
+  "tag.禁转": "oneself" # 全局映射里「独占」的标准值就是 tag.禁转
+  "tag.独家": "oneself"
+  "tag.国语": "cnlang"
+  "tag.DIY": "diy"
+  "tag.中字": "cnsub"
+  "tag.限转": "limited"
+  "tag.特效": "txsub"
 
 source_parsers:
   source_params:
@@ -18,7 +62,7 @@ source_parsers:
     medium:
       source_key: "媒介"
     video_codec:
-      source_key: "视频编码"
+      source_key: "编码"
     audio_codec:
       source_key: "音频编码"
     resolution:
@@ -29,40 +73,68 @@ source_parsers:
   standard_keys:
     type:
       "Movies": "category.movie"
+      "电影": "category.movie"
       "TV Series": "category.tv_series"
-      "Documentaries": "category.documentaries"
-      "Animations": "category.animation"
+      "TV-Episode": "category.tv_series"
+      "TV-Pack": "category.tv_series"
+      "电视剧": "category.tv_series"
       "TV Shows": "category.tv_shows"
-      "Sports": "category.sports"
+      "综艺": "category.tv_shows"
+      "Documentaries": "category.documentaries"
+      "Documentary": "category.documentaries"
+      "纪录片": "category.documentaries"
+      "Animations": "category.animation"
+      "Animation": "category.animation"
+      "动画": "category.animation"
       "Music": "category.music"
-      "HQ Audio": "category.music"
+      "音乐": "category.music"
+      "HQ Audio": "category.audio"
+      "Sports": "category.sports"
+      "体育": "category.sports"
       "Game": "category.game"
+      "游戏": "category.game"
+      "Others": "category.other"
 
     medium:
-      "Blu-ray": "medium.bluray"
       "UHD Blu-ray": "medium.uhd_bluray"
+      "UHD原盘": "medium.uhd_bluray"
+      "Blu-ray": "medium.bluray"
+      "BD原盘": "medium.bluray"
       "Remux": "medium.remux"
       "Encode": "medium.encode"
       "HDTV": "medium.hdtv"
       "WEB-DL": "medium.webdl"
+      "WEBRip": "medium.webrip"
       "CD": "medium.cd"
+      "Track": "medium.track"
+      "DVD": "medium.dvd"
+      "MinBD": "medium.minibd"
       "Other": "medium.other"
 
     video_codec:
-      "H.265": "video.h265"
+      "H.264": "video.h264"
       "H.264/AVC": "video.h264"
-      "VC-1": "video.vc1"
+      "x264": "video.h264"
+      "H.265": "video.h265"
+      "HEVC": "video.h265"
+      "x265": "video.h265"
+      "AV1": "video.av1"
       "MPEG-2": "video.mpeg2"
       "MPEG-4": "video.mpeg4"
-      "AV1": "video.av1"
+      "VC-1": "video.vc1"
+      "Xvid": "video.xvid"
       "Other": "video.other"
 
     audio_codec:
-      "DTS-HD": "audio.dts_hd_ma"
-      "True-HD": "audio.truehd"
-      "LPCM": "audio.lpcm"
       "DTS": "audio.dts"
+      "DTS-HD": "audio.dts_hd_ma"
+      "DTS-HD MA": "audio.dts_hd_ma"
+      "True-HD": "audio.truehd"
+      "TrueHD": "audio.truehd"
+      "LPCM": "audio.lpcm"
       "AC3": "audio.ac3"
+      "DD": "audio.ac3"
+      "DD/AC3": "audio.ac3"
       "AAC": "audio.aac"
       "FLAC": "audio.flac"
       "APE": "audio.ape"
@@ -73,24 +145,16 @@ source_parsers:
     resolution:
       "8K": "resolution.r4320p"
       "4K": "resolution.r2160p"
+      "2160p": "resolution.r2160p"
       "1080p": "resolution.r1080p"
       "1080i": "resolution.r1080i"
       "720p": "resolution.r720p"
-      "Other": "resolution.other"
-
-    source:
-      "美剧": "source.western"
-      "日剧": "source.japan"
-      "港剧": "source.hongkong"
-      "韩剧": "source.korea"
-      "英剧": "source.uk"
-      "台剧": "source.taiwan"
-      "国剧": "source.china"
-      "新剧": "source.singapore"
-      "马剧": "source.malaysia"
+      "SD": "resolution.sd"
+      "None": "resolution.other"
 
     team:
       "CHDBits": "team.chdbits"
+      "CHD": "team.chdbits"
       "SGNB": "team.sgnb"
       "REMUX": "team.remux"
       "CHDTV": "team.chdtv"
@@ -99,104 +163,178 @@ source_parsers:
       "CHDHKTV": "team.chdhktv"
       "OneHD": "team.onehd"
       "blucook": "team.blucook"
+      "KAN": "team.kan"
       "JKCT": "team.jkct"
       "BMDru": "team.bmdru"
       "Destiny": "team.destiny"
+      "SP": "team.sp"
+      "GrassTV": "team.grasstv"
+      "CHDBPM": "team.chdbpm"
+      "GrammyFan": "team.grammyfan"
+      "Other": "team.other"
 
     tag:
+      "官方": "tag.官方"
       "首发": "tag.首发"
       "独占": "tag.禁转"
+      "独家": "tag.独家"
       "限转": "tag.限转"
       "国语": "tag.国语"
+      "粤语": "tag.粤语"
       "DIY": "tag.DIY"
       "中字": "tag.中字"
       "特效": "tag.特效"
+      "转载": "tag.转载"
       "default": null
 
 mappings:
+  # type: 401=Movies 404=Documentaries 405=Animations 402=TV Series 403=TV Shows
+  #       406=Music 407=Sports 409=Demo 408=HQ Audio 410=Game
+  #   Demo(409) 属罕见分类，标准枚举无对应值，不映射；其余无语义分类回落 401
   type:
-    "category.movie": "1"
-    "category.documentaries": "2"
-    "category.animation": "3"
-    "category.tv_series": "4"
-    "category.tv_shows": "5"
-    "category.music": "6"
-    "category.mv": "6"
-    "category.stage": "6"
-    "category.sports": "7"
-    "category.game": "8"
-    "category.other": "1"
-    "default": "1"
+    "category.movie": "401"
+    "category.movie_3d": "401"
+    "category.blu_ray": "401"
+    "category.top100": "401"
+    "category.top250": "401"
+    "category.tv_series": "402"
+    "category.tv_pack": "402"
+    "category.drama": "402"
+    "category.playlet": "402"
+    "category.tv_shows": "403"
+    "category.documentaries": "404"
+    "category.document": "404"
+    "category.animation": "405"
+    "category.cartoon": "405"
+    "category.music": "406"
+    "category.mv": "406"
+    "category.stage": "406"
+    "category.sports": "407"
+    "category.audio": "408"
+    "category.game": "410"
+    "category.other": "401"
+    "default": "401"
 
+  # medium_sel: 1=Blu-ray 19=UHD Blu-ray 3=Remux 4=Encode 6=HDTV 18=WEB-DL 8=CD
+  #   站点无 DVD / Other，DVD 系与其它未知媒介回落 Encode(4)
   medium:
     "medium.bluray": "1"
     "medium.bluray_diy": "1"
-    "medium.uhd_bluray": "2"
-    "medium.uhd_diy": "2"
+    "medium.uhd_bluray": "19"
+    "medium.uhd_diy": "19"
     "medium.remux": "3"
     "medium.encode": "4"
-    "medium.encode_2160p": "4"
-    "medium.encode_1080p": "4"
-    "medium.encode_720p": "4"
-    "medium.hdtv": "5"
-    "medium.webdl": "6"
-    "medium.cd": "7"
-    "medium.track": "7"
-    "medium.dvd": "8"
-    "medium.other": "8"
+    "medium.minibd": "4"
+    "medium.bdrip": "4"
+    "medium.hdtv": "6"
+    "medium.uhdtv": "6"
+    "medium.tv": "6"
+    "medium.tvrip": "6"
+    "medium.webdl": "18"
+    "medium.webrip": "18"
+    "medium.cd": "8"
+    "medium.track": "8"
+    "medium.sacd": "8"
+    "medium.vinyl": "8"
     "default": "4"
 
+  # codec_sel: 1=H.264/AVC 5=H.265 6=MPEG-4 4=MPEG-2 2=VC-1 3=AV1
+  #   站点无 Other 编码，未知编码回落 MPEG-4(6)
   video_codec:
     "video.h264": "1"
     "video.x264": "1"
-    "video.h265": "2"
-    "video.x265": "2"
-    "video.hevc": "2"
+    "video.h265": "5"
+    "video.x265": "5"
+    "video.hevc": "5"
+    "video.av1": "3"
     "video.mpeg2": "4"
-    "video.vc1": "5"
     "video.mpeg4": "6"
-    "video.av1": "6"
+    "video.vc1": "2"
+    "video.xvid": "6"
     "video.other": "6"
     "default": "6"
 
+  # audiocodec_sel: 3=DTS 7=AC3 10=DTS-HD 11=True-HD 13=LPCM
+  #                 1=FLAC 2=APE 12=WAV 6=AAC 14=ALAC
+  #   站点无 MP3/Other 项，未知音频回落 AC3(7)
   audio_codec:
-    "audio.dts": "1"
-    "audio.ac3": "2"
-    "audio.ddp": "2"
-    "audio.ddp_atmos": "4"
-    "audio.dts_hd_ma": "3"
-    "audio.dtsx": "3"
-    "audio.truehd": "4"
-    "audio.truehd_atmos": "4"
-    "audio.lpcm": "5"
-    "audio.flac": "6"
-    "audio.ape": "7"
-    "audio.wav": "8"
-    "audio.aac": "9"
-    "audio.alac": "10"
-    "audio.mpeg": "10"
-    "audio.mp3": "10"
-    "audio.other": "10"
-    "default": "10"
+    "audio.dts": "3"
+    "audio.ac3": "7"
+    "audio.ddp": "7"
+    "audio.ddp_atmos": "7"
+    "audio.dts_hd_ma": "10"
+    "audio.dts_hd": "10"
+    "audio.dts_hd_hr": "10"
+    "audio.dtsx": "10"
+    "audio.truehd": "11"
+    "audio.truehd_atmos": "11"
+    "audio.lpcm": "13"
+    "audio.pcm": "13"
+    "audio.flac": "1"
+    "audio.ape": "2"
+    "audio.wav": "12"
+    "audio.aac": "6"
+    "audio.alac": "14"
+    "audio.m4a": "6"
+    "audio.other": "7"
+    "default": "7"
 
+  # standard_sel: 1=1080p 2=1080i 3=720p 5=Other 7=8K 6=4K（无 SD 项）
   resolution:
     "resolution.r1080p": "1"
     "resolution.r1080i": "2"
     "resolution.r720p": "3"
-    "resolution.sd": "4"
-    "resolution.other": "4"
-    "resolution.r4320p": "5"
+    "resolution.r1440p": "5"
     "resolution.r2160p": "6"
-    "default": "4"
+    "resolution.r4320p": "7"
+    "resolution.sd": "5"
+    "resolution.r480p": "5"
+    "resolution.r540p": "5"
+    "resolution.other": "5"
+    "default": "5"
 
-  source:
-    "source.western": "7"
-    "source.japan": "7"
-    "source.hongkong": "7"
-    "source.korea": "7"
+  # processing_sel: 1=3D 3=美剧 4=日剧 5=港剧 6=韩剧 7=英剧 8=国剧 9=台剧 10=新剧 11=马剧 13=合集
+  # 站点无「其它地区」项，未知地区回落 美剧(3)
+  processing:
+    "source.western": "3"
+    "source.japan": "4"
+    "source.hongkong": "5"
+    "source.hongkong_taiwan": "5"
+    "source.korea": "6"
     "source.uk": "7"
-    "source.taiwan": "7"
-    "source.china": "7"
-    "source.singapore": "7"
-    "source.malaysia": "7"
-    "default": "7"
+    "source.china": "8"
+    "source.taiwan": "9"
+    "source.singapore": "10"
+    "source.malaysia": "11"
+    "source.europe": "3"
+    "source.australia": "3"
+    "source.canada": "3"
+    "source.india": "3"
+    "source.other": "3"
+    "default": "3"
+
+  # team_sel: 3=压制组 14=CHDBits 13=SGNB 1=REMUX 2=CHDTV 15=CHDPAD 12=CHDWEB
+  #           11=CHDHKTV 8=OneHD 16=blucook 19=KAN 22=JKCT 23=BMDru
+  #           25=Destiny 26=SP 27=GrassTV 28=CHDBPM 29=GrammyFan
+  #   站点无 Other 制作组，未知制作组回落 压制组(3)
+  team:
+    "team.chdbits": "14"
+    "team.chd": "14"
+    "team.sgnb": "13"
+    "team.remux": "1"
+    "team.chdtv": "2"
+    "team.chdpad": "15"
+    "team.chdweb": "12"
+    "team.chdhktv": "11"
+    "team.onehd": "8"
+    "team.blucook": "16"
+    "team.kan": "19"
+    "team.jkct": "22"
+    "team.bmdru": "23"
+    "team.destiny": "25"
+    "team.sp": "26"
+    "team.grasstv": "27"
+    "team.chdbpm": "28"
+    "team.grammyfan": "29"
+    "team.other": "3"
+    "default": "3"
