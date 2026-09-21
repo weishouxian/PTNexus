@@ -22,10 +22,17 @@ func (r *SiteRepository) ListSourceAndTargetSites() ([]string, []string, error) 
 		return nil, nil, err
 	}
 
+	// 源站凭据可以是 cookie 也可以是 passkey：
+	// PrepareSourceSite 接受两者之一，且仅配 passkey 的站点同样能走 download.php 直链下载
+	// （馒头这类用 API 令牌的站点就只填 passkey）。因此这里不能只按 cookie 过滤，
+	// 否则站点会出现在目标站列表里、却不在源站列表里。
 	sourceRows, err := sqlDB.Query(`
 		SELECT nickname FROM sites
 		WHERE (migration = 1 OR migration = 3)
-		AND cookie IS NOT NULL AND cookie != ''
+		AND (
+			(cookie IS NOT NULL AND cookie != '')
+			OR (passkey IS NOT NULL AND passkey != '')
+		)
 		ORDER BY sort_order, nickname
 	`)
 	if err != nil {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/config"
+	"github.com/pt-nexus/server/internal/service/mteamapi"
 	"github.com/pt-nexus/server/internal/service/publish/publisher"
 	"gopkg.in/yaml.v3"
 )
@@ -81,7 +82,7 @@ var mteamDefaultConfig = mteamConfig{
 		"medium.cd_dvd": "3", "medium.cd_vcd": "3",
 		"medium.cd": "10", "medium.sacd": "10", "medium.vinyl": "10", "medium.track": "10",
 		"medium.other": "6",
-		"bluray": "1", "uhd_bluray": "1", "uhd_diy": "1", "bdrip": "1", "encode": "1",
+		"bluray":       "1", "uhd_bluray": "1", "uhd_diy": "1", "bdrip": "1", "encode": "1",
 		"minibd": "1", "minisd": "1", "hddvd": "1",
 		"remux": "4",
 		"webdl": "8", "webrip": "8", "feed": "8",
@@ -169,10 +170,11 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少 base_url")
 	}
 
-	apiKey := resolveMTeamAPIKey(input)
-	if apiKey == "" {
-		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少 API Token（请在 webui 站点配置的 Cookie 栏填写存取令牌）")
+	token := resolveMTeamToken(input)
+	if token.Value == "" {
+		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少 API Token：请在 webui 站点配置的 Passkey 或 Cookie 栏填写控制台生成的存取令牌（形如 57b1fa6c-fae9-4665-91d9-1b13da329439）。若该栏填的是网页 Cookie，令牌不会被识别")
 	}
+	apiKey := token.Value
 
 	cfg := loadMTeamConfig()
 	apiBase := firstNonEmpty(normalizeBaseURL(cfg.APIBase), "https://api.m-team.cc")
@@ -205,13 +207,18 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		std = s
 	}
 
+	// 标准化值保留完整形态（如 resolution.r1080p）供字典查找；去前缀形态（r1080p）
+	// 仅用于分类落点判断。字典查找必须吃完整值，否则 pickMTeamValueEx 的去前缀兜底会走空。
 	categoryKey := toStringAny(std["type"], "")
-	mediumKey := normalizeMTeamToken(toStringAny(std["medium"], ""), "medium.")
-	resolutionKey := normalizeMTeamToken(toStringAny(std["resolution"], ""), "resolution.")
-	codecKey := normalizeMTeamToken(toStringAny(std["video_codec"], ""), "video.")
-	audioKey := normalizeMTeamToken(toStringAny(std["audio_codec"], ""), "audio.")
+	mediumRaw := toStringAny(std["medium"], "")
+	resolutionRaw := toStringAny(std["resolution"], "")
+	codecRaw := toStringAny(std["video_codec"], "")
+	audioRaw := toStringAny(std["audio_codec"], "")
 	sourceKey := toStringAny(std["source"], "")
 	teamKey := toStringAny(std["team"], "")
+
+	mediumKey := normalizeMTeamToken(mediumRaw, "medium.")
+	resolutionToken := normalizeMTeamToken(resolutionRaw, "resolution.")
 
 	// 未命中即回落到 defaults，故每一维度都记录告警，便于事后核对站点字典。
 	fallbackNotes := make([]string, 0, 6)
@@ -230,11 +237,11 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		"name":       title,
 		"smallDescr": strings.TrimSpace(input.Subtitle),
 		"descr":      buildMTeamDescription(input.Description),
-		"category":   resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionKey),
-		"source":     pick("来源(source)", cfg.Source, mediumKey, cfg.Defaults.Source),
-		"standard":   pick("分辨率(standard)", cfg.Standard, resolutionKey, cfg.Defaults.Standard),
-		"videoCodec": pick("视频编码(videoCodec)", cfg.Codec, codecKey, cfg.Defaults.Codec),
-		"audioCodec": pick("音频编码(audioCodec)", cfg.Audio, audioKey, cfg.Defaults.Audio),
+		"category":   resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionToken),
+		"source":     pick("来源(source)", cfg.Source, mediumRaw, cfg.Defaults.Source),
+		"standard":   pick("分辨率(standard)", cfg.Standard, resolutionRaw, cfg.Defaults.Standard),
+		"videoCodec": pick("视频编码(videoCodec)", cfg.Codec, codecRaw, cfg.Defaults.Codec),
+		"audioCodec": pick("音频编码(audioCodec)", cfg.Audio, audioRaw, cfg.Defaults.Audio),
 		"processing": pick("地区(processing)", cfg.Processing, sourceKey, cfg.Defaults.Processing),
 	}
 
@@ -285,6 +292,7 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	logLines := []string{
 		fmt.Sprintf("--- [m-team] 开始发布到 %s ---", strings.TrimSpace(input.TargetName)),
 		fmt.Sprintf("上传地址: %s", uploadURL),
+		fmt.Sprintf("API Token: %s（来源 %s）", mteamTokenFingerprint(apiKey), token.Source),
 		fmt.Sprintf("字段摘要: name=%q category=%s source=%s standard=%s videoCodec=%s audioCodec=%s processing=%s team=%q countries=%q labelsNew=%q anonymous=%s",
 			title, textFields["category"], textFields["source"], textFields["standard"],
 			textFields["videoCodec"], textFields["audioCodec"], textFields["processing"],
@@ -369,15 +377,15 @@ func postMTeamTorrent(uploadURL, webBase, apiKey string, textFields map[string]s
 			fmt.Errorf("m-team 返回 HTTP %d", resp.StatusCode)
 	}
 
-	var parsed mteamAPIResponse
+	var parsed mteamapi.Response
 	if err := json.Unmarshal(respBody, &parsed); err != nil {
 		return "", fmt.Sprintf("响应(非 JSON): %s", summarizeResponseBody(raw)), false,
 			fmt.Errorf("m-team 响应解析失败: %w", err)
 	}
 
-	code := strings.TrimSpace(strings.Trim(string(parsed.Code), `"`))
+	code := parsed.CodeString()
 	message := strings.TrimSpace(parsed.Message)
-	if code != "" && code != "0" {
+	if !parsed.IsSuccess() {
 		existing := isMTeamDuplicateMessage(message)
 		if message == "" {
 			message = summarizeResponseBody(raw)
@@ -392,13 +400,6 @@ func postMTeamTorrent(uploadURL, webBase, apiKey string, textFields map[string]s
 		detail = strings.TrimRight(webBase, "/") + "/detail/" + torrentID
 	}
 	return detail, fmt.Sprintf("接口返回成功: %s", summarizeResponseBody(raw)), false, nil
-}
-
-// mteamAPIResponse 为 M-Team 通用响应结构。code 可能是字符串 "0" 也可能是数字 0，故用 RawMessage。
-type mteamAPIResponse struct {
-	Code    json.RawMessage `json:"code"`
-	Message string          `json:"message"`
-	Data    json.RawMessage `json:"data"`
 }
 
 // resolveMTeamTorrentID 从响应 data 中提取种子 ID。
@@ -439,13 +440,27 @@ func isMTeamDuplicateMessage(message string) bool {
 // loadMTeamConfig 读取 server/configs/mteam.yaml 并将其中字典合并到默认配置之上。
 func loadMTeamConfig() mteamConfig {
 	cfg := mteamDefaultConfig
+	// mteamDefaultConfig 中的 map 是引用类型，直接合并会污染全局兜底配置，
+	// 并发发种时还会产生 data race，因此先逐张拷贝。
+	cfg.Category = cloneMTeamMap(cfg.Category)
+	cfg.Source = cloneMTeamMap(cfg.Source)
+	cfg.Standard = cloneMTeamMap(cfg.Standard)
+	cfg.Codec = cloneMTeamMap(cfg.Codec)
+	cfg.Audio = cloneMTeamMap(cfg.Audio)
+	cfg.Team = cloneMTeamMap(cfg.Team)
+	cfg.Processing = cloneMTeamMap(cfg.Processing)
+	cfg.Country = cloneMTeamMap(cfg.Country)
+	cfg.Tags = cloneMTeamMap(cfg.Tags)
+
 	paths := config.ResolveRuntimePaths()
 	data, err := os.ReadFile(filepath.Join(paths.BaseDir, "configs", "mteam.yaml"))
 	if err != nil {
+		expandMTeamAliases(&cfg)
 		return cfg
 	}
 	var override mteamConfig
 	if err := yaml.Unmarshal(data, &override); err != nil {
+		expandMTeamAliases(&cfg)
 		return cfg
 	}
 	if strings.TrimSpace(override.SiteName) != "" {
@@ -484,7 +499,39 @@ func loadMTeamConfig() mteamConfig {
 	if v := strings.TrimSpace(override.Defaults.Processing); v != "" {
 		cfg.Defaults.Processing = v
 	}
+	expandMTeamAliases(&cfg)
 	return cfg
+}
+
+// cloneMTeamMap 复制一张字典，避免合并 yaml 覆盖时写坏全局兜底配置。
+func cloneMTeamMap(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+// expandMTeamAliases 为带点号的标准化键补充去前缀别名。
+//
+// 上游标准化值可能是 resolution.r1080p（完整形态），也可能已去前缀为 r1080p，
+// 字典只维护完整形态，这里派生别名后两种形态都能命中，避免同一份字典写两遍后相互漂移。
+func expandMTeamAliases(cfg *mteamConfig) {
+	for _, mapping := range []map[string]string{
+		cfg.Category, cfg.Source, cfg.Standard, cfg.Codec,
+		cfg.Audio, cfg.Team, cfg.Processing, cfg.Country,
+	} {
+		for key, value := range mapping {
+			idx := strings.Index(key, ".")
+			if idx <= 0 || idx >= len(key)-1 {
+				continue
+			}
+			alias := key[idx+1:]
+			if _, exists := mapping[alias]; !exists {
+				mapping[alias] = value
+			}
+		}
+	}
 }
 
 func mergeMTeamMap(base, override map[string]string) {
@@ -745,38 +792,27 @@ func buildMTeamDescription(body string) string {
 	})
 }
 
-// resolveMTeamAPIKey 解析 M-Team 的 API Access Token。
+// mteamToken 描述解析出的存取令牌及其来源，来源用于日志诊断（便于发现填错栏位）。
+type mteamToken = mteamapi.Credential
+
+// resolveMTeamToken 解析 M-Team 的 API Access Token。
 //
-// 站点鉴权不走 cookie 而是 x-api-key，但 PTNexus 的站点配置只有 Cookie/Passkey 两栏，
-// 因此约定把 token 填进 Cookie 栏。为兼容直接粘贴的形态，这里同时支持：
-//   - 纯 token：57b1fa6c-...
-//   - 带前缀：x-api-key: 57b1fa6c-... / x-api-key=... / apikey=...
-//   - 键值串：x-api-key=xxx; other=yyy
+// 站点鉴权不走 cookie 而是 x-api-key，但 PTNexus 的站点配置只有 Cookie / Passkey 两栏，
+// 前端还把 m-team 列入「需要手动配 Passkey」的站点，因此两栏都要能取到令牌。按序尝试：
+//   - 站点配置显式提供的 api_key
+//   - Passkey 栏
+//   - Cookie 栏
 //
-// 另支持通过 TargetInfo["api_key"] 显式覆盖。
-func resolveMTeamAPIKey(input publisher.PublishInput) string {
-	if input.TargetInfo != nil {
-		if value := strings.TrimSpace(toStringAny(input.TargetInfo["api_key"], "")); value != "" {
-			return value
-		}
-	}
+// 每一栏都做容错解析（见 mteamapi.ExtractToken），避免把误粘贴的网页 Cookie 当成令牌发出。
+func resolveMTeamToken(input publisher.PublishInput) mteamToken {
+	return mteamapi.ResolveToken([]mteamapi.Credential{
+		{Source: "站点配置 api_key", Value: toStringAny(input.TargetInfo["api_key"], "")},
+		{Source: "Passkey 栏", Value: toStringAny(input.TargetInfo["passkey"], "")},
+		{Source: "Cookie 栏", Value: input.Cookie},
+	})
+}
 
-	raw := strings.TrimSpace(input.Cookie)
-	if raw == "" {
-		return ""
-	}
-
-	for _, segment := range strings.Split(raw, ";") {
-		trimmed := strings.TrimSpace(segment)
-		lower := strings.ToLower(trimmed)
-		for _, prefix := range []string{"x-api-key=", "x-api-key:", "apikey=", "apikey:", "api_key=", "api_key:", "token=", "token:"} {
-			if strings.HasPrefix(lower, prefix) {
-				if value := strings.TrimSpace(trimmed[len(prefix):]); value != "" {
-					return strings.Trim(value, `"'`)
-				}
-			}
-		}
-	}
-
-	return strings.Trim(raw, `"'`)
+// mteamTokenFingerprint 生成令牌的脱敏指纹，用于日志核对（只暴露前 8 位与长度）。
+func mteamTokenFingerprint(token string) string {
+	return mteamapi.Fingerprint(token)
 }

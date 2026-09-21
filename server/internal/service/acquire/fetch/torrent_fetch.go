@@ -18,6 +18,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/service/mteamapi"
 )
 
 var (
@@ -120,10 +121,19 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	// YemaPT 为 UmiJS SPA + 自研 REST API：详情页是前端 hash 路由，
 	// 无法通过静态 HTML 解析下载链接，需先换取 token 再拼接 download1 直链。
 	isYemaPT := isYemaPTSource(siteCode, baseURL, detailURL)
+	// M-Team（馒头）同样是 SPA，详情页里没有任何 .torrent 链接；
+	// 下载直链必须用存取令牌调 /api/torrent/genDlToken 换取（站点对同一顆種子每天最多下载 10 次）。
+	isMTeam := isMTeamSource(siteCode, baseURL, detailURL)
+	isSPADetail := isYemaPT || isMTeam
 
 	downloadCandidates := make([]string, 0)
 	if isYemaPT {
 		if direct := resolveYemaPTDownloadURL(baseURL, cookie, detailURL, trimmedID); direct != "" {
+			downloadCandidates = append(downloadCandidates, direct)
+		}
+	}
+	if isMTeam {
+		if direct := resolveMTeamSourceDownloadURL(mteamapi.APIBaseFor(baseURL, detailURL), cookie, passkey, detailURL, trimmedID, siteName); direct != "" {
 			downloadCandidates = append(downloadCandidates, direct)
 		}
 	}
@@ -133,8 +143,12 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 
 	var html string
 	var htmlErr error
-	if isYemaPT {
-		logx.Infof(sourceDownloadLogModule, "YemaPT 详情页为 SPA，跳过 HTML 解析 source_site=%s torrent_id=%s", siteName, trimmedID)
+	if isSPADetail {
+		spaKind := "YemaPT"
+		if isMTeam {
+			spaKind = "M-Team"
+		}
+		logx.Infof(sourceDownloadLogModule, "%s 详情页为 SPA，跳过 HTML 解析 source_site=%s torrent_id=%s", spaKind, siteName, trimmedID)
 	} else {
 		html, htmlErr = fetchPageWithCookie(detailURL, cookie, 45*time.Second)
 	}
@@ -161,6 +175,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=YemaPT 接口未返回下载 token", siteName, trimmedID)
 			return "", detailURL, nil, errors.New("YemaPT 未能通过接口换取下载 token")
 		}
+		if isMTeam {
+			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=M-Team 接口未返回下载直链", siteName, trimmedID)
+			return "", detailURL, nil, errors.New("馒头未能通过接口换取下载直链：请在站点配置的 Passkey 或 Cookie 栏填写控制台生成的存取令牌（网页 Cookie 无效）")
+		}
 		logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=详情页无有效链接", siteName, trimmedID)
 		return "", detailURL, nil, errors.New("详情页中未找到可用下载链接")
 	}
@@ -184,8 +202,16 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 			continue
 		}
 		if !isLikelyTorrent(body) {
-			logx.Warnf(sourceDownloadLogModule, "候选内容无效 source_site=%s torrent_id=%s candidate=%s bytes=%d", siteName, trimmedID, candidate, len(body))
-			lastErr = fmt.Errorf("下载内容不是 torrent 文件: %s", candidate)
+			// 部分站点在限流/鉴权失败时仍返回 HTTP 200，真正原因只写在 JSON 体里
+			// （M-Team 的「相同種子當天最多下載10次」即为此形态），因此要连同响应摘要一起记录。
+			message := extractJSONErrorMessage(body)
+			logx.Warnf(sourceDownloadLogModule, "候选内容无效 source_site=%s torrent_id=%s candidate=%s bytes=%d resp=%s",
+				siteName, trimmedID, candidate, len(body), mteamapi.BodySnippet(body))
+			if message != "" {
+				lastErr = fmt.Errorf("下载内容不是 torrent 文件（站点返回：%s）", message)
+			} else {
+				lastErr = fmt.Errorf("下载内容不是 torrent 文件: %s", candidate)
+			}
 			continue
 		}
 		torrentBytes = body
@@ -530,6 +556,15 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 			return fmt.Sprintf("%s/#/torrent/detail/%s", strings.TrimRight(baseURL, "/"), id)
 		}
 	}
+	// M-Team: 详情页为 SPA 路径 /detail/{id}，不是 NexusPHP 的 details.php?id=
+	if isMTeamSource(siteCode, baseURL, trimmed) {
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+		if id := mteamapi.ExtractTorrentID(trimmed); id != "" {
+			return fmt.Sprintf("%s/detail/%s", strings.TrimRight(baseURL, "/"), id)
+		}
+	}
 	if strings.Contains(trimmed, "details.php") || strings.Contains(trimmed, "torrent/") {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
 			return trimmed
@@ -557,9 +592,9 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 	if baseURL == "" {
 		return ""
 	}
-	// YemaPT 直链需先调用自研接口换取 token，由 resolveYemaPTDownloadURL 单独处理，
+	// YemaPT 与 M-Team 的直链都必须先调各自接口换取，
 	// 不走 NexusPHP 的 download.php 形式，避免生成无效候选。
-	if isYemaPTSource(siteCode, baseURL, detailURL) {
+	if isYemaPTSource(siteCode, baseURL, detailURL) || isMTeamSource(siteCode, baseURL, detailURL) {
 		return ""
 	}
 	trimmedPasskey := strings.TrimSpace(passkey)
@@ -675,6 +710,82 @@ func resolveYemaPTDownloadURL(baseURL, cookie, detailURL, torrentID string) stri
 	downloadURL := fmt.Sprintf("%s/api/torrent/download1?token=%s", root, token)
 	logx.Infof(sourceDownloadLogModule, "YemaPT 下载直链已生成 torrent_id=%s", id)
 	return downloadURL
+}
+
+// isMTeamSource 判断源站是否为 M-Team（馒头）。
+// 参数/返回：siteCode 为站点代码，baseURL/detailURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isMTeamSource(siteCode, baseURL, detailURL string) bool {
+	return mteamapi.IsSite(siteCode, baseURL, detailURL)
+}
+
+// resolveMTeamSourceDownloadURL 用存取令牌换取 M-Team 的种子下载直链。
+//
+// 流程：POST {apiBase}/api/torrent/genDlToken（multipart，字段 id={种子ID}）
+// → 响应 data 即带签名的直链；该直链会 302 到站点下载网关（halomt.com），
+// 跟随跳转后返回的才是真正的 .torrent 内容。
+//
+// 参数/返回：apiBase 为 API 根地址，cookie/passkey 为站点配置的两栏凭据，
+// detailURL/torrentID 用于提取数字种子 ID，siteName 仅用于日志；失败返回空串。
+// 失败场景：缺少 apiBase、无法提取种子 ID、两栏都解析不出令牌、接口返回失败。
+// 副作用：发起网络请求。
+func resolveMTeamSourceDownloadURL(apiBase, cookie, passkey, detailURL, torrentID, siteName string) string {
+	if strings.TrimSpace(apiBase) == "" {
+		logx.Warnf(sourceDownloadLogModule, "M-Team 换取下载直链失败 原因=缺少API根地址")
+		return ""
+	}
+	id := mteamapi.ExtractTorrentID(torrentID)
+	if id == "" {
+		id = mteamapi.ExtractTorrentID(detailURL)
+	}
+	if id == "" {
+		logx.Warnf(sourceDownloadLogModule, "M-Team 换取下载直链失败 detail_url=%s 原因=无法提取种子ID", detailURL)
+		return ""
+	}
+
+	// 站点鉴权走 x-api-key，而 PTNexus 站点配置只有 Passkey / Cookie 两栏，
+	// 因此两栏都尝试；网页 Cookie 形态会被 ExtractToken 拒绝，不会误当令牌发出。
+	token := mteamapi.ResolveToken([]mteamapi.Credential{
+		{Source: "Passkey 栏", Value: passkey},
+		{Source: "Cookie 栏", Value: cookie},
+	})
+	if token.Value == "" {
+		logx.Warnf(sourceDownloadLogModule, "M-Team 换取下载直链失败 source_site=%s torrent_id=%s 原因=Passkey/Cookie 栏均未解析出存取令牌", siteName, id)
+		return ""
+	}
+
+	link, err := mteamapi.GenDlToken(apiBase, token.Value, id, 45*time.Second)
+	if err != nil {
+		logx.Warnf(sourceDownloadLogModule, "M-Team 换取下载直链失败 source_site=%s torrent_id=%s 令牌=%s（来源 %s）err=%v",
+			siteName, id, mteamapi.Fingerprint(token.Value), token.Source, err)
+		return ""
+	}
+	logx.Infof(sourceDownloadLogModule, "M-Team 下载直链已生成 source_site=%s torrent_id=%s 令牌=%s（来源 %s）",
+		siteName, id, mteamapi.Fingerprint(token.Value), token.Source)
+	return link
+}
+
+// extractJSONErrorMessage 从响应体中提取站点返回的错误文案，取不到返回空串。
+//
+// 部分站点在限流或鉴权失败时仍返回 HTTP 200，真正原因只写在 JSON 体里，
+// 只按「内容不是 torrent」判断会把原因丢掉，让排查失去线索。
+func extractJSONErrorMessage(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if !strings.HasPrefix(text, "{") {
+		return ""
+	}
+	var parsed struct {
+		Message string `json:"message"`
+		Msg     string `json:"msg"`
+	}
+	if err := json.Unmarshal([]byte(text), &parsed); err != nil {
+		return ""
+	}
+	if message := strings.TrimSpace(parsed.Message); message != "" {
+		return message
+	}
+	return strings.TrimSpace(parsed.Msg)
 }
 
 func extractDownloadCandidatesFromDetail(html, baseURL, siteCode, detailURL string) []string {
