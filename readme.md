@@ -1,3 +1,5 @@
+# 感谢三清大佬的源码
+# 源码地址： https://github.com/sqing33/PTNexus
 # PT Nexus - PT 种子聚合管理平台
 
 > [!IMPORTANT]
@@ -6,8 +8,8 @@
 
 **PT Nexus** 是一款支持 Docker 容器化部署、兼容多下载器与多数据库的 **PT 种子聚合管理平台**，可自动提取标准化种子参数、解析标题组件，智能纠错补充 MediaInfo/截图/简介等内容、适配不同站点发布规范，支持批量转种与自动推送下载器做种，还具备禁转检测、已存在种子智能匹配等机制，搭配本地文件检索、IYUU API 查漏种等辅助功能，大幅简化跨站点转种流程，显著提升 PT 转种与管理效率。
 
-- Wiki：https://ptn-wiki.sqing33.dpdns.org
-- Github：https://github.com/sqing33/PTNexus
+[//]: # (- Wiki：https://ptn-wiki.sqing33.dpdns.org)
+- Github：https://github.com/weishouxian/PTNexus
 - DockerHub：https://hub.docker.com/r/sqing33/pt-nexus
 - QQ交流群：1057366817
 
@@ -114,7 +116,7 @@
 ```yaml
 services:
   pt-nexus:
-    image: ghcr.nju.edu.cn/sqing33/pt-nexus:latest
+    image: fenglaile/ptnexus:latest
     container_name: pt-nexus
     ports:
       - 5274:5274
@@ -146,7 +148,7 @@ services:
 ```yaml
 services:
   pt-nexus:
-    image: ghcr.nju.edu.cn/sqing33/pt-nexus:latest
+    image: fenglaile/ptnexus:latest
     container_name: pt-nexus
     ports:
       - 5274:5274
@@ -183,7 +185,7 @@ services:
 ```yaml
 services:
   pt-nexus:
-    image: ghcr.nju.edu.cn/sqing33/pt-nexus:latest
+    image: fenglaile/ptnexus:latest
     container_name: pt-nexus
     ports:
       - 5274:5274
@@ -229,9 +231,9 @@ services:
 
 ```bash
 # 使用 curl
-curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash
+curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash
 # 或使用 wget
-wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash
+wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash
 ```
 
 2. **设置端口**  
@@ -308,7 +310,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 ### v3.6.1（2026.02.10）
 
 > **注：Win 版本正在测试ing...
-盒子端需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+盒子端需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 新增：转种目标站点-爱萝莉
 - 新增：出种限速功能
@@ -322,7 +324,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 ### v3.6.0（2026.01.29）
 
-> **注：(可选)盒子端修改获取截图和 MediaInfo 和 BDInfo 的超时时间需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+> **注：(可选)盒子端修改获取截图和 MediaInfo 和 BDInfo 的超时时间需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 新增：修改了下载进度的计算逻辑，对于拆包下载作种的种子添加了一个‘部分做种’的状态
 - 新增：基于媒介（medium）规范视频编码 AVC / HEVC、H.264 / H.265、x264/x265
@@ -333,7 +335,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 ### v3.5.9（2026.01.27）
 
-> **注：盒子端修复截图上传功能需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+> **注：盒子端修复截图上传功能需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 修复：pixhost 图床更换 img1 直链为 img2 导致新发图片无法显示
 
@@ -367,7 +369,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 ### v3.5.3（2026.01.13）
 
-> **注：盒子端新增自动选择中文字幕流功能需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+> **注：盒子端新增自动选择中文字幕流功能需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 新增：禁转规则-空官组禁转至 ub
 - 新增：自动选择中文字幕流，盒子端需要一同更新
@@ -398,10 +400,10 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 > **注：修改 Github 仓库地址为 'https://github.com/sqing33/PTNexus'，因为 'pt-nexus' 缺失横杠无法搜索到，以至于有人在安装的时候安装到了 'nexusphp'。
 结算画面： 'https://img1.pixhost.to/images/11481/682419724_4ba3b6c6-d528-471d-b898-c05c88ea4332.png' 
-新的盒子端安装地址为 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash**
+新的盒子端安装地址为 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash**
 
 - 修改：从 mediainfo 与 bdinfo 获取音频编码的选择
-- 修改：Github 仓库地址为 'https://github.com/sqing33/PTNexus'
+- 修改：Github 仓库地址为 'https://github.com/weishouxian/PTNexus'
 
 ### v3.4.6（2026.01.05）
 
@@ -445,7 +447,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 ### v3.3.4（2025.12.25）
 
-> **注：修复盒子端获取原盘的截图有概率会报错失败的问题需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+> **注：修复盒子端获取原盘的截图有概率会报错失败的问题需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 新增：转种目标站点-劳改所
 - 修复：部分站点丢失 HDR 标签
@@ -472,7 +474,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 > **注:若报错“ModuleNotFoundError: No module named 'PIL'”则需要重新下载镜像进行更新，如仍然报错则删除 data 目录下的 updates 文件夹。
 13City限速12.5MB/s，代码不会修改非0的限速，需要手动修改。
-盒子获取 bdinfo 需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+盒子获取 bdinfo 需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 修复：“ModuleNotFoundError: No module named 'PIL'”报错
 - 修复：青蛙、三月传媒主标题出现重复制作组的问题
@@ -485,7 +487,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 
 ### v3.2.4（2025.12.11）
 
-> **注：盒子优化截图速度需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+> **注：盒子优化截图速度需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 优化：截图速度，截图名称用时间点命名
 - 新增：转种目标站点-PTSkit
@@ -493,7 +495,7 @@ wget -O - https://github.com/sqing33/PTNexus/releases/latest/download/install-pt
 ### v3.2.3（2025.12.11）
 
 > **注：（需要更新 docker 镜像）新增环境变量 UPDATE_SOURCE，可选值 github 或 gitee，默认为 gitee，用于选择更新的源。
-盒子截图 png 需要重新执行 curl -sL https://github.com/sqing33/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
+盒子截图 png 需要重新执行 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash 以更新盒子端脚本。**
 
 - 修复：数据库迁移错误
 - 修复：标题参数 DTS 无法正确识别

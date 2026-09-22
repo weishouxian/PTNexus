@@ -51,7 +51,7 @@
         class="right-buttons-container desktop-no-drag"
         :class="{ 'right-buttons-container--with-window-controls': showDesktopWindowControlsInNav }"
       >
-        <el-link
+<!--        <el-link
           href="https://ptn-wiki.sqing33.dpdns.org"
           target="_blank"
           :underline="false"
@@ -59,9 +59,9 @@
         >
           <el-icon><Link /></el-icon>
           Wiki
-        </el-link>
+        </el-link>-->
         <el-link
-          href="https://github.com/sqing33/PTNexus"
+          href="https://github.com/weishouxian/PTNexus"
           target="_blank"
           :underline="false"
           class="desktop-link-action"
