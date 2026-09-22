@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/service"
 )
 
@@ -104,4 +105,12 @@ func (h *ConfigHandler) SaveTags(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "标签配置已保存"})
+}
+
+// GetMenuVisibility 返回前端导航菜单的显隐开关。
+// 参数/返回：无参数；data 为各菜单项显示状态。
+// 失败场景：无（环境变量缺失时按隐藏返回）。
+// 副作用：无，仅读取进程环境变量，不落库。
+func (h *ConfigHandler) GetMenuVisibility(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": config.ResolveMenuVisibility()})
 }

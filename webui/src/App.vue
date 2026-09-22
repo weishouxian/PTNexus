@@ -41,7 +41,7 @@
         <el-menu-item index="/info">流量统计</el-menu-item>
         <el-menu-item index="/torrents">一种多站</el-menu-item>
         <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
-        <el-menu-item index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
@@ -192,7 +192,7 @@
         <el-menu-item index="/info">流量统计</el-menu-item>
         <el-menu-item index="/torrents">一种多站</el-menu-item>
         <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
-        <el-menu-item index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
@@ -552,6 +552,25 @@ const handleRefreshLoadingChange = (event: Event) => {
   isRefreshing.value = !!customEvent.detail?.refreshing
 }
 
+// 菜单显隐：由后端环境变量控制（默认隐藏「自动发种」）。
+// 仅影响导航菜单渲染，路由与后端接口保持可用，直接访问链接仍能打开页面。
+const showAutoSeedMenu = ref(false)
+let menuVisibilityLoaded = false
+
+const loadMenuVisibility = async () => {
+  if (menuVisibilityLoaded) return
+  // 未登录时请求会被 401 拦截，等登录完成后再拉取。
+  if (!localStorage.getItem('token')) return
+  menuVisibilityLoaded = true
+  try {
+    const response = await axios.get('/api/config/menu_visibility')
+    showAutoSeedMenu.value = response.data?.data?.auto_seed === true
+  } catch (error) {
+    menuVisibilityLoaded = false
+    console.error('加载菜单显隐配置失败:', error)
+  }
+}
+
 // 加载背景设置
 const loadBackgroundSettings = async () => {
   try {
@@ -618,7 +637,10 @@ watch(
   () => route.path,
   () => {
     mobileMenuVisible.value = false
+    // 登录后首次进入业务页面时拉取菜单显隐配置。
+    void loadMenuVisibility()
   },
+  { immediate: true },
 )
 
 // 全局监听 Esc 键：关闭当前最上层的弹框（el-dialog / el-drawer）。
