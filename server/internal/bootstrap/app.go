@@ -409,6 +409,8 @@ func registerRoutes(
 		configAPI.POST("/cross_seed_review_filter", configHandler.SaveCrossSeedReviewFilter)
 		configAPI.GET("/tags", configHandler.GetTags)
 		configAPI.POST("/tags", configHandler.SaveTags)
+		// 菜单显隐由环境变量控制（默认隐藏），前端启动时读取一次。
+		configAPI.GET("/menu_visibility", configHandler.GetMenuVisibility)
 	}
 
 	scheduledSeedAPI := engine.Group("/api/scheduled-seed")
