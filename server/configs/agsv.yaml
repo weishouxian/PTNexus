@@ -209,3 +209,10 @@ mappings:
     "tag.合并": 51
     "tag.方舟": 52
     "default": null
+
+# 标签决定分类：带"动画/动漫"标签的种子必须归入"动漫"分类（405），
+# 覆盖按来源文本解析出的类型（例如原本解析成"电视剧"）。
+# 值为标准类型值，经上面的 mappings.type 换算成站点取值。
+type_by_tag:
+  "tag.动画": "category.animation"
+  "tag.动漫": "category.animation"

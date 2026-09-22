@@ -30,6 +30,9 @@ type SitePublishConfig struct {
 	CheckboxTags map[string]string
 	// CheckboxTagValue 独立 checkbox 命中时提交的值，默认 yes。
 	CheckboxTagValue string
+	// TypeByTag 定义"标签决定分类"规则：命中标准标签时，分类字段固定用对应标准类型值。
+	// 用于站点硬性要求（如 AGSV 带"动画"标签的种子必须选"动漫"分类）。
+	TypeByTag map[string]string
 }
 
 // SiteAnonymousConfig 表示站点匿名发布字段配置。
@@ -92,6 +95,7 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		StaticFields:       mapStringMap(raw["static_fields"]),
 		CheckboxTags:       mapStringMap(raw["checkbox_tags"]),
 		CheckboxTagValue:   strings.TrimSpace(toStringAny(raw["checkbox_tag_value"])),
+		TypeByTag:          mapStringMap(raw["type_by_tag"]),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil

@@ -188,7 +188,8 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		}, nil
 	}
 
-	title := strings.TrimSpace(input.Title)
+	// 站点标题规范：UHD 蓝光写作「UHD BluRay」，源标题若是 UHD Blu-ray 在此纠偏。
+	title := normalizeMTeamTitle(input.Title)
 	if title == "" {
 		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少标题")
 	}
@@ -307,8 +308,14 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	}
 
 	if publishErr != nil {
-		logLines = append(logLines, fmt.Sprintf("发布结果：发布到 m-team 失败: %v", publishErr))
+		// 「种子已存在」不算失败：错误详情已由上面的 attemptDetail 记录，
+		// 这里不再输出失败文案，由上层（workflow）统一按「已存在」上报。
+		if !existing {
+			logLines = append(logLines, fmt.Sprintf("发布结果：发布到 m-team 失败: %v", publishErr))
+		}
 		return publisher.PublishResult{
+			// 已存在时 postMTeamTorrent 会用提示里的种子 ID 拼出详情页链接。
+			PublishURL:        publishURL,
 			IsExistingTorrent: existing,
 			AttemptDetailLog:  strings.Join(logLines, "\n"),
 		}, publishErr
@@ -390,7 +397,21 @@ func postMTeamTorrent(uploadURL, webBase, apiKey string, textFields map[string]s
 		if message == "" {
 			message = summarizeResponseBody(raw)
 		}
-		return "", fmt.Sprintf("接口返回失败: code=%s message=%s", code, message), existing,
+		// 「种子已存在」时站点会在提示里带上已存在种子的 ID（形如 種子已存在(975,609)，
+		// 逗号后是站点附加信息），用它补出详情页链接，便于日志追溯与结果落库。
+		detail := ""
+		existingID := ""
+		if existing {
+			existingID = resolveMTeamExistingTorrentID(message)
+			if existingID != "" {
+				detail = strings.TrimRight(webBase, "/") + "/detail/" + existingID
+			}
+		}
+		detailLog := fmt.Sprintf("接口返回失败: code=%s message=%s", code, message)
+		if existingID != "" {
+			detailLog += fmt.Sprintf("（已存在种子 ID: %s）", existingID)
+		}
+		return detail, detailLog, existing,
 			fmt.Errorf("m-team 接口返回失败(code=%s): %s", code, message)
 	}
 
@@ -435,6 +456,26 @@ func isMTeamDuplicateMessage(message string) bool {
 		}
 	}
 	return false
+}
+
+// mTeamExistingIDPattern 提取「种子已存在」提示括号内的种子 ID。
+// 站点返回形如「種子已存在(975,609)」：括号内逗号前是已存在种子的 ID，
+// 逗号后为站点附加信息（与种子 ID 无关），只取前者。
+var mTeamExistingIDPattern = regexp.MustCompile(`[(（]\s*([0-9]+)`)
+
+// resolveMTeamExistingTorrentID 从「种子已存在」提示中解析已存在种子的 ID。
+// 参数/返回：message 为接口 message 字段；解析不到时返回空字符串。
+// 失败场景：非「种子已存在」提示、或提示里没有括号包住的数字时返回空。
+// 副作用：无。
+func resolveMTeamExistingTorrentID(message string) string {
+	if !isMTeamDuplicateMessage(message) {
+		return ""
+	}
+	match := mTeamExistingIDPattern.FindStringSubmatch(message)
+	if len(match) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(match[1])
 }
 
 // loadMTeamConfig 读取 server/configs/mteam.yaml 并将其中字典合并到默认配置之上。
@@ -720,7 +761,23 @@ var (
 	reMTeamIMDb   = regexp.MustCompile(`(?i)tt(\d+)`)
 	reMTeamDouban = regexp.MustCompile(`subject/(\d+)`)
 	reMTeamImgTag = regexp.MustCompile(`(?i)\[img(?:\=[^\]]*)?\]([\s\S]*?)\[/img\]`)
+	// Markdown 图片语法（历史草稿/其它来源可能残留），统一归一为 BBCode。
+	reMTeamMarkdownImg = regexp.MustCompile(`!\[[^\]]*\]\(\s*([^)\s]+)\s*\)`)
+	// 站点标题规范里 UHD 蓝光写作「UHD BluRay」（不带连字符），源标题的其它写法在此纠偏。
+	reMTeamUHDBluray = regexp.MustCompile(`(?i)\bUHD[ \t]+Blu[-\s]?ray\b`)
 )
+
+// normalizeMTeamTitle 按站点标题规范修正主标题中的媒介写法。
+// 参数/返回：title 为源标题（写法沿用源站，可能是 UHD Blu-ray / UHD Bluray / UHD BLU-RAY）；返回纠偏后的标题。
+// 失败场景：空标题原样返回；未命中时不做任何改动，避免影响其它 token。
+// 副作用：无。
+func normalizeMTeamTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return trimmed
+	}
+	return reMTeamUHDBluray.ReplaceAllString(trimmed, "UHD BluRay")
+}
 
 // resolveMTeamIMDbLink 解析站点 imdb 字段，返回完整 IMDb 链接（站点实测存的就是完整链接）。
 func resolveMTeamIMDbLink(input publisher.PublishInput, std map[string]any) string {
@@ -773,13 +830,18 @@ func resolveMTeamDoubanLink(input publisher.PublishInput, std map[string]any) st
 	return ""
 }
 
-// buildMTeamDescription 把简介中的 BBCode 图片标签转为 Markdown（站点简介为 Markdown 编辑器）。
+// buildMTeamDescription 规范化简介中的图片标签：统一为 BBCode 包裹的 [img]url[/img]。
+// 参数/返回：body 为拼接好的简介正文；返回可直接提交给站点的 descr。
+// 失败场景：正文为空返回空字符串；URL 为空的图片标签直接删除。
+// 副作用：无。
+// 站点差异：站点简介编辑器按 BBCode 渲染图片（[img]…[/img]），不接受 Markdown 的 ![](…)。
+// 因此这里把 [img=宽]属性去掉、把历史的 Markdown 图片写法一并归一为 BBCode，其余内容原样保留。
 func buildMTeamDescription(body string) string {
 	trimmed := strings.TrimSpace(body)
 	if trimmed == "" {
 		return ""
 	}
-	return reMTeamImgTag.ReplaceAllStringFunc(trimmed, func(match string) string {
+	normalized := reMTeamImgTag.ReplaceAllStringFunc(trimmed, func(match string) string {
 		sub := reMTeamImgTag.FindStringSubmatch(match)
 		if len(sub) < 2 {
 			return match
@@ -788,7 +850,18 @@ func buildMTeamDescription(body string) string {
 		if url == "" {
 			return ""
 		}
-		return fmt.Sprintf("![_](%s)", url)
+		return fmt.Sprintf("[img]%s[/img]", url)
+	})
+	return reMTeamMarkdownImg.ReplaceAllStringFunc(normalized, func(match string) string {
+		sub := reMTeamMarkdownImg.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return match
+		}
+		url := strings.TrimSpace(sub[1])
+		if url == "" {
+			return match
+		}
+		return fmt.Sprintf("[img]%s[/img]", url)
 	})
 }
 
