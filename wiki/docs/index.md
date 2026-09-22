@@ -2,8 +2,8 @@
 
 **PT Nexus** 是一款支持 Docker 容器化部署、兼容多下载器与多数据库的 **PT 种子聚合管理平台**，可自动提取标准化种子参数、解析标题组件，智能纠错补充 MediaInfo/截图/简介等内容、适配不同站点发布规范，支持批量转种与自动推送下载器做种，还具备禁转检测、已存在种子智能匹配等机制，搭配本地文件检索、IYUU API 查漏种等辅助功能，大幅简化跨站点转种流程，显著提升 PT 转种与管理效率。
 
-- Wiki：https://ptn-wiki.sqing33.dpdns.org
-- Github：https://github.com/sqing33/PTNexus
+[//]: # (- Wiki：https://ptn-wiki.sqing33.dpdns.org)
+- Github：https://github.com/weishouxian/PTNexus
 - DockerHub：https://hub.docker.com/r/sqing33/pt-nexus
 - QQ交流群：1057366817
 
