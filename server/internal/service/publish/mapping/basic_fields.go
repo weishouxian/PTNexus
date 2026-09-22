@@ -39,6 +39,7 @@ func ResolveBasicPublishMappings(siteCode string, uploadData map[string]any) map
 	}
 
 	apply("type", "category", strings.TrimSpace(toStringAnyBasic(standardized["type"], "")), "type", false)
+	applyTypeByTag(siteCfg, mapped, uploadData, standardized)
 	apply("medium", "medium", strings.TrimSpace(toStringAnyBasic(standardized["medium"], "")), "medium", false)
 	apply("video_codec", "video_codec", strings.TrimSpace(toStringAnyBasic(standardized["video_codec"], "")), "codec", false)
 	apply("audio_codec", "audio_codec", strings.TrimSpace(toStringAnyBasic(standardized["audio_codec"], "")), "audiocodec", false)
@@ -51,6 +52,61 @@ func ResolveBasicPublishMappings(siteCode string, uploadData map[string]any) map
 	applyCheckboxTags(siteCfg, mapped, uploadData, standardized)
 	applyStaticFields(siteCfg, mapped)
 	return mapped
+}
+
+// applyTypeByTag 按"标签决定分类"规则覆盖站点的分类字段。
+// 参数/返回：siteCfg 提供 type_by_tag 表（标准标签 → 标准类型值）；mapped 为待提交字段；uploadData/standardized 提供标签来源；无返回。
+// 说明：部分站点硬性要求带特定标签的种子必须归入对应分类（如 AGSV 带"动画"标签时必须选"动漫"），
+// 该规则优先于按来源文本解析出的类型；命中后直接覆盖分类字段。标准类型值经站点 mappings.type 换算为站点取值（不走 default 兜底，避免误覆盖）。
+// 标签匹配同时兼容带/不带 tag. 前缀两种写法，且忽略大小写；匹配基于种子自身标签，不做 tag_requires 联动扩展。
+// 失败场景：站点未配 type_by_tag、标签集合为空、标准类型在站点 mappings.type 中无对应取值时跳过。
+// 副作用：直接改写 mapped 中的分类字段。
+func applyTypeByTag(siteCfg *SitePublishConfig, mapped map[string]string, uploadData map[string]any, standardized map[string]any) {
+	if mapped == nil || siteCfg == nil || len(siteCfg.TypeByTag) == 0 {
+		return
+	}
+	allTags := collectAllTags(uploadData, standardized)
+	if len(allTags) == 0 {
+		return
+	}
+
+	field := "type"
+	if resolved := strings.TrimSpace(siteCfg.FormFields["category"]); resolved != "" {
+		field = resolved
+	}
+	typeMapping := siteCfg.Mappings["type"]
+
+	for _, tag := range allTags {
+		standardType := ""
+		for _, candidate := range tagKeyCandidates(tag) {
+			if value, ok := pickMappingValueIgnoreCase(siteCfg.TypeByTag, candidate); ok {
+				standardType = value
+				break
+			}
+		}
+		if standardType == "" {
+			continue
+		}
+		if siteValue, ok := pickMappingValueIgnoreCase(typeMapping, standardType); ok {
+			mapped[field] = siteValue
+			return
+		}
+	}
+}
+
+// tagKeyCandidates 返回标签在映射表中的候选键，兼容带/不带 tag. 前缀两种写法。
+// 参数/返回：tag 为标签文本；返回候选键列表，空标签返回 nil。
+// 失败场景：无。
+// 副作用：无。
+func tagKeyCandidates(tag string) []string {
+	trimmed := strings.TrimSpace(tag)
+	if trimmed == "" {
+		return nil
+	}
+	if strings.HasPrefix(trimmed, "tag.") {
+		return []string{trimmed, strings.TrimPrefix(trimmed, "tag.")}
+	}
+	return []string{trimmed, "tag." + trimmed}
 }
 
 func applySourceOrProcessing(siteCfg *SitePublishConfig, mapped map[string]string, sourceValue string) {
@@ -117,12 +173,7 @@ func applyTags(mappingKey string, siteCfg *SitePublishConfig, mapped map[string]
 	tagIDs := make([]string, 0, len(allTags))
 	seen := map[string]struct{}{}
 	for _, tag := range allTags {
-		candidates := []string{tag}
-		if strings.HasPrefix(tag, "tag.") {
-			candidates = append(candidates, strings.TrimPrefix(tag, "tag."))
-		} else {
-			candidates = append(candidates, "tag."+tag)
-		}
+		candidates := tagKeyCandidates(tag)
 		mappedID := ""
 		for _, candidate := range candidates {
 			if mappedValue := pickMappedValueWithFallback(mappingKey, tagMapping, candidate, false, false); strings.TrimSpace(mappedValue) != "" {
@@ -177,13 +228,7 @@ func applyCheckboxTags(siteCfg *SitePublishConfig, mapped map[string]string, upl
 
 	value := resolveCheckboxTagValue(siteCfg)
 	for _, tag := range allTags {
-		candidates := []string{tag}
-		if strings.HasPrefix(tag, "tag.") {
-			candidates = append(candidates, strings.TrimPrefix(tag, "tag."))
-		} else {
-			candidates = append(candidates, "tag."+tag)
-		}
-		for _, candidate := range candidates {
+		for _, candidate := range tagKeyCandidates(tag) {
 			field, ok := pickMappingValueIgnoreCase(siteCfg.CheckboxTags, candidate)
 			if !ok {
 				continue

@@ -91,6 +91,16 @@ func PublishTorrentToTarget(
 	}
 
 	if publishErr != nil {
+		// 部分站点（如 M-Team）把「种子已存在」以接口错误的形式返回（code=1 種子已存在）。
+		// 这属于可接受结果：按「已存在」上报并返回成功，让上层发种日志标记为 exists 而不是 failed。
+		if result.IsExistingTorrent {
+			appendLog(fmt.Sprintf("发布结果：种子已存在于 %s（站点提示：%v）", targetName, publishErr))
+			if strings.TrimSpace(result.PublishURL) != "" {
+				appendLog(fmt.Sprintf("详情页链接: %s", strings.TrimSpace(result.PublishURL)))
+			}
+			appendLog("--- [步骤2] 任务执行完毕 ---")
+			return result.PublishURL, result.DirectDownloadURL, strings.Join(logLines, "\n"), true, result.UploadFormFields, nil
+		}
 		appendLog(fmt.Sprintf("发布结果：发布到 %s 失败: %v", targetName, publishErr))
 		appendLog("--- [步骤2] 任务执行完毕 ---")
 		return "", "", strings.Join(logLines, "\n"), result.IsExistingTorrent, result.UploadFormFields, publishErr
