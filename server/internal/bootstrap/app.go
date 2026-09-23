@@ -300,6 +300,7 @@ func registerRoutes(
 		api.GET("/settings/cross_seed", settingsHandler.GetCrossSeedSettings)
 		api.POST("/settings/cross_seed", settingsHandler.SaveCrossSeedSettings)
 		api.GET("/settings/cross_seed/publish_concurrency_info", settingsHandler.PublishConcurrencyInfo)
+		api.POST("/settings/cross_seed/ptgen_test", settingsHandler.PostPTGenTest)
 
 		api.GET("/data", torrentDataHandler.Data)
 		api.POST("/refresh_data", torrentDataHandler.RefreshData)

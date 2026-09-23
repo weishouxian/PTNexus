@@ -2415,6 +2415,11 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		case strings.Contains(upper, "DTS"):
 			return "audio.dts"
 		case strings.Contains(upper, "E-AC-3") || strings.Contains(upper, "DDP") || strings.Contains(upper, "DD+"):
+			// 对齐 MediaInfo/BDInfo 解析：E-AC-3 + JOC 属独立标准值 audio.ddp_atmos，
+			// 漏判会退化成普通 DDP，发布到支持杜比全景声的站点时丢失 Atmos 标记。
+			if strings.Contains(upper, "ATMOS") || strings.Contains(upper, "JOC") {
+				return "audio.ddp_atmos"
+			}
 			return "audio.ddp"
 		case strings.Contains(upper, "AC-3") || strings.Contains(upper, "AC3"):
 			return "audio.ac3"

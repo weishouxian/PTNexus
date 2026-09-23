@@ -40,10 +40,10 @@ var (
 )
 
 // FetchMovieInfo 按 mediaType 获取海报或简介，并尽量补全 IMDb/豆瓣/TMDb 链接。
-// 参数/返回：mediaType 支持 poster/intro；sourceInfo 为已有外链来源。
+// 参数/返回：mediaType 支持 poster/intro；sourceInfo 为已有外链来源；ptgenNodes 为 PTGen 节点启停配置（为空时使用默认配置）。
 // 失败场景：所有来源都无法返回有效数据时返回错误文案。
 // 副作用：会访问 PTGen、豆瓣、TMDb 等外部网络接口。
-func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[string]any, csptToken string) (MovieInfoResult, string) {
+func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[string]any, csptToken string, ptgenNodes []PTGenNodeSetting) (MovieInfoResult, string) {
 	result := MovieInfoResult{
 		IMDb:   NormalizeExternalLink(toStringAny(sourceInfo["imdb_link"], ""), reIMDbLink),
 		Douban: NormalizeExternalLink(toStringAny(sourceInfo["douban_link"], ""), reDoubanLink),
@@ -88,7 +88,7 @@ func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[stri
 		backfillTMDbByIMDbIfNeeded(result.TMDb, result.IMDb, &tmdbBackfillAttempted, movieInfoLogModule, "初始外链互补后"),
 	)
 
-	format, formatIMDb, formatDouban, formatTMDb, errMsg := fetchPTGenFormat(result, csptToken)
+	format, formatIMDb, formatDouban, formatTMDb, errMsg := fetchPTGenFormat(result, csptToken, ptgenNodes)
 	if errMsg == "" && strings.TrimSpace(format) != "" {
 		poster, intro, imdb, douban, tmdb := parseFormatContent(format, formatIMDb, formatDouban, formatTMDb)
 		result.IMDb = firstNonEmpty(imdb, result.IMDb)
@@ -240,7 +240,7 @@ func logFetchMovieInfoResult(mediaType, source string, result MovieInfoResult, n
 	)
 }
 
-func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, string, string, string) {
+func fetchPTGenFormat(links MovieInfoResult, csptToken string, ptgenNodes []PTGenNodeSetting) (string, string, string, string, string) {
 	resource := firstNonEmpty(links.Douban, links.TMDb, links.IMDb)
 	traceID := fmt.Sprintf("ptgen-%d", time.Now().UnixNano())
 	if resource == "" {
@@ -255,7 +255,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 		return "", "", "", "", ""
 	}
 
-	candidates := buildPTGenCandidates(resource, links.Douban, csptToken)
+	candidates := BuildPTGenCandidates(resource, links.Douban, csptToken, ptgenNodes)
 	logx.Infof(
 		ptgenLogModule,
 		"开始请求 PTGen 流程ID=%s 候选数量=%d 资源链接=%s",
@@ -263,39 +263,52 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 		len(candidates),
 		CompactLogText(resource, 160),
 	)
+	if len(candidates) == 0 {
+		errMessage := "PTGen 候选节点全部停用或缺少必要配置"
+		logx.Warnf(ptgenLogModule, "%s 流程ID=%s", errMessage, traceID)
+		return "", "", "", "", errMessage
+	}
 
 	lastErr := ""
 	for idx, candidate := range candidates {
-		startTime := time.Now()
-		logURL := sanitizePTGenCandidateForLog(candidate)
-		logx.Infof(ptgenLogModule, "发起 PTGen 请求 流程ID=%s 候选=%d/%d 地址=%s", traceID, idx+1, len(candidates), logURL)
+		logURL := sanitizePTGenCandidateForLog(candidate.URL)
+		logx.Infof(
+			ptgenLogModule,
+			"发起 PTGen 请求 流程ID=%s 候选=%d/%d 节点=%s 地址=%s",
+			traceID,
+			idx+1,
+			len(candidates),
+			candidate.NodeName,
+			logURL,
+		)
 
-		format, imdb, douban, tmdb, err := fetchPTGenData(candidate)
-		costMs := time.Since(startTime).Milliseconds()
-		if err != nil {
-			lastErr = err.Error()
-			logx.Warnf(ptgenLogModule, "PTGen 请求失败 流程ID=%s 候选=%d/%d 耗时=%dms 地址=%s 错误=%v", traceID, idx+1, len(candidates), costMs, logURL, err)
+		outcome := fetchPTGenOutcome(candidate.URL)
+		costMs := outcome.ElapsedMS
+		if strings.TrimSpace(outcome.Error) != "" {
+			lastErr = outcome.Error
+			logx.Warnf(ptgenLogModule, "PTGen 请求失败 流程ID=%s 候选=%d/%d 节点=%s 耗时=%dms 地址=%s 错误=%v", traceID, idx+1, len(candidates), candidate.NodeName, costMs, logURL, outcome.Error)
 			continue
 		}
-		format = strings.TrimSpace(format)
+		format := strings.TrimSpace(outcome.Format)
 		if format == "" {
-			logx.Warnf(ptgenLogModule, "PTGen 请求返回空格式 流程ID=%s 候选=%d/%d 耗时=%dms 地址=%s", traceID, idx+1, len(candidates), costMs, logURL)
+			logx.Warnf(ptgenLogModule, "PTGen 请求返回空格式 流程ID=%s 候选=%d/%d 节点=%s 耗时=%dms 地址=%s", traceID, idx+1, len(candidates), candidate.NodeName, costMs, logURL)
 			continue
 		}
 		logx.Infof(
 			ptgenLogModule,
-			"PTGen 请求命中 流程ID=%s 候选=%d/%d 耗时=%dms 地址=%s 格式长度=%d imdb=%s douban=%s tmdb=%s",
+			"PTGen 请求命中 流程ID=%s 候选=%d/%d 节点=%s 耗时=%dms 地址=%s 格式长度=%d imdb=%s douban=%s tmdb=%s",
 			traceID,
 			idx+1,
 			len(candidates),
+			candidate.NodeName,
 			costMs,
 			logURL,
 			len([]rune(format)),
-			CompactLogText(imdb, 120),
-			CompactLogText(douban, 120),
-			CompactLogText(tmdb, 120),
+			CompactLogText(outcome.IMDb, 120),
+			CompactLogText(outcome.Douban, 120),
+			CompactLogText(outcome.TMDb, 120),
 		)
-		return format, imdb, douban, tmdb, ""
+		return format, outcome.IMDb, outcome.Douban, outcome.TMDb, ""
 	}
 
 	if strings.TrimSpace(lastErr) != "" {
@@ -304,64 +317,6 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string) (string, string, 
 		logx.Warnf(ptgenLogModule, "PTGen 候选全部未返回有效格式，转入后续回退逻辑 流程ID=%s", traceID)
 	}
 	return "", "", "", "", lastErr
-}
-
-func buildPTGenCandidates(resourceURL, doubanURL, csptToken string) []string {
-	encodedResource := neturl.QueryEscape(resourceURL)
-	candidates := []string{}
-
-	if csptToken != "" {
-		candidates = append(candidates, fmt.Sprintf("https://cspt.top/api/ptgen/query/%s?url=%s", neturl.PathEscape(csptToken), encodedResource))
-	}
-	candidates = append(candidates,
-		fmt.Sprintf("https://pt-nexus-ptgen.sqing33.dpdns.org/api?url=%s", encodedResource),
-		fmt.Sprintf("https://pt-nexus-ptgen.1395251710.workers.dev/api?url=%s", encodedResource),
-		fmt.Sprintf("https://ptgen.homeqian.top/?url=%s", encodedResource),
-		fmt.Sprintf("https://api.iyuu.cn/App.Movie.Ptgen?url=%s", encodedResource),
-	)
-
-	if doubanID := extractDoubanID(doubanURL); doubanID != "" {
-		candidates = append(candidates, fmt.Sprintf("https://ptgen.tju.pt/infogen?site=douban&sid=%s", neturl.QueryEscape(doubanID)))
-	}
-
-	seen := map[string]struct{}{}
-	unique := make([]string, 0, len(candidates))
-	for _, candidate := range candidates {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if _, exists := seen[candidate]; exists {
-			continue
-		}
-		seen[candidate] = struct{}{}
-		unique = append(unique, candidate)
-	}
-	return unique
-}
-
-func fetchPTGenData(url string) (string, string, string, string, error) {
-	methods := preferredPTGenMethods(url)
-	errMessages := make([]string, 0, len(methods))
-	for _, method := range methods {
-		body, err := FetchPageWithMethod(url, method)
-		if err != nil {
-			errMessages = append(errMessages, fmt.Sprintf("%s请求失败: %v", method, err))
-			continue
-		}
-
-		format, imdb, douban, tmdb, parseErr := parsePTGenResponse(url, method, body)
-		if parseErr != nil {
-			errMessages = append(errMessages, fmt.Sprintf("%s响应无效: %v", method, parseErr))
-			continue
-		}
-		return format, imdb, douban, tmdb, nil
-	}
-
-	if len(errMessages) > 0 {
-		return "", "", "", "", fmt.Errorf(strings.Join(errMessages, " | "))
-	}
-	return "", "", "", "", fmt.Errorf("no request method available")
 }
 
 func preferredPTGenMethods(rawURL string) []string {
