@@ -23,6 +23,8 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 	contentName := strings.TrimSpace(toStringAny(payload["content_name"], ""))
 	sourceInfo, _ := payload["source_info"].(map[string]any)
 	subtitle := strings.TrimSpace(toStringAny(sourceInfo["subtitle"], ""))
+	// PTGen 节点启停与优先级来自 cross_seed 配置，未配置时使用内置默认值。
+	ptgenNodes := PTGenNodeSettingsFromRootConfig(rootConfig)
 
 	switch mediaType {
 	case "screenshot_preview":
@@ -110,7 +112,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		return map[string]any{"success": true, "screenshots": ToBBCodeImages(urls)}, 200
 
 	case "poster":
-		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken)
+		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken, ptgenNodes)
 		if errMsg != "" {
 			return map[string]any{"success": false, "error": errMsg}, 400
 		}
@@ -125,7 +127,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		}, 200
 
 	case "intro":
-		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken)
+		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken, ptgenNodes)
 		if errMsg != "" {
 			return map[string]any{"success": false, "error": errMsg}, 400
 		}

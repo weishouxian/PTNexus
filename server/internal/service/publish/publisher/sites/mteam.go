@@ -188,7 +188,7 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		}, nil
 	}
 
-	// 站点标题规范：UHD 蓝光写作「UHD BluRay」，源标题若是 UHD Blu-ray 在此纠偏。
+	// 站点标题规范：蓝光统一写作「BluRay」（含 UHD BluRay），源标题的连字符等写法在此纠偏。
 	title := normalizeMTeamTitle(input.Title)
 	if title == "" {
 		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少标题")
@@ -763,12 +763,12 @@ var (
 	reMTeamImgTag = regexp.MustCompile(`(?i)\[img(?:\=[^\]]*)?\]([\s\S]*?)\[/img\]`)
 	// Markdown 图片语法（历史草稿/其它来源可能残留），统一归一为 BBCode。
 	reMTeamMarkdownImg = regexp.MustCompile(`!\[[^\]]*\]\(\s*([^)\s]+)\s*\)`)
-	// 站点标题规范里 UHD 蓝光写作「UHD BluRay」（不带连字符），源标题的其它写法在此纠偏。
-	reMTeamUHDBluray = regexp.MustCompile(`(?i)\bUHD[ \t]+Blu[-\s]?ray\b`)
+	// 站点标题规范里蓝光一律写作「BluRay」（不带连字符、不拆空格），源标题的其它写法在此纠偏。
+	reMTeamBluray = regexp.MustCompile(`(?i)\bBlu[-\s]?ray\b`)
 )
 
 // normalizeMTeamTitle 按站点标题规范修正主标题中的媒介写法。
-// 参数/返回：title 为源标题（写法沿用源站，可能是 UHD Blu-ray / UHD Bluray / UHD BLU-RAY）；返回纠偏后的标题。
+// 参数/返回：title 为源标题（写法沿用源站，可能是 Blu-ray / BLU-RAY / Bluray / Blu ray）；返回纠偏后的标题。
 // 失败场景：空标题原样返回；未命中时不做任何改动，避免影响其它 token。
 // 副作用：无。
 func normalizeMTeamTitle(title string) string {
@@ -776,7 +776,7 @@ func normalizeMTeamTitle(title string) string {
 	if trimmed == "" {
 		return trimmed
 	}
-	return reMTeamUHDBluray.ReplaceAllString(trimmed, "UHD BluRay")
+	return reMTeamBluray.ReplaceAllString(trimmed, "BluRay")
 }
 
 // resolveMTeamIMDbLink 解析站点 imdb 字段，返回完整 IMDb 链接（站点实测存的就是完整链接）。

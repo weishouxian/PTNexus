@@ -567,6 +567,186 @@
         </div>
       </div>
 
+      <!-- PTGen 检测卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Connection />
+            </el-icon>
+            <h3>PTGen 检测</h3>
+          </div>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="savingPtgenNodes"
+            @click="savePtgenNodes"
+          >
+            保存节点配置
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <div class="form-item" style="margin-bottom: 16px">
+            <span style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px">
+              豆瓣 ID / 链接
+            </span>
+            <div style="display: flex; gap: 12px; margin-top: 6px">
+              <el-input
+                v-model="ptgenTestForm.douban_id"
+                placeholder="例如 1292052 或 https://movie.douban.com/subject/1292052/"
+                clearable
+                @keyup.enter="runPtgenTest"
+              />
+              <el-button type="primary" :loading="ptgenTesting" @click="runPtgenTest">
+                开始检测
+              </el-button>
+            </div>
+            <el-text type="info" size="small" style="display: block; margin-top: 8px">
+              <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                <InfoFilled />
+              </el-icon>
+              检测会对每个节点发起真实请求，已停用的节点也会一并检测，便于确认是否已恢复可用
+            </el-text>
+          </div>
+
+          <div
+            v-if="ptgenTestSummary"
+            class="ptgen-test-summary"
+            :class="ptgenSuccessCount > 0 ? 'is-success' : 'is-warning'"
+          >
+            {{ ptgenTestSummary }}
+          </div>
+
+          <el-table
+            v-if="ptgenTestResults.length"
+            :data="ptgenTestResults"
+            size="small"
+            border
+            style="margin-bottom: 20px"
+          >
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <div class="ptgen-detail">
+                  <div v-if="row.url" class="ptgen-detail-line">
+                    请求地址：<span class="ptgen-detail-mono">{{ row.url }}</span>
+                  </div>
+                  <div v-if="row.poster_url" class="ptgen-detail-line">
+                    海报：
+                    <el-link type="primary" :href="row.poster_url" target="_blank" rel="noopener">
+                      {{ row.poster_url }}
+                    </el-link>
+                    <div>
+                      <img :src="row.poster_url" class="ptgen-poster-preview" alt="海报预览" />
+                    </div>
+                  </div>
+                  <div v-if="row.intro_preview" class="ptgen-detail-line ptgen-detail-pre">
+                    简介预览：{{ row.intro_preview }}
+                  </div>
+                  <div v-if="row.imdb || row.douban || row.tmdb" class="ptgen-detail-line">
+                    外链：{{ [row.imdb, row.douban, row.tmdb].filter(Boolean).join(' | ') }}
+                  </div>
+                  <div v-if="row.response_preview" class="ptgen-detail-line ptgen-detail-pre">
+                    响应预览：{{ row.response_preview }}
+                  </div>
+                  <div v-if="row.error" class="ptgen-detail-line ptgen-detail-error">
+                    错误：{{ row.error }}
+                  </div>
+                  <div v-if="!row.url && !row.error" class="ptgen-detail-line">
+                    该节点未被执行
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="节点" min-width="170">
+              <template #default="{ row }">
+                <div class="ptgen-node-name">{{ row.name }}</div>
+                <div class="ptgen-node-id">{{ row.id }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="ptgenStatusMeta(row.status).type" size="small" effect="light">
+                  {{ ptgenStatusMeta(row.status).text }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="节点开关" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
+                  {{ row.enabled ? '启用' : '停用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="HTTP" width="110" align="center">
+              <template #default="{ row }">
+                <span v-if="row.http_status">
+                  {{ row.method }} {{ row.http_status }}
+                </span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="耗时" width="90" align="center">
+              <template #default="{ row }">
+                {{ row.status === 'success' || row.status === 'failed' ? formatPtgenElapsed(row.elapsed_ms) : '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="详情" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.status === 'success'">
+                  格式 {{ row.format_length }} 字 · 海报{{ row.poster_url ? ' ✓' : ' ✗' }} · 简介{{
+                    row.intro_preview ? ' ✓' : ' ✗'
+                  }}
+                </span>
+                <span v-else-if="row.error" class="ptgen-detail-error">{{ row.error }}</span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="ptgen-section-title">节点优先级与开关（顺序即请求优先级，靠前优先）</div>
+          <div class="ptgen-node-list">
+            <div v-for="(node, index) in ptgenNodes" :key="node.id" class="ptgen-node-row">
+              <span class="ptgen-node-order">{{ index + 1 }}</span>
+              <div class="ptgen-node-info">
+                <div class="ptgen-node-title">
+                  {{ node.name }}
+                  <el-tag v-if="node.need_token" type="warning" size="small" effect="plain">
+                    需 Token
+                  </el-tag>
+                  <el-tag v-if="index === 0 && node.enabled" type="success" size="small" effect="plain">
+                    首选
+                  </el-tag>
+                </div>
+                <div class="ptgen-node-desc">{{ node.description }}</div>
+              </div>
+              <el-switch
+                v-model="node.enabled"
+                inline-prompt
+                width="46"
+                active-text="开"
+                inactive-text="关"
+                style="flex-shrink: 0"
+              />
+              <div class="ptgen-node-actions">
+                <el-button size="small" :disabled="index === 0" @click="movePtgenNode(index, -1)">
+                  上移
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="index === ptgenNodes.length - 1"
+                  @click="movePtgenNode(index, 1)"
+                >
+                  下移
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 发种设置卡片 -->
       <div
         class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
@@ -958,6 +1138,7 @@ import {
   FolderOpened,
   Collection,
   LocationFilled,
+  Connection,
 } from '@element-plus/icons-vue'
 import { ElMessage } from '@/utils/uiNotify'
 const router = useRouter()
@@ -1141,6 +1322,154 @@ const ratioLimiterIntervalMinutes = computed({
 // 打开财神PTGen网页获取Token
 const openCsptPtgenPage = () => {
   window.open('https://cspt.top/ptgen.php', '_blank')
+}
+
+// ===== PTGen 节点检测 =====
+interface PtgenNodeItem {
+  id: string
+  name: string
+  description: string
+  need_token: boolean
+  default_enabled: boolean
+  enabled: boolean
+  order?: number
+}
+
+interface PtgenTestResult {
+  id: string
+  name: string
+  description: string
+  need_token: boolean
+  enabled: boolean
+  status: string
+  url: string
+  http_status: number
+  method: string
+  elapsed_ms: number
+  error: string
+  response_preview: string
+  format_length: number
+  poster_url: string
+  intro_preview: string
+  imdb: string
+  douban: string
+  tmdb: string
+}
+
+type PtgenTagType = 'success' | 'danger' | 'warning' | 'info'
+
+const ptgenNodes = ref<PtgenNodeItem[]>([])
+const ptgenTestForm = reactive({ douban_id: '' })
+const ptgenTesting = ref(false)
+const ptgenTestResults = ref<PtgenTestResult[]>([])
+const ptgenTestSummary = ref('')
+const ptgenSuccessCount = ref(0)
+const savingPtgenNodes = ref(false)
+
+const loadPtgenNodes = async () => {
+  try {
+    const { data } = await axios.get('/api/settings/cross_seed')
+    const rawNodes = Array.isArray(data?.ptgen_nodes) ? data.ptgen_nodes : []
+    ptgenNodes.value = rawNodes.map((node: Partial<PtgenNodeItem>, index: number) => ({
+      id: String(node.id || ''),
+      name: String(node.name || node.id || ''),
+      description: String(node.description || ''),
+      need_token: Boolean(node.need_token),
+      default_enabled: Boolean(node.default_enabled),
+      enabled: node.enabled !== false,
+      order: typeof node.order === 'number' ? node.order : index + 1,
+    }))
+  } catch (error) {
+    console.warn('加载 PTGen 节点配置失败:', error)
+  }
+}
+
+// 结果按当前节点顺序重排，保证与下方优先级列表一致。
+const sortPtgenResults = (results: PtgenTestResult[]): PtgenTestResult[] => {
+  const orderMap = new Map<string, number>()
+  ptgenNodes.value.forEach((node, index) => orderMap.set(node.id, index))
+  return [...results].sort((a, b) => {
+    const left = orderMap.has(a.id) ? (orderMap.get(a.id) as number) : Number.MAX_SAFE_INTEGER
+    const right = orderMap.has(b.id) ? (orderMap.get(b.id) as number) : Number.MAX_SAFE_INTEGER
+    return left - right
+  })
+}
+
+const movePtgenNode = (index: number, offset: number) => {
+  const target = index + offset
+  if (target < 0 || target >= ptgenNodes.value.length) {
+    return
+  }
+  const list = [...ptgenNodes.value]
+  const [moved] = list.splice(index, 1)
+  list.splice(target, 0, moved)
+  ptgenNodes.value = list
+}
+
+const savePtgenNodes = async () => {
+  savingPtgenNodes.value = true
+  try {
+    await axios.post('/api/settings/cross_seed', {
+      ptgen_nodes: ptgenNodes.value.map((node) => ({ id: node.id, enabled: node.enabled })),
+    })
+    ElMessage.success('PTGen 节点配置已保存！')
+    await loadPtgenNodes()
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, 'PTGen 节点配置保存失败。'))
+  } finally {
+    savingPtgenNodes.value = false
+  }
+}
+
+const runPtgenTest = async () => {
+  const doubanId = ptgenTestForm.douban_id.trim()
+  if (!doubanId) {
+    ElMessage.warning('请输入豆瓣 ID 或豆瓣链接')
+    return
+  }
+  ptgenTesting.value = true
+  try {
+    const { data } = await axios.post('/api/settings/cross_seed/ptgen_test', {
+      douban_id: doubanId,
+    })
+    const nodes = Array.isArray(data?.nodes) ? (data.nodes as PtgenTestResult[]) : []
+    ptgenTestResults.value = sortPtgenResults(nodes)
+    const okCount = Number(data?.success_count) || 0
+    const totalCount = Number(data?.total_count) || ptgenTestResults.value.length
+    ptgenSuccessCount.value = okCount
+    const tokenHint = data?.cspt_configured === false ? '；未配置财神 Token，该节点已跳过' : ''
+    ptgenTestSummary.value = `豆瓣 ${data?.douban_id || doubanId}：${okCount}/${totalCount} 个节点成功返回内容${tokenHint}`
+    if (okCount === 0) {
+      ElMessage.warning('检测完成：所有节点均未成功返回内容')
+    } else {
+      ElMessage.success(`检测完成：${okCount}/${totalCount} 个节点成功`)
+    }
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, 'PTGen 检测失败。'))
+  } finally {
+    ptgenTesting.value = false
+  }
+}
+
+const ptgenStatusMeta = (status: string): { type: PtgenTagType; text: string } => {
+  if (status === 'success') {
+    return { type: 'success', text: '成功' }
+  }
+  if (status === 'failed') {
+    return { type: 'danger', text: '失败' }
+  }
+  if (status === 'skipped') {
+    return { type: 'warning', text: '跳过' }
+  }
+  return { type: 'info', text: '未知' }
+}
+
+const formatPtgenElapsed = (elapsedMs: number): string => {
+  const value = Number(elapsedMs) || 0
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)}s`
+  }
+  return `${value}ms`
 }
 
 const getDesktopAppBridge = (): DesktopAppBridge | null => {
@@ -1774,10 +2103,129 @@ const saveSelectedPaths = () => {
 onMounted(() => {
   fetchSettings()
   void initDesktopRuntime()
+  void loadPtgenNodes()
 })
 </script>
 
 <style scoped>
+/* ===== PTGen 检测 ===== */
+.ptgen-test-summary {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: var(--el-color-success-light-9);
+  color: var(--el-text-color-primary);
+}
+
+.ptgen-test-summary.is-warning {
+  background-color: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+}
+
+.ptgen-detail {
+  padding: 4px 12px 8px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.ptgen-detail-line {
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.ptgen-detail-mono {
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-detail-pre {
+  white-space: pre-wrap;
+}
+
+.ptgen-detail-error {
+  color: var(--el-color-danger);
+}
+
+.ptgen-poster-preview {
+  margin-top: 6px;
+  max-height: 160px;
+  border-radius: 4px;
+}
+
+.ptgen-node-name {
+  font-weight: 500;
+}
+
+.ptgen-node-id {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-section-title {
+  margin-bottom: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.ptgen-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ptgen-node-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background-color: var(--el-fill-color-blank);
+}
+
+.ptgen-node-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
+}
+
+.ptgen-node-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ptgen-node-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+
+.ptgen-node-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-node-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
 .settings-container {
   padding: 20px;
   background-color: transparent;

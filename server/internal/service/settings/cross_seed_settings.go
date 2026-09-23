@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+
+	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 )
 
 func (s *SettingsService) GetCrossSeedSettings() map[string]any {
@@ -20,7 +22,10 @@ func (s *SettingsService) GetCrossSeedSettings() map[string]any {
 		"publish_batch_concurrency_manual": BatchPublishDefaultConcurrency,
 	}
 	cfg := s.cfg.Get()
-	return mergeWithDefault(defaults, nestedMap(cfg, "cross_seed"))
+	merged := mergeWithDefault(defaults, nestedMap(cfg, "cross_seed"))
+	// PTGen 节点以配置顺序为准，并补齐新增内置节点，供前端展示名称与说明。
+	merged["ptgen_nodes"] = processingrepair.EnrichPTGenNodeSettings(merged["ptgen_nodes"])
+	return merged
 }
 
 func (s *SettingsService) SaveCrossSeedSettings(newSettings map[string]any) error {
@@ -52,6 +57,8 @@ func (s *SettingsService) SaveCrossSeedSettings(newSettings map[string]any) erro
 		merged["image_hoster"] = "pixhost"
 	}
 	merged["pixhost_domain"] = normalizePixhostDomainSetting(merged["pixhost_domain"])
+	// PTGen 节点仅持久化 id 与启停状态，数组顺序即优先级。
+	merged["ptgen_nodes"] = processingrepair.NormalizePTGenNodeSettingsPayload(merged["ptgen_nodes"])
 
 	cfg["cross_seed"] = merged
 	return s.cfg.Save(cfg)

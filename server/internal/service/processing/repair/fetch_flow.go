@@ -430,7 +430,7 @@ func repairPosterDuringFetch(
 		CompactLogText(strings.TrimSpace(stringValue(doubanLink)), 120),
 		CompactLogText(strings.TrimSpace(stringValue(tmdbLink)), 120),
 	)
-	posterResult, posterErr := FetchMovieInfo("poster", torrentName, subtitle, posterSource, strings.TrimSpace(deps.CSPTToken))
+	posterResult, posterErr := FetchMovieInfo("poster", torrentName, subtitle, posterSource, strings.TrimSpace(deps.CSPTToken), PTGenNodeSettingsFromRootConfig(deps.RootConfig))
 	if posterErr != "" {
 		logx.Warnf(fetchRepairPosterLogModule, "海报自动修复失败 title=%s err=%s", torrentName, posterErr)
 		emitLog(deps, taskID, "修复海报", "海报自动修复失败："+posterErr, "warning")
@@ -532,7 +532,7 @@ func repairIntroBodyDuringFetch(
 		"douban_link": strings.TrimSpace(stringValue(doubanLink)),
 		"tmdb_link":   strings.TrimSpace(stringValue(tmdbLink)),
 	}
-	introResult, introErr := FetchMovieInfo("intro", torrentName, subtitle, introSource, strings.TrimSpace(deps.CSPTToken))
+	introResult, introErr := FetchMovieInfo("intro", torrentName, subtitle, introSource, strings.TrimSpace(deps.CSPTToken), PTGenNodeSettingsFromRootConfig(deps.RootConfig))
 	if introErr != "" {
 		logx.Warnf(fetchRepairIntroLogModule, "简介自动补全失败 title=%s err=%s", torrentName, introErr)
 		emitLog(deps, taskID, "修复简介", "简介自动补全失败："+introErr, "warning")
