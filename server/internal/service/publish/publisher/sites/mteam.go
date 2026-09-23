@@ -76,9 +76,12 @@ var mteamDefaultConfig = mteamConfig{
 		"medium.bdrip": "1", "medium.encode": "1", "medium.minibd": "1",
 		"medium.minisd": "1", "medium.hddvd": "1",
 		"medium.remux": "4",
+		// Remux 的其它标准化形态（4K / Blu-ray / 剧集）同为站点「Remux」来源。
+		"medium.bluray_remux": "4", "medium.uhd_remux": "4", "medium.uhd_bluray_remux": "4",
+		"medium.remux_tv": "4", "medium.uhd_remux_tv": "4",
 		"medium.webdl": "8", "medium.webrip": "8", "medium.feed": "8",
 		"medium.hdtv": "5", "medium.tv": "5", "medium.tvrip": "5", "medium.uhdtv": "5",
-		"medium.dvd": "3", "medium.dvdr": "3", "medium.vcd": "3",
+		"medium.dvd": "3", "medium.dvdr": "3", "medium.dvdrip": "3", "medium.vcd": "3",
 		"medium.cd_dvd": "3", "medium.cd_vcd": "3",
 		"medium.cd": "10", "medium.sacd": "10", "medium.vinyl": "10", "medium.track": "10",
 		"medium.other": "6",
@@ -221,6 +224,9 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	mediumKey := normalizeMTeamToken(mediumRaw, "medium.")
 	resolutionToken := normalizeMTeamToken(resolutionRaw, "resolution.")
 
+	// 站点用标签表达「动画」属性，类型字段未必是动画：命中动漫/动画标签时强制归入动画大类。
+	hasAnimation := hasAnimationTag(input.UploadData)
+
 	// 未命中即回落到 defaults，故每一维度都记录告警，便于事后核对站点字典。
 	fallbackNotes := make([]string, 0, 6)
 	pick := func(label string, mapping map[string]string, raw, fallback string) string {
@@ -238,7 +244,7 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		"name":       title,
 		"smallDescr": strings.TrimSpace(input.Subtitle),
 		"descr":      buildMTeamDescription(input.Description),
-		"category":   resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionToken),
+		"category":   resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionToken, hasAnimation),
 		"source":     pick("来源(source)", cfg.Source, mediumRaw, cfg.Defaults.Source),
 		"standard":   pick("分辨率(standard)", cfg.Standard, resolutionRaw, cfg.Defaults.Standard),
 		"videoCodec": pick("视频编码(videoCodec)", cfg.Codec, codecRaw, cfg.Defaults.Codec),
@@ -298,8 +304,19 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 			title, textFields["category"], textFields["source"], textFields["standard"],
 			textFields["videoCodec"], textFields["audioCodec"], textFields["processing"],
 			textFields["team"], textFields["countries"], textFields["labelsNew"], textFields["anonymous"]),
-		fmt.Sprintf("外链字段: imdb=%q douban=%q", textFields["imdb"], textFields["douban"]),
 	}
+	if hasAnimation {
+		appendLogLine := "分类判定：命中动漫/动画标签，已按站点规则归入动画大类"
+		if textFields["category"] == cfg.Category["anime_bluray"] {
+			appendLogLine += "（蓝光源 → 动画/BluRay）"
+		} else {
+			appendLogLine += "（动画）"
+		}
+		logLines = append(logLines, appendLogLine)
+	}
+	logLines = append(logLines,
+		fmt.Sprintf("外链字段: imdb=%q douban=%q", textFields["imdb"], textFields["douban"]),
+	)
 	logLines = append(logLines, fallbackNotes...)
 
 	publishURL, attemptDetail, existing, publishErr := postMTeamTorrent(uploadURL, webBase, apiKey, textFields, torrentBytes, filepath.Base(torrentPath))
@@ -660,7 +677,8 @@ func mteamCategoryGroup(category string) string {
 // 站点的电影/影剧分类按「介质 + 分辨率」二维细分（SD / HD / DVDiSo / BluRay / Remux），
 // 因此先用 PTNexus 的 category 定大类，再用 medium / resolution 细分；
 // 无法细分的类型（纪录、音乐、游戏等）直接取单值分类。
-func resolveMTeamCategory(cfg mteamConfig, category, medium, resolution string) string {
+// hasAnimation 为真（种子带动漫/动画标签）时强制归入动画大类：站点用标签表达动画属性，类型字段未必是动画。
+func resolveMTeamCategory(cfg mteamConfig, category, medium, resolution string, hasAnimation bool) string {
 	pickKey := func(keys ...string) string {
 		for _, key := range keys {
 			if value := strings.TrimSpace(cfg.Category[key]); value != "" {
@@ -670,13 +688,22 @@ func resolveMTeamCategory(cfg mteamConfig, category, medium, resolution string) 
 		return strings.TrimSpace(cfg.Defaults.Category)
 	}
 
-	remux := medium == "remux"
-	dvd := medium == "dvd" || medium == "dvdr" || medium == "vcd" || medium == "cd_dvd" || medium == "cd_vcd"
+	// 标准化值里 Remux 有多个形态（medium.remux / uhd_remux / bluray_remux / uhd_bluray_remux / remux_tv…），
+	// 必须按包含判断：精确匹配会漏掉 4K Remux，使分类落到 BluRay 或兜底档。
+	remux := strings.Contains(medium, "remux")
+	dvd := medium == "dvd" || medium == "dvdr" || medium == "dvdrip" || medium == "vcd" ||
+		medium == "cd_dvd" || medium == "cd_vcd"
 	bluray := strings.Contains(medium, "bluray") || medium == "uhd_diy" || medium == "minibd" ||
 		medium == "minisd" || medium == "bdrip" || medium == "hddvd"
 	sd := resolution == "sd" || resolution == "r480p" || resolution == "r540p"
 
-	switch mteamCategoryGroup(category) {
+	// 动画标签优先于类型字段：命中即按动画大类走，蓝光源（BluRay/UHD BluRay/Remux）再落 动画/BluRay。
+	group := mteamCategoryGroup(category)
+	if hasAnimation {
+		group = "anime"
+	}
+
+	switch group {
 	case "movie":
 		switch {
 		case remux:
