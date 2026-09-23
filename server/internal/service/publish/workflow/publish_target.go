@@ -26,6 +26,11 @@ var (
 
 	// 移除标记后可能留下孤立的点号（如 "1080p. . . .WEB-DL"），折叠回单个分隔点。
 	publishTitleDanglingDotPattern = regexp.MustCompile(`(?:\.\s*){2,}`)
+
+	// 青蛙站标题规范里 HDR 统一写作「HDR」（站点不区分 HDR10 写法）。
+	// 尾部边界用「非 +/非单词字符」而非 \b：HDR10+ 是站点独立标签（映射 13），必须保持原样，
+	// 而 \b 会在 "HDR10+" 的 0 与 + 之间成立导致误伤。
+	publishTitleHDR10Pattern = regexp.MustCompile(`(?i)\bHDR10([^+\w]|$)`)
 )
 
 // PublishTorrentToTarget 将种子文件发布到目标站点，并返回发布 URL 与日志文案。
@@ -121,7 +126,7 @@ func PublishTorrentToTarget(
 // 参数/返回：siteCode 用于应用站点级标题修正；uploadData 为前端传入的发布参数；torrentPath 用于缺失标题时兜底文件名。
 // 失败场景：标题组件缺失或重建失败时回退到当前通用标题取值，不返回错误。
 // 副作用：无。
-// 站点差异：qingwapt 会用 title_components 重建主标题，并剔除色深、剧集状态、帧率标记；其他站点直接沿用通用标题取值。
+// 站点差异：qingwapt 会用 title_components 重建主标题，剔除色深、剧集状态、帧率标记，并把 HDR10 归一为 HDR；其他站点直接沿用通用标题取值。
 func resolvePublishMainTitle(siteCode string, uploadData map[string]any, torrentPath string) string {
 	baseTitle := firstNonEmpty(
 		extractPublishFinalMainTitle(uploadData),
@@ -137,16 +142,35 @@ func resolvePublishMainTitle(siteCode string, uploadData map[string]any, torrent
 
 	titleComponents := parsePublishTitleComponents(uploadData["title_components"])
 	if len(titleComponents) == 0 {
-		return stripPublishTitleExcludedTokens(baseTitle)
+		return normalizeQingwaPublishTitle(stripPublishTitleExcludedTokens(baseTitle))
 	}
 
 	completed := processingtitle.CompleteTitleComponents(titleComponents, baseTitle)
 	filtered := filterPublishTitleComponents(completed, publishTitleExcludedComponentKeys...)
 	rebuilt := strings.TrimSpace(processingtitle.BuildPreviewTitleFromTitleComponents(filtered, baseTitle))
 	if rebuilt == "" || rebuilt == "-NOGROUP" {
-		return stripPublishTitleExcludedTokens(baseTitle)
+		return normalizeQingwaPublishTitle(stripPublishTitleExcludedTokens(baseTitle))
 	}
-	return rebuilt
+	return normalizeQingwaPublishTitle(rebuilt)
+}
+
+// normalizeQingwaPublishTitle 应用青蛙站（qingwapt）的标题标记规范。
+// 参数/返回：title 为待发布的主标题；返回 HDR 标记归一后的标题。
+// 失败场景：空标题原样返回。
+// 副作用：无。
+// 规则：HDR10 → HDR（HDR10+ 是站点独立标签，保持原样）。
+func normalizeQingwaPublishTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return trimmed
+	}
+	return publishTitleHDR10Pattern.ReplaceAllStringFunc(trimmed, func(match string) string {
+		// 正则末组吞掉了紧随其后的分隔符（空格/点号/结尾），替换时原样补回。
+		if len(match) <= len("HDR10") {
+			return "HDR"
+		}
+		return "HDR" + match[len("HDR10"):]
+	})
 }
 
 func extractPublishFinalMainTitle(uploadData map[string]any) string {
