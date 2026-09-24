@@ -293,16 +293,14 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		finalImagePath := filepath.Join(tmpDir, fileStem+finalExt)
 		logx.Infof(screenshotValidateLogModule, "截图 HDR 判定 scene=自动截图 index=%d keyword_hdr=%t metadata_hdr=%t hdr=%t output=%s", i+1, keywordHDR, metadataHDR, isHDR, finalImagePath)
 
-		vfFilter := "format=rgb24"
 		if isHDR {
-			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用 zscale 色调映射...")
-			vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc,format=rgb24"
+			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用色调映射...")
 		} else {
 			logx.PlainInfof("   🎨 检测到 SDR 内容，应用标准 RGB 转换...")
 		}
 
 		startCompress := time.Now()
-		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, vfFilter); err != nil {
+		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, isHDR); err != nil {
 			logx.PlainInfof("❌ ffmpeg 压缩失败: %s", sanitizeCommandErrForLog(err))
 			continue
 		}
@@ -680,8 +678,119 @@ func detectHDRFromPNG(ffprobePath string, pngPath string) (bool, error) {
 		}
 		return false, fmt.Errorf("ffprobe 执行失败: %s", text)
 	}
-	text := strings.ToLower(string(out))
-	return strings.Contains(text, "smpte2084") || strings.Contains(text, "bt2020"), nil
+	return isHDRMetadataText(string(out)), nil
+}
+
+// isHDRMetadataText 根据 ffprobe 输出文本判断源是否为 HDR。
+// 参数/返回：text 为 ffprobe 的输出；返回是否按 HDR 处理。
+// 失败场景：无。
+// 副作用：无。
+// 判据说明：优先看标准色彩标记（bt2020 / smpte2084）与 Dolby Vision 关键词；
+// 若两者都没有，但源是 10bit 及以上的 HEVC/VP9/AV1 且色彩三元组全部未标注，
+// 则按 HDR 处理 —— Dolby Vision Profile 5 正是这种形态（IPT 编码，元数据缺失），
+// 否则会被误判为 SDR 而绕过色彩转换链，产出偏色的截图。
+func isHDRMetadataText(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "smpte2084") || strings.Contains(lower, "bt2020") ||
+		strings.Contains(lower, "dovi") || strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") || containsDolbyVisionToken(lower) {
+		return true
+	}
+	if !hasTenBitOrHigherPixelFormat(lower) {
+		return false
+	}
+	if !hasAnyToken(lower, "hevc", "h265", "vp9", "av1") {
+		return false
+	}
+	return !hasKnownColorMetadata(lower)
+}
+
+// hasTenBitOrHigherPixelFormat 判断 ffprobe 文本中是否出现 10bit 及以上的像素格式。
+// 参数/返回：text 为已小写的 ffprobe 输出；返回是否命中。
+// 失败场景：无。
+// 副作用：无。
+func hasTenBitOrHigherPixelFormat(text string) bool {
+	for _, marker := range []string{"pix_fmt=yuv420p10", "pix_fmt=yuv422p10", "pix_fmt=yuv444p10",
+		"pix_fmt=yuv420p12", "pix_fmt=yuv422p12", "pix_fmt=yuv444p12", "pix_fmt=p010", "pix_fmt=p012"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAnyToken 判断文本中是否包含任一关键词。
+// 参数/返回：text 为已小写的文本；tokens 为候选关键词；返回是否命中。
+// 失败场景：无。
+// 副作用：无。
+func hasAnyToken(text string, tokens ...string) bool {
+	for _, token := range tokens {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasKnownColorMetadata 判断 ffprobe 文本里的色彩三元组是否被明确标注。
+// 参数/返回：text 为已小写的 ffprobe 输出；返回是否存在已知取值。
+// 失败场景：无。
+// 副作用：无。
+// 说明：ffprobe 对未标注的色彩字段会输出 unknown / unspecified / reserved，这些视为“无元数据”。
+func hasKnownColorMetadata(text string) bool {
+	for _, key := range []string{"color_space=", "color_transfer=", "color_primaries="} {
+		index := strings.Index(text, key)
+		if index < 0 {
+			continue
+		}
+		value := text[index+len(key):]
+		if end := strings.IndexAny(value, "\r\n"); end >= 0 {
+			value = value[:end]
+		}
+		switch strings.TrimSpace(value) {
+		case "", "unknown", "unspecified", "reserved":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// containsDolbyVisionToken 判断文本中是否存在独立的“dv”标记（大小写不敏感）。
+// 参数/返回：value 为待判断文本；返回是否存在。
+// 失败场景：无。
+// 副作用：无。
+// 说明：资源名里 Dolby Vision 常写成 .DV. / [DV] / DV- 这类形式，单纯 Contains("dv ") 会漏判，
+// 而 Contains("dv") 又会误伤 dvdr 之类的词，因此按分隔符判定独立 token。
+func containsDolbyVisionToken(value string) bool {
+	lower := strings.ToLower(value)
+	for offset := 0; offset+2 <= len(lower); {
+		index := strings.Index(lower[offset:], "dv")
+		if index < 0 {
+			return false
+		}
+		position := offset + index
+		beforeOK := position == 0 || isTokenSeparator(lower[position-1])
+		after := position + 2
+		afterOK := after >= len(lower) || isTokenSeparator(lower[after])
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = position + 2
+	}
+	return false
+}
+
+// isTokenSeparator 判断字节是否为分隔 token 的字符。
+// 参数/返回：b 为待判断字节；返回是否为分隔符。
+// 失败场景：无。
+// 副作用：无。
+func isTokenSeparator(b byte) bool {
+	switch b {
+	case ' ', '.', '_', '-', '+', '[', ']', '(', ')', '/', '\\', ',', ':', '~':
+		return true
+	}
+	return false
 }
 
 // hasScreenshotHDRKeyword 根据下载任务名称补充 HDR 判断，避免截图文件缺少色彩元数据时被误判为 SDR。
@@ -690,7 +799,7 @@ func hasScreenshotHDRKeyword(value string) bool {
 	return strings.Contains(lower, "hdr") ||
 		strings.Contains(lower, "dovi") ||
 		strings.Contains(lower, "dolby vision") ||
-		strings.Contains(lower, "dv ")
+		containsDolbyVisionToken(lower)
 }
 
 func captureRawPNGWithMPV(mpvPath string, videoPath string, second float64, outputPath string, subtitleSID int) error {
@@ -723,12 +832,159 @@ func captureRawPNGWithMPV(mpvPath string, videoPath string, second float64, outp
 	return nil
 }
 
-func compressPNGWithFFmpeg(ffmpegPath string, srcPNG string, dstPNG string, vfFilter string) error {
-	isJPEG := strings.EqualFold(filepath.Ext(dstPNG), ".jpg") || strings.EqualFold(filepath.Ext(dstPNG), ".jpeg")
-	runFilter := func(filter string) ([]byte, error) {
-		args := []string{
-			"-y", "-v", "error", "-i", srcPNG, "-frames:v", "1", "-vf", filter,
+// toneMapFilterCandidate 描述一条色彩转换滤镜链候选。
+type toneMapFilterCandidate struct {
+	// Name 为候选来源标识，用于日志定位实际生效的滤镜链。
+	Name string
+	// Filter 为可直接传给 ffmpeg -vf 的完整滤镜链。
+	Filter string
+	// PreArgs 为执行该候选时需要前置的额外 ffmpeg 选项，例如显式创建 Vulkan 设备。
+	PreArgs []string
+	// Degraded 为 true 表示该候选不做色调映射，输出颜色可能偏暗或偏灰。
+	Degraded bool
+}
+
+// toneMapChainOptions 描述一次色彩转换任务的滤镜链选项。
+type toneMapChainOptions struct {
+	// SDRFilter 为源为 SDR 时直接使用的滤镜链。
+	SDRFilter string
+	// HDRTail 为 HDR 色调映射链的链尾（缩放与输出像素格式）。
+	HDRTail string
+	// FallbackFilter 为色调映射全部失败时的兜底链，不做色彩转换。
+	FallbackFilter string
+	// OutRange 为色调映射链的输出 range，取值 tv 或 pc。
+	OutRange string
+}
+
+var (
+	// pngToneMapChainOptions 为正式截图（PNG/JPEG）链路使用的色彩转换选项。
+	pngToneMapChainOptions = toneMapChainOptions{
+		SDRFilter:      "format=rgb24",
+		HDRTail:        "format=rgb24",
+		FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+		OutRange:       "pc",
+	}
+	// previewToneMapChainOptions 为预览截图（640 宽 JPEG）链路使用的色彩转换选项。
+	previewToneMapChainOptions = toneMapChainOptions{
+		SDRFilter:      "scale='min(640,iw)':-2,format=yuv420p",
+		HDRTail:        "scale='min(640,iw)':-2,format=yuv420p",
+		FallbackFilter: "scale='min(640,iw)':-2,format=yuv420p",
+		OutRange:       "tv",
+	}
+)
+
+// libplaceboHwDeviceArgs 让 ffmpeg 先用自身的 Vulkan hwcontext 建好设备，再交给 libplacebo 使用。
+// 纯 CPU 服务器（只装了 mesa-vulkan-drivers/lavapipe、无独显）下，libplacebo 自己的设备选择会把
+// CPU 类型设备判为不可用并直接报 “Found no suitable device”；由 hwcontext 显式创建后即可正常出图。
+var libplaceboHwDeviceArgs = []string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"}
+
+// buildToneMapFilterCandidates 按优先级构造色彩转换滤镜链候选。
+// 参数/返回：isHDR 标记源是否为 HDR；options 定义链尾与兜底链；返回按优先级排序的候选列表。
+// 失败场景：无。
+// 副作用：仅构造字符串，不执行外部命令。
+// 优先级说明：libplacebo 能正确处理 Dolby Vision Profile 5 等非标准色彩空间（需要可用的 Vulkan 设备，
+// 无独显时用 libplacebo-hwdevice 借助软件 Vulkan）；常规 zscale 依赖帧内色彩元数据；
+// 显式 zscale 在元数据缺失时补 BT.2020/PQ 输入参数；兜底链只保证出图。
+func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
+	if !isHDR {
+		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
+	}
+	libplaceboFilter := "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + "," + options.HDRTail
+	return []toneMapFilterCandidate{
+		{
+			Name:   "libplacebo",
+			Filter: libplaceboFilter,
+		},
+		{
+			Name:    "libplacebo-hwdevice",
+			Filter:  libplaceboFilter,
+			PreArgs: libplaceboHwDeviceArgs,
+		},
+		{
+			Name:   "zscale",
+			Filter: "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:   "zscale-explicit",
+			Filter: "zscale=pin=bt2020:tin=smpte2084:min=bt2020nc:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:     "passthrough",
+			Filter:   options.FallbackFilter,
+			Degraded: true,
+		},
+	}
+}
+
+// prependToneMapPreArgs 把候选自带的额外 ffmpeg 选项放到命令参数最前面。
+// 参数/返回：candidate 提供 PreArgs；args 为调用方构造的参数；返回可直接执行的参数切片。
+// 失败场景：无。
+// 副作用：返回新切片，不修改入参。
+func prependToneMapPreArgs(candidate toneMapFilterCandidate, args []string) []string {
+	if len(candidate.PreArgs) == 0 {
+		return args
+	}
+	merged := make([]string, 0, len(candidate.PreArgs)+len(args))
+	merged = append(merged, candidate.PreArgs...)
+	return append(merged, args...)
+}
+
+// runToneMapFilterAttempts 依次尝试候选滤镜链，返回首个产出有效文件的结果。
+// 参数/返回：outputPath 为输出文件路径；candidates 为候选列表；run 负责按候选执行一次转换并返回命令输出。
+// 失败场景：全部候选失败或均未产出有效文件时返回最后一次错误。
+// 副作用：删除失败尝试留下的输出文件；命中兜底链时输出降级警告。
+func runToneMapFilterAttempts(outputPath string, candidates []toneMapFilterCandidate, run func(toneMapFilterCandidate) ([]byte, error)) (toneMapFilterCandidate, string, error) {
+	var lastOutput []byte
+	var lastErr error
+	for _, candidate := range candidates {
+		output, err := run(candidate)
+		if err == nil {
+			if stat, statErr := os.Stat(outputPath); statErr == nil && stat.Size() > 0 {
+				if candidate.Degraded {
+					logx.PlainWarnf("⚠️ 色调映射滤镜不可用，已按原样输出，颜色可能偏暗或偏灰（filter=%s）", candidate.Name)
+				} else {
+					logx.Infof(screenshotValidateLogModule, "色彩转换滤镜链命中 name=%s output=%s", candidate.Name, outputPath)
+				}
+				return candidate, string(output), nil
+			}
+			err = fmt.Errorf("输出文件未生成")
 		}
+		logx.Infof(screenshotValidateLogModule, "色彩转换滤镜链未生效，尝试下一个候选 name=%s err=%v", candidate.Name, err)
+		lastOutput = output
+		lastErr = err
+		_ = os.Remove(outputPath)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("没有可用的色彩转换滤镜链")
+	}
+	return toneMapFilterCandidate{}, string(lastOutput), lastErr
+}
+
+// formatFFmpegFailureOutput 整理 ffmpeg 失败输出，便于写入日志。
+// 参数/返回：output 为命令输出；err 为命令错误；返回非空文本。
+// 失败场景：无。
+// 副作用：无。
+func formatFFmpegFailureOutput(output string, err error) string {
+	if text := strings.TrimSpace(output); text != "" {
+		return text
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "未知错误"
+}
+
+// compressPNGWithFFmpeg 把 mpv 导出的原始 PNG 转换为可上传的 PNG/JPEG，并处理 HDR 色调映射。
+// 参数/返回：ffmpegPath 为 ffmpeg 路径；srcPNG 为源图；dstPNG 为输出路径（扩展名决定编码格式）；isHDR 标记源是否为 HDR。
+// 失败场景：所有滤镜链候选均失败或输出文件未生成时返回错误。
+// 副作用：执行 ffmpeg 命令；色调映射不可用时降级为不做色彩转换的直出链并输出警告日志。
+func compressPNGWithFFmpeg(ffmpegPath string, srcPNG string, dstPNG string, isHDR bool) error {
+	isJPEG := strings.EqualFold(filepath.Ext(dstPNG), ".jpg") || strings.EqualFold(filepath.Ext(dstPNG), ".jpeg")
+	candidates := buildToneMapFilterCandidates(isHDR, pngToneMapChainOptions)
+	_, output, err := runToneMapFilterAttempts(dstPNG, candidates, func(candidate toneMapFilterCandidate) ([]byte, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y", "-v", "error", "-i", srcPNG, "-frames:v", "1", "-vf", candidate.Filter,
+		})
 		if isJPEG {
 			args = append(args, "-q:v", "2")
 		} else {
@@ -736,42 +992,9 @@ func compressPNGWithFFmpeg(ffmpegPath string, srcPNG string, dstPNG string, vfFi
 		}
 		args = append(args, dstPNG)
 		return exec.Command(ffmpegPath, args...).CombinedOutput()
-	}
-
-	out, err := runFilter(vfFilter)
-	if err != nil && isJPEG {
-		explicitHDRFilter := "zscale=pin=bt2020:tin=smpte2084:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc,format=yuv420p"
-		logx.Infof(screenshotValidateLogModule, "HDR JPEG zscale 转换失败，尝试显式 BT.2020/PQ 输入 source=%s err=%v", srcPNG, err)
-		if retryOut, retryErr := runFilter(explicitHDRFilter); retryErr == nil {
-			out = retryOut
-			err = nil
-			logx.Infof(screenshotValidateLogModule, "HDR JPEG 显式色彩转换成功 output=%s", dstPNG)
-		} else {
-			out = retryOut
-			err = retryErr
-		}
-	}
-	if err != nil && isJPEG {
-		fallbackFilter := "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p"
-		logx.Infof(screenshotValidateLogModule, "HDR JPEG 色调映射不可用，尝试直接 JPEG 转换 source=%s err=%v", srcPNG, err)
-		if retryOut, retryErr := runFilter(fallbackFilter); retryErr == nil {
-			out = retryOut
-			err = nil
-			logx.Infof(screenshotValidateLogModule, "HDR JPEG 直接转换成功 output=%s", dstPNG)
-		} else {
-			out = retryOut
-			err = retryErr
-		}
-	}
+	})
 	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if text == "" {
-			text = err.Error()
-		}
-		return fmt.Errorf("ffmpeg 执行失败: %s", text)
-	}
-	if stat, statErr := os.Stat(dstPNG); statErr != nil || stat.Size() == 0 {
-		return fmt.Errorf("输出文件未生成")
+		return fmt.Errorf("ffmpeg 执行失败: %s", formatFFmpegFailureOutput(output, err))
 	}
 	return nil
 }
