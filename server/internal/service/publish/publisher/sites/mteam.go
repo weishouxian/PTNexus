@@ -415,7 +415,7 @@ func postMTeamTorrent(uploadURL, webBase, apiKey string, textFields map[string]s
 			message = summarizeResponseBody(raw)
 		}
 		// 「种子已存在」时站点会在提示里带上已存在种子的 ID（形如 種子已存在(975,609)，
-		// 逗号后是站点附加信息），用它补出详情页链接，便于日志追溯与结果落库。
+		// 逗号是数字千位分隔符，去掉后才是真实 ID 975609），用它补出详情页链接，便于日志追溯与结果落库。
 		detail := ""
 		existingID := ""
 		if existing {
@@ -475,10 +475,13 @@ func isMTeamDuplicateMessage(message string) bool {
 	return false
 }
 
-// mTeamExistingIDPattern 提取「种子已存在」提示括号内的种子 ID。
-// 站点返回形如「種子已存在(975,609)」：括号内逗号前是已存在种子的 ID，
-// 逗号后为站点附加信息（与种子 ID 无关），只取前者。
-var mTeamExistingIDPattern = regexp.MustCompile(`[(（]\s*([0-9]+)`)
+// mTeamExistingIDPattern 提取「种子已存在」提示括号内的数字串（含千位分隔符）。
+// 站点返回形如「種子已存在(975,609)」，逗号是数字的千位分隔符而非字段分隔，
+// 因此这里连分隔符一起捕获，由 resolveMTeamExistingTorrentID 还原成完整 ID。
+var mTeamExistingIDPattern = regexp.MustCompile(`[(（]\s*([0-9][0-9,，\s]*[0-9]|[0-9])`)
+
+// mTeamExistingIDSeparators 去掉已存在种子 ID 里的千位分隔符（半/全角逗号、空格、不换行空格）。
+var mTeamExistingIDSeparators = strings.NewReplacer(",", "", "，", "", " ", "", "\t", "", "\u00a0", "")
 
 // resolveMTeamExistingTorrentID 从「种子已存在」提示中解析已存在种子的 ID。
 // 参数/返回：message 为接口 message 字段；解析不到时返回空字符串。
@@ -492,7 +495,9 @@ func resolveMTeamExistingTorrentID(message string) string {
 	if len(match) < 2 {
 		return ""
 	}
-	return strings.TrimSpace(match[1])
+	// 站点把 ID 按千位加了分隔符，一律去掉还原完整数字：975,609 → 975609、1,234,567 → 1234567、
+	// 975,61 → 97561（站点就是按位插逗号，不必假设每段 3 位）。
+	return mTeamExistingIDSeparators.Replace(match[1])
 }
 
 // loadMTeamConfig 读取 server/configs/mteam.yaml 并将其中字典合并到默认配置之上。
