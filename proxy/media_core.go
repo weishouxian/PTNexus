@@ -231,16 +231,107 @@ func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID
 	return nil
 }
 
+// detectHDRFromVideo reports whether the video source should be treated as HDR.
+// It also covers Dolby Vision Profile 5 sources whose color metadata is missing: those carry no
+// bt2020/smpte2084 tags, so a tags-only check would classify them as SDR and skip tone mapping.
 func detectHDRFromVideo(videoPath string) bool {
 	output, err := executeCommand("ffprobe", "-v", "error", "-show_streams", videoPath)
 	if err != nil {
 		return false
 	}
-	text := strings.ToLower(output)
-	return strings.Contains(text, "smpte2084") ||
-		strings.Contains(text, "bt2020") ||
-		strings.Contains(text, "dovi") ||
-		strings.Contains(text, "dolby vision")
+	return isHDRMetadataText(output)
+}
+
+// isHDRMetadataText classifies ffprobe output as HDR. Standard color tags and Dolby Vision
+// keywords win immediately; otherwise a 10-bit-or-higher HEVC/VP9/AV1 stream whose color triple is
+// entirely unannotated is treated as HDR, which is the usual shape of Dolby Vision Profile 5.
+func isHDRMetadataText(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "smpte2084") || strings.Contains(lower, "bt2020") ||
+		strings.Contains(lower, "dovi") || strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") || containsDolbyVisionToken(lower) {
+		return true
+	}
+	if !hasTenBitOrHigherPixelFormat(lower) {
+		return false
+	}
+	if !hasAnyToken(lower, "hevc", "h265", "vp9", "av1") {
+		return false
+	}
+	return !hasKnownColorMetadata(lower)
+}
+
+// hasTenBitOrHigherPixelFormat reports whether the ffprobe text declares a 10-bit-or-higher format.
+func hasTenBitOrHigherPixelFormat(text string) bool {
+	for _, marker := range []string{"pix_fmt=yuv420p10", "pix_fmt=yuv422p10", "pix_fmt=yuv444p10",
+		"pix_fmt=yuv420p12", "pix_fmt=yuv422p12", "pix_fmt=yuv444p12", "pix_fmt=p010", "pix_fmt=p012"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAnyToken reports whether any of the given keywords occurs in the text.
+func hasAnyToken(text string, tokens ...string) bool {
+	for _, token := range tokens {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasKnownColorMetadata reports whether ffprobe annotated any of the color triple fields.
+// unknown / unspecified / reserved all count as "no metadata".
+func hasKnownColorMetadata(text string) bool {
+	for _, key := range []string{"color_space=", "color_transfer=", "color_primaries="} {
+		index := strings.Index(text, key)
+		if index < 0 {
+			continue
+		}
+		value := text[index+len(key):]
+		if end := strings.IndexAny(value, "\r\n"); end >= 0 {
+			value = value[:end]
+		}
+		switch strings.TrimSpace(value) {
+		case "", "unknown", "unspecified", "reserved":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// containsDolbyVisionToken reports whether the text (case-insensitive) contains a standalone "dv"
+// marker, as in ".DV." / "[DV]" / "DV-". A plain Contains("dv") would wrongly match dvdr, hence the
+// separator check.
+func containsDolbyVisionToken(value string) bool {
+	lower := strings.ToLower(value)
+	for offset := 0; offset+2 <= len(lower); {
+		index := strings.Index(lower[offset:], "dv")
+		if index < 0 {
+			return false
+		}
+		position := offset + index
+		beforeOK := position == 0 || isTokenSeparator(lower[position-1])
+		after := position + 2
+		afterOK := after >= len(lower) || isTokenSeparator(lower[after])
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = position + 2
+	}
+	return false
+}
+
+// isTokenSeparator reports whether b separates tokens in a release name.
+func isTokenSeparator(b byte) bool {
+	switch b {
+	case ' ', '.', '_', '-', '+', '[', ']', '(', ')', '/', '\\', ',', ':', '~':
+		return true
+	}
+	return false
 }
 
 func hasHDRKeyword(value string) bool {
@@ -252,31 +343,139 @@ func hasHDRKeyword(value string) bool {
 		strings.Contains(lower, "hdr10") ||
 		strings.Contains(lower, "dovi") ||
 		strings.Contains(lower, "dolby vision") ||
-		strings.Contains(lower, "dv ")
+		containsDolbyVisionToken(lower)
+}
+
+type toneMapFilterCandidate struct {
+	Name   string
+	Filter string
+	// PreArgs are extra ffmpeg options prepended to the command, e.g. creating a Vulkan device up front.
+	PreArgs  []string
+	Degraded bool
+}
+
+type toneMapChainOptions struct {
+	SDRFilter      string
+	HDRTail        string
+	FallbackFilter string
+	OutRange       string
+}
+
+var previewToneMapChainOptions = toneMapChainOptions{
+	SDRFilter:      "scale='min(640,iw)':-2,format=yuv420p",
+	HDRTail:        "scale='min(640,iw)':-2,format=yuv420p",
+	FallbackFilter: "scale='min(640,iw)':-2,format=yuv420p",
+	OutRange:       "tv",
+}
+
+var imageToneMapChainOptions = toneMapChainOptions{
+	SDRFilter:      "format=rgb24",
+	HDRTail:        "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+	FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+	OutRange:       "pc",
+}
+
+// libplaceboHwDeviceArgs makes ffmpeg create a Vulkan device through its own hwcontext and pass it to
+// libplacebo. On CPU-only hosts (lavapipe only, no discrete GPU) libplacebo rejects the CPU device with
+// "Found no suitable device"; a device created by the hwcontext works.
+var libplaceboHwDeviceArgs = []string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"}
+
+// buildToneMapFilterCandidates returns the tone mapping filter chains ordered by priority.
+// libplacebo handles non-standard color spaces such as Dolby Vision Profile 5 (IPTPQc2) and needs a
+// working Vulkan device (libplacebo-hwdevice covers hosts without a discrete GPU by using software
+// Vulkan); the zscale chains rely on frame color metadata and the explicit one supplies BT.2020/PQ
+// input parameters when metadata is missing; the last chain only resamples pixels so that a screenshot
+// is always produced, at the cost of inaccurate colors.
+func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
+	if !isHDR {
+		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
+	}
+	libplaceboFilter := "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + "," + options.HDRTail
+	return []toneMapFilterCandidate{
+		{
+			Name:   "libplacebo",
+			Filter: libplaceboFilter,
+		},
+		{
+			Name:    "libplacebo-hwdevice",
+			Filter:  libplaceboFilter,
+			PreArgs: libplaceboHwDeviceArgs,
+		},
+		{
+			Name:   "zscale",
+			Filter: "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:   "zscale-explicit",
+			Filter: "zscale=pin=bt2020:tin=smpte2084:min=bt2020nc:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:     "passthrough",
+			Filter:   options.FallbackFilter,
+			Degraded: true,
+		},
+	}
+}
+
+// prependToneMapPreArgs puts the candidate's extra ffmpeg options in front of the command arguments.
+func prependToneMapPreArgs(candidate toneMapFilterCandidate, args []string) []string {
+	if len(candidate.PreArgs) == 0 {
+		return args
+	}
+	merged := make([]string, 0, len(candidate.PreArgs)+len(args))
+	merged = append(merged, candidate.PreArgs...)
+	return append(merged, args...)
+}
+
+// runToneMapFilterAttempts tries each candidate chain in order and returns the first one that
+// produced a non-empty output file.
+func runToneMapFilterAttempts(outputPath string, candidates []toneMapFilterCandidate, run func(toneMapFilterCandidate) (string, error)) (toneMapFilterCandidate, string, error) {
+	var lastOutput string
+	var lastErr error
+	for _, candidate := range candidates {
+		output, err := run(candidate)
+		if err == nil {
+			if stat, statErr := os.Stat(outputPath); statErr == nil && stat.Size() > 0 {
+				if candidate.Degraded {
+					log.Printf("tone mapping filters unavailable, converting directly (filter=%s), colors may be off", candidate.Name)
+				} else {
+					log.Printf("tone mapping filter chain selected: %s output=%s", candidate.Name, outputPath)
+				}
+				return candidate, output, nil
+			}
+			err = fmt.Errorf("output file was not generated")
+		}
+		log.Printf("tone mapping filter chain failed: %s err=%v stderr=%s", candidate.Name, err, strings.TrimSpace(output))
+		lastOutput = output
+		lastErr = err
+		_ = os.Remove(outputPath)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable tone mapping filter chain")
+	}
+	return toneMapFilterCandidate{}, lastOutput, lastErr
 }
 
 func takePreviewScreenshot(videoPath, outputPath string, timePoint float64, isHDR bool) error {
-	vfFilter := "scale='min(640,iw)':-2,format=yuv420p"
-	if isHDR {
-		vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale='min(640,iw)':-2,format=yuv420p"
-	}
-	args := []string{
-		"-y",
-		"-ss", fmt.Sprintf("%.3f", timePoint),
-		"-i", videoPath,
-		"-frames:v", "1",
-		"-an",
-		"-sn",
-		"-vf", vfFilter,
-		"-q:v", "14",
-		outputPath,
-	}
-	_, err := executeCommandWithTimeout(180*time.Second, "ffmpeg", args...)
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, _, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-ss", fmt.Sprintf("%.3f", timePoint),
+			"-i", videoPath,
+			"-frames:v", "1",
+			"-an",
+			"-sn",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(180*time.Second, "ffmpeg", args...)
+		return stderrStr, cmdErr
+	})
 	if err != nil {
 		return fmt.Errorf("ffmpeg preview capture failed: %v", err)
-	}
-	if stat, statErr := os.Stat(outputPath); statErr != nil || stat.Size() == 0 {
-		return fmt.Errorf("preview screenshot file was not generated")
 	}
 	return nil
 }
@@ -299,25 +498,22 @@ func takePreviewScreenshotWithSubtitle(videoPath, outputPath string, timePoint f
 		isHDR = strings.Contains(text, "smpte2084") || strings.Contains(text, "bt2020")
 	}
 
-	vfFilter := "scale='min(640,iw)':-2,format=yuv420p"
-	if isHDR {
-		vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale='min(640,iw)':-2,format=yuv420p"
-	}
-	args := []string{
-		"-y",
-		"-v", "error",
-		"-i", rawPNG,
-		"-frames:v", "1",
-		"-vf", vfFilter,
-		"-q:v", "14",
-		outputPath,
-	}
-	_, stderrStr, err := executeCommandWithTimeoutAndStderr(180*time.Second, "ffmpeg", args...)
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, _, err = runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-i", rawPNG,
+			"-frames:v", "1",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(180*time.Second, "ffmpeg", args...)
+		return stderrStr, cmdErr
+	})
 	if err != nil {
-		return fmt.Errorf("ffmpeg preview capture failed: %v, stderr: %s", err, stderrStr)
-	}
-	if stat, statErr := os.Stat(outputPath); statErr != nil || stat.Size() == 0 {
-		return fmt.Errorf("preview screenshot file was not generated")
+		return fmt.Errorf("ffmpeg preview capture failed: %v", err)
 	}
 	return nil
 }
@@ -325,58 +521,27 @@ func takePreviewScreenshotWithSubtitle(videoPath, outputPath string, timePoint f
 func convertPngToOptimizedImage(sourcePath, destPath string, isHDR bool) (string, error) {
 	const maxUploadSize = 10 * 1024 * 1024
 
-	vfFilter := "format=rgb24"
 	if isHDR {
 		jpegPath := strings.TrimSuffix(destPath, filepath.Ext(destPath)) + ".jpg"
-		vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc,scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p"
-		runJPEG := func(filter string) (string, error) {
-			args := []string{
+		candidates := buildToneMapFilterCandidates(true, imageToneMapChainOptions)
+		_, output, err := runToneMapFilterAttempts(jpegPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+			args := prependToneMapPreArgs(candidate, []string{
 				"-y", "-v", "error", "-i", sourcePath, "-frames:v", "1",
-				"-vf", filter,
+				"-vf", candidate.Filter,
 				"-q:v", "2",
 				jpegPath,
-			}
-			_, stderrStr, err := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", args...)
-			return stderrStr, err
-		}
-
-		stderrStr, err := runJPEG(vfFilter)
+			})
+			_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", args...)
+			return stderrStr, cmdErr
+		})
 		if err != nil {
-			// MPV 导出的 PNG 可能没有完整 HDR 色彩元数据，补齐 HDR10 常用输入参数后重试。
-			explicitHDRFilter := "zscale=pin=bt2020:tin=smpte2084:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc,scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p"
-			log.Printf("HDR JPEG zscale failed, retrying with explicit BT.2020/PQ input: source=%s err=%v", sourcePath, err)
-			if retryStderr, retryErr := runJPEG(explicitHDRFilter); retryErr == nil {
-				log.Printf("HDR JPEG explicit color conversion succeeded: output=%s", jpegPath)
-				err = nil
-				stderrStr = ""
-			} else {
-				stderrStr = retryStderr
-				err = retryErr
-			}
-		}
-		if err != nil {
-			// 如果源 PNG 已经由 MPV 渲染成可显示画面，直接编码 JPEG 比让整组截图失败更可靠。
-			fallbackFilter := "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p"
-			log.Printf("HDR JPEG tone mapping unavailable, retrying direct JPEG conversion: source=%s err=%v", sourcePath, err)
-			if fallbackStderr, fallbackErr := runJPEG(fallbackFilter); fallbackErr == nil {
-				log.Printf("HDR JPEG direct conversion succeeded: output=%s", jpegPath)
-				err = nil
-				stderrStr = ""
-			} else {
-				stderrStr = fallbackStderr
-				err = fallbackErr
-			}
-		}
-		if err != nil {
-			return "", fmt.Errorf("ffmpeg HDR JPEG optimization failed: %v, stderr: %s", err, stderrStr)
-		}
-		if stat, statErr := os.Stat(jpegPath); statErr != nil || stat == nil || stat.Size() == 0 {
-			return "", fmt.Errorf("HDR JPEG output was not generated")
+			return "", fmt.Errorf("ffmpeg HDR JPEG optimization failed: %v, stderr: %s", err, strings.TrimSpace(output))
 		}
 		log.Printf("HDR screenshot optimized directly as JPEG: %s (%.2f MB)", filepath.Base(jpegPath), fileSizeMB(jpegPath))
 		return jpegPath, nil
 	}
 
+	vfFilter := "format=rgb24"
 	args := []string{
 		"-y", "-v", "error", "-i", sourcePath, "-frames:v", "1",
 		"-vf", vfFilter,

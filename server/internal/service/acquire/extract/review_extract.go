@@ -61,6 +61,9 @@ var (
 	reResolutionSlash           = regexp.MustCompile(`(?i)\b(\d{3,5})\s*/\s*(\d{3,5})\b`)
 	reResolutionX               = regexp.MustCompile(`(?i)\b(\d{3,5})\s*[xX]\s*(\d{3,5})\b`)
 	reResolutionToken           = regexp.MustCompile(`(?i)\b(4320p|8k|2160p|4k|1080i|1080p|720p|480p)\b`)
+	// BDInfo 的字幕/图形轨（Presentation Graphics、Text #1）恒为 1920x1080，
+	// 用它反推视频宽高会把带杜比视界增强层的 4K 正片误判成 1080p，检索前先剔除这些行。
+	reGraphicsTrackLine         = regexp.MustCompile(`(?im)^[ \t]*(?:presentation\s+graphics|text(?:\s*#\d+)?|subtitle\w*)\b[^\n]*$`)
 	reMediaInfoGeneralAnchor    = regexp.MustCompile(`(?is)\bGeneral\s*(?:\r?\n|\s{2,})\s*Unique ID\b`)
 	reMediaInfoSectionStartLine = regexp.MustCompile(`(?im)^\s*(General|Video|Audio|Text(?:\s*#\d+)?|Menu|Chapters)\s*$`)
 	reBDInfoDiscAnchor          = regexp.MustCompile(`(?is)\bDISC INFO\b`)
@@ -2591,6 +2594,9 @@ func inferResolutionFromMediainfo(mediainfo string) string {
 	} else {
 		videoSection = trimmed
 	}
+	// BDInfo/MediaInfo 的字幕与图形轨描述里同样会写 1920x1080，
+	// 若把它们当成视频宽高，4K（尤其带杜比视界增强层）的正片会被误判成 1080p。
+	videoSection = reGraphicsTrackLine.ReplaceAllString(videoSection, "")
 
 	width, height := 0, 0
 	if w, h := parseWidthHeightFromPixels(videoSection); w > 0 && h > 0 {
@@ -2606,8 +2612,10 @@ func inferResolutionFromMediainfo(mediainfo string) string {
 			}
 		}
 	}
-	if (width == 0 || height == 0) && strings.TrimSpace(trimmed) != "" {
-		if m := reResolutionX.FindStringSubmatch(trimmed); len(m) >= 3 {
+	// WxH 兜底同样只在视频区块内找（视频区块缺失时退化为全文），
+	// 否则字幕轨的 1920x1080 会覆盖正片分辨率。
+	if (width == 0 || height == 0) && strings.TrimSpace(videoSection) != "" {
+		if m := reResolutionX.FindStringSubmatch(videoSection); len(m) >= 3 {
 			if w, err := strconv.Atoi(strings.TrimSpace(m[1])); err == nil {
 				width = w
 			}

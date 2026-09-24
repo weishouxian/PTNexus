@@ -517,16 +517,14 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		finalImagePath := filepath.Join(tmpDir, fileStem+finalExt)
 		logx.Infof(screenshotPreviewLogModule, "截图 HDR 判定 scene=正式截图 index=%d keyword_hdr=%t metadata_hdr=%t hdr=%t output=%s", i+1, keywordHDR, metadataHDR, isHDR, finalImagePath)
 
-		vfFilter := "format=rgb24"
 		if isHDR {
-			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用 zscale 色调映射...")
-			vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=pc,format=rgb24"
+			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用色调映射...")
 		} else {
 			logx.PlainInfof("   🎨 检测到 SDR 内容，应用标准 RGB 转换...")
 		}
 
 		startCompress := time.Now()
-		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, vfFilter); err != nil {
+		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, isHDR); err != nil {
 			logx.PlainInfof("❌ ffmpeg 压缩失败: %s", sanitizeCommandErrForLog(err))
 			continue
 		}
@@ -755,32 +753,24 @@ func mergeScreenshotPointCandidates(primary []float64, secondary []float64, limi
 }
 
 func capturePreviewJPEGWithFFmpeg(ffmpegPath, videoPath string, second float64, outputPath string, isHDR bool) error {
-	vfFilter := "scale='min(640,iw)':-2,format=yuv420p"
-	if isHDR {
-		vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale='min(640,iw)':-2,format=yuv420p"
-	}
-	cmd := exec.Command(
-		ffmpegPath,
-		"-y",
-		"-ss", fmt.Sprintf("%.3f", second),
-		"-i", videoPath,
-		"-frames:v", "1",
-		"-an",
-		"-sn",
-		"-vf", vfFilter,
-		"-q:v", "14",
-		outputPath,
-	)
-	out, err := cmd.CombinedOutput()
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, output, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) ([]byte, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-ss", fmt.Sprintf("%.3f", second),
+			"-i", videoPath,
+			"-frames:v", "1",
+			"-an",
+			"-sn",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		return exec.Command(ffmpegPath, args...).CombinedOutput()
+	})
 	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if text == "" {
-			text = err.Error()
-		}
-		return fmt.Errorf("ffmpeg 预览截图失败: %s", text)
-	}
-	if stat, statErr := os.Stat(outputPath); statErr != nil || stat.Size() == 0 {
-		return fmt.Errorf("预览截图文件未生成")
+		return fmt.Errorf("ffmpeg 预览截图失败: %s", formatFFmpegFailureOutput(output, err))
 	}
 	return nil
 }
@@ -799,42 +789,38 @@ func capturePreviewJPEGWithMPV(mpvPath, ffmpegPath, ffprobePath, videoPath strin
 }
 
 func compressPreviewJPEGFromPNG(ffmpegPath, srcPNG, outputPath string, isHDR bool) error {
-	vfFilter := "scale='min(640,iw)':-2,format=yuv420p"
-	if isHDR {
-		vfFilter = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,scale='min(640,iw)':-2,format=yuv420p"
-	}
-	cmd := exec.Command(
-		ffmpegPath,
-		"-y",
-		"-v", "error",
-		"-i", srcPNG,
-		"-frames:v", "1",
-		"-vf", vfFilter,
-		"-q:v", "14",
-		outputPath,
-	)
-	out, err := cmd.CombinedOutput()
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, output, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) ([]byte, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-i", srcPNG,
+			"-frames:v", "1",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		return exec.Command(ffmpegPath, args...).CombinedOutput()
+	})
 	if err != nil {
-		text := strings.TrimSpace(string(out))
-		if text == "" {
-			text = err.Error()
-		}
-		return fmt.Errorf("ffmpeg 预览压缩失败: %s", text)
-	}
-	if stat, statErr := os.Stat(outputPath); statErr != nil || stat.Size() == 0 {
-		return fmt.Errorf("预览截图文件未生成")
+		return fmt.Errorf("ffmpeg 预览压缩失败: %s", formatFFmpegFailureOutput(output, err))
 	}
 	return nil
 }
 
+// detectHDRFromVideo 通过 ffprobe 判断视频源是否为 HDR。
+// 参数/返回：ffprobePath 为 ffprobe 路径；videoPath 为视频文件；返回是否按 HDR 处理。
+// 失败场景：ffprobe 执行失败时返回 false（按 SDR 处理，由滤镜链自行降级）。
+// 副作用：执行一次 ffprobe。
+// 说明：判据复用 isHDRMetadataText，额外覆盖色彩元数据缺失的 Dolby Vision Profile 5 源，
+// 避免这类源被判为 SDR 而绕过色彩转换链、产出偏色截图。
 func detectHDRFromVideo(ffprobePath, videoPath string) bool {
 	cmd := exec.Command(ffprobePath, "-v", "error", "-show_streams", "-select_streams", "v:0", videoPath)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
-	text := strings.ToLower(string(out))
-	return strings.Contains(text, "smpte2084") || strings.Contains(text, "bt2020")
+	return isHDRMetadataText(string(out))
 }
 
 func sanitizeSelectedScreenshotTimes(values []float64, duration float64, maxCount int) []float64 {
