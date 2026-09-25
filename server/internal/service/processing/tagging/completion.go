@@ -299,16 +299,17 @@ func extractRawTagsFromMediaText(mediaText string, isBDInfo bool) []string {
 	}
 
 	if isBDInfo {
-		// BDInfo 文本结构差异较大，这里用关键词扫描作为兜底。
-		lowerAll := strings.ToLower(text)
-		lang := detectLanguageByKeyword(lowerAll)
-		applyLanguageTag(&tags, lang)
-		if strings.Contains(lowerAll, "subtitle") || strings.Contains(lowerAll, "subtitles") {
-			if strings.Contains(lowerAll, "chinese") || strings.Contains(lowerAll, "简体") || strings.Contains(lowerAll, "繁体") || strings.Contains(lowerAll, "chs") || strings.Contains(lowerAll, "cht") {
-				tags = appendUniqueStringLocal(tags, "中字")
-			}
-			if strings.Contains(lowerAll, "english") {
-				tags = appendUniqueStringLocal(tags, "英字")
+		// BDInfo 改为按段解析：语种只认 AUDIO 段的语言列，字幕只认 SUBTITLES 段。
+		// 早先的「全文关键词扫描」会把字幕段的 Chinese 当成音轨语言，
+		// 导致只有德语/英语音轨的原盘也被打上「国语」标签（2026-09-26 实测）。
+		for _, sec := range splitBDInfoSections(text) {
+			switch sec.Name {
+			case "AUDIO":
+				for _, lang := range detectLanguagesInBDInfoAudioSection(sec.Lines) {
+					applyLanguageTag(&tags, lang)
+				}
+			case "SUBTITLES":
+				applyBDInfoSubtitleTags(&tags, sec.Lines)
 			}
 		}
 	} else {
@@ -376,6 +377,93 @@ func splitMediaInfoSections(text string) []mediaInfoSection {
 	return sections
 }
 
+// splitBDInfoSections 按 BDInfo 的大写段头（`AUDIO:` / `SUBTITLES:` / `DISC INFO:` 等）切分文本。
+// 参数/返回：text 为 BDInfo 文本；返回按段头切分后的段落（段名不含冒号）。
+// 失败场景：无段头时返回空切片——调用方不得回退全文扫描，否则会重新引入字幕污染。
+// 副作用：无。
+func splitBDInfoSections(text string) []mediaInfoSection {
+	reHeader := regexp.MustCompile(`^([A-Z][A-Z0-9 _\-]{2,}):\s*$`)
+
+	sections := make([]mediaInfoSection, 0, 8)
+	current := mediaInfoSection{Name: "", Lines: []string{}}
+	flush := func() {
+		if strings.TrimSpace(current.Name) == "" || len(current.Lines) == 0 {
+			current = mediaInfoSection{Name: "", Lines: []string{}}
+			return
+		}
+		sections = append(sections, current)
+		current = mediaInfoSection{Name: "", Lines: []string{}}
+	}
+
+	for _, line := range strings.Split(text, "\n") {
+		stripped := strings.TrimSpace(line)
+		if match := reHeader.FindStringSubmatch(stripped); match != nil {
+			flush()
+			current.Name = strings.TrimSpace(match[1])
+			current.Lines = []string{}
+			continue
+		}
+		if strings.TrimSpace(current.Name) == "" {
+			continue
+		}
+		if stripped == "" {
+			continue
+		}
+		current.Lines = append(current.Lines, stripped)
+	}
+	flush()
+	return sections
+}
+
+var reBDInfoColumnGap = regexp.MustCompile(`\s{2,}`)
+
+// bdinfoSecondColumn 取 BDInfo 表格行的第 2 列（AUDIO/SUBTITLES 段里即语言列）。
+// 参数/返回：line 为一行文本；返回该行第 2 列内容，取不到时返回空字符串。
+// 失败场景：空行、单列行、无列分隔（2 个以上空格）的行均返回空字符串。
+// 副作用：无。
+func bdinfoSecondColumn(line string) string {
+	fields := reBDInfoColumnGap.Split(strings.TrimSpace(line), -1)
+	if len(fields) < 2 {
+		return ""
+	}
+	return strings.TrimSpace(fields[1])
+}
+
+// detectLanguagesInBDInfoAudioSection 从 BDInfo 的 AUDIO 段提取音轨语种。
+// BDInfo 的 AUDIO 段是「Codec / Language / Bitrate / Description」四列，
+// 语言固定在第 2 列，且该段没有 MediaInfo 那样的 Title 字段。
+// 表头（Codec Language Bitrate Description）与分隔线行不会命中语种关键词，天然被跳过。
+func detectLanguagesInBDInfoAudioSection(lines []string) []string {
+	languages := make([]string, 0, 4)
+	for _, line := range lines {
+		column := bdinfoSecondColumn(line)
+		if column == "" {
+			continue
+		}
+		if lang := detectLanguageByKeyword(strings.ToLower(column)); lang != "" {
+			languages = appendUniqueStringLocal(languages, lang)
+		}
+	}
+	return languages
+}
+
+// applyBDInfoSubtitleTags 从 BDInfo 的 SUBTITLES 段提取「中字 / 英字」。
+// 与 MediaInfo 路径口径一致：只在该段出现中文/英文线索时才打标。
+func applyBDInfoSubtitleTags(tags *[]string, lines []string) {
+	if tags == nil || len(lines) == 0 {
+		return
+	}
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if containsAnySubstring(lower, []string{"chinese", "简体", "繁体", "chs", "cht", "中字"}) {
+			*tags = appendUniqueStringLocal(*tags, "中字")
+		}
+		if strings.Contains(lower, "english") {
+			*tags = appendUniqueStringLocal(*tags, "英字")
+		}
+	}
+}
+
 func detectLanguageInSection(lines []string) string {
 	if len(lines) == 0 {
 		return ""
@@ -403,10 +491,14 @@ func detectLanguageByKeyword(lowerText string) string {
 		lang     string
 		keywords []string
 	}
+	// ⚠️ 规则顺序即优先级：粤语/台配必须排在国语之前，否则 `Chinese (Cantonese)`、
+	// `Chinese (Taiwan)`、`Taiwan Mandarin`、`台配国语` 都会先被国语规则里的
+	// chinese / mandarin 子串命中而误判成国语（2026-09-26 实测）。
+	// 单独出现的 `chinese` 仍归国语（华语片中文音轨的默认口径）。
 	rules := []rule{
-		{"国语", []string{"mandarin", "cmn", "chinese", "中文", "国语", "普通话", "mainland", "mandrin"}},
 		{"粤语", []string{"cantonese", "粤语", "广东话", "hongkong"}},
 		{"台配", []string{"taiwan mandarin", "taiwanese", "taiwan", "台配", "台湾", "台语", "闽南语"}},
+		{"国语", []string{"mandarin", "cmn", "chinese", "中文", "国语", "普通话", "mainland", "mandrin"}},
 		{"英语", []string{"english", "英语"}},
 		{"日语", []string{"japanese", "日语"}},
 		{"韩语", []string{"korean", "韩语"}},
