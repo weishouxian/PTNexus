@@ -22,11 +22,12 @@ type SeedDraft struct {
 
 	Name string
 
-	Title      string
-	Subtitle   string
-	IMDbLink   string
-	DoubanLink string
-	TMDbLink   string
+	Title       string
+	Subtitle    string
+	IMDbLink    string
+	DoubanLink  string
+	TMDbLink    string
+	BangumiLink string
 
 	Type         string
 	Medium       string
@@ -327,6 +328,7 @@ func (d *SeedDraft) ToSeedParameterRecord() map[string]any {
 		"imdb_link":                 strings.TrimSpace(d.IMDbLink),
 		"douban_link":               strings.TrimSpace(d.DoubanLink),
 		"tmdb_link":                 strings.TrimSpace(d.TMDbLink),
+		"bangumi_link":              strings.TrimSpace(d.BangumiLink),
 		"type":                      strings.TrimSpace(d.Type),
 		"medium":                    strings.TrimSpace(d.Medium),
 		"video_codec":               strings.TrimSpace(d.VideoCodec),

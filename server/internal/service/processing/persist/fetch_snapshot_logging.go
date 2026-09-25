@@ -284,6 +284,7 @@ func buildPersistSnapshotLog(taskID string, siteIdentifier string, hash string, 
 	appendKVLine(&builder, "IMDb", compactHead(toStringAny(record["imdb_link"], ""), 160), 1)
 	appendKVLine(&builder, "豆瓣", compactHead(toStringAny(record["douban_link"], ""), 160), 1)
 	appendKVLine(&builder, "TMDb", compactHead(toStringAny(record["tmdb_link"], ""), 160), 1)
+	appendKVLine(&builder, "Bangumi", compactHead(toStringAny(record["bangumi_link"], ""), 160), 1)
 
 	tagsJSON := strings.TrimSpace(toStringAny(record["tags"], ""))
 	tags := parseJSONStringArrayUnsafe(tagsJSON)

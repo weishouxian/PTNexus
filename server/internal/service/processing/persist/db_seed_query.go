@@ -1,6 +1,10 @@
 package persist
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/pt-nexus/server/internal/service/bangumi"
+)
 
 // SeedQueryRepo 定义查询并归一化种子参数所需的最小仓储接口。
 type SeedQueryRepo interface {
@@ -47,12 +51,6 @@ func QueryAndNormalizeSeed(repo SeedQueryRepo, torrentID, siteName string) (map[
 		strings.TrimSpace(torrentID),
 		firstNonEmptyString(strings.TrimSpace(toStringSimple(normalized["site_name"])), strings.TrimSpace(siteName)),
 	)
-	normalized["seed_id"] = seedID
-	normalized["standardized_params"] = BuildStandardizedParams(normalized)
-	normalized["final_publish_parameters"] = BuildFinalPublishParameters(normalized)
-	normalized["complete_publish_params"] = BuildCompletePublishParams(normalized)
-	normalized["raw_params_for_preview"] = BuildRawPreviewParams(normalized)
-
 	// 附加资源信息库命中结果，供发布参数预览页展示（豆瓣 > IMDb > TMDb 优先级）。
 	// 未命中时把当前种子解析出的资源信息入库，供后续同 ID 种子复用。
 	if resourceStore, ok := repo.(ResourceInfoStore); ok {
@@ -61,6 +59,17 @@ func QueryAndNormalizeSeed(repo SeedQueryRepo, torrentID, siteName string) (map[
 			SaveResourceInfoFromRow(resourceStore, normalized)
 		}
 	}
+	// 动漫标签种子在获取种子信息时顺带匹配 bgm.tv 条目链接（库内已有链接不覆盖，允许前端手动修改）。
+	// 注意：需在下面构建标准化/发布参数之前完成，否则这些派生参数拿不到新解析出的链接。
+	if bangumiLookup, ok := repo.(bangumi.ItemLookup); ok {
+		AttachBangumiLinkToRow(bangumiLookup, normalized)
+	}
+
+	normalized["seed_id"] = seedID
+	normalized["standardized_params"] = BuildStandardizedParams(normalized)
+	normalized["final_publish_parameters"] = BuildFinalPublishParameters(normalized)
+	normalized["complete_publish_params"] = BuildCompletePublishParams(normalized)
+	normalized["raw_params_for_preview"] = BuildRawPreviewParams(normalized)
 	return normalized, seedID, nil
 }
 

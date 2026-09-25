@@ -34,6 +34,7 @@ func NormalizeSeedRow(row map[string]any) map[string]any {
 	item["imdb_link"] = toStringWithFallback(item["imdb_link"], "")
 	item["douban_link"] = toStringWithFallback(item["douban_link"], "")
 	item["tmdb_link"] = toStringWithFallback(item["tmdb_link"], "")
+	item["bangumi_link"] = toStringWithFallback(item["bangumi_link"], "")
 	item["statement"] = toStringWithFallback(item["statement"], "")
 	item["poster"] = toStringWithFallback(item["poster"], "")
 	item["body"] = toStringWithFallback(item["body"], "")
