@@ -128,6 +128,9 @@ mappings:
     "category.other": "409"
     "default": "409"
 
+  # 家园「来源」(source_sel) 表示素材源盘：UHD Blu-ray / Blu-ray / HDTV / DVD / WEB-DL / Other。
+  # ⚠️ 家园没有「产地/地区」字段，本段仅作兜底 —— 发布时 source_sel 由 sites/hdhome.go
+  #    resolveHDHomeSourceValue(媒介 + 分辨率) 覆盖（2160p/4320p 的蓝光家族媒介记 UHD Blu-ray）。
   source:
     "source.western": "@index:6"
     "source.japan": "@index:6"
@@ -140,12 +143,21 @@ mappings:
     "source.malaysia": "@index:6"
     "default": "@index:6"
 
+  # ⚠️ 值为 medium_sel 选项索引（发布时按上传页选项解析为站点真实 value）：
+  #    [0]=请选择 [1]=10 UHD Blu-ray [2]=1 Blu-ray [3]=3 Remux [4]=7 Encode
+  #    [5]=5 HDTV [6]=8 CD [7]=4 MiniBD [8]=11 WEB-DL
+  #    家园没有 DVD / Other 媒介选项，DVD 与未知媒介就近落 CD。
   medium:
     "medium.uhd_bluray": "@index:1"
     "medium.uhd_diy": "@index:1"
     "medium.bluray": "@index:2"
     "medium.bluray_diy": "@index:2"
     "medium.remux": "@index:3"
+    "medium.uhd_remux": "@index:3"
+    "medium.uhd_bluray_remux": "@index:3"
+    "medium.bluray_remux": "@index:3"
+    "medium.remux_tv": "@index:3"
+    "medium.uhd_remux_tv": "@index:3"
     "medium.encode": "@index:4"
     "medium.encode_2160p": "@index:4"
     "medium.encode_1080p": "@index:4"
@@ -156,18 +168,21 @@ mappings:
     "medium.minibd": "@index:7"
     "medium.webdl": "@index:8"
     "medium.other": "@index:6"
-    "default": "@index:4"
+    "default": "@index:6"
 
+  # ⚠️ codec_sel 只有 6 个选项（索引 0~5），不要写越界索引——
+  #    越界会在上传时被解析成裸数字，站点匹配不到任何选项 → 编码静默变成「请选择」。
+  #    [0]=请选择 [1]=1 AVC/H264/x264 [2]=2 HEVC/H265/x265 [3]=3 VC-1 [4]=4 MPEG-2 [5]=5 Other
   video_codec:
     "video.h264": "@index:1"
     "video.x264": "@index:1"
     "video.h265": "@index:2"
     "video.x265": "@index:2"
+    "video.hevc": "@index:2"
     "video.vc1": "@index:3"
     "video.mpeg2": "@index:4"
     "video.mpeg4": "@index:4"
     "video.other": "@index:5"
-    "video.hevc": "@index:6"
     "video.av1": "@index:5"
     "default": "@index:5"
 
