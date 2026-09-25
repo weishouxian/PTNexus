@@ -40,6 +40,32 @@ func (ourbitsPublisher) BuildExtraFormFields(input publisher.PublishInput) (map[
 
 func (ourbitsPublisher) AdjustFormFields(input publisher.PublishInput, formFields map[string]string) {
 	adjustOurBitsCategory(input, formFields)
+	adjustOurBitsExternalLinks(formFields)
+}
+
+// adjustOurBitsExternalLinks 把我堡唯一的外部链接字段补全并清理无效字段。
+// 我堡 upload.php 只有一个外部链接字段（name=url，同时接受 IMDb 与豆瓣链接），
+// 公共发布器写入的 dburl / pt_gen 在站点不存在会被丢弃；当没有 IMDb 链接时用豆瓣链接兜底。
+func adjustOurBitsExternalLinks(formFields map[string]string) {
+	if formFields == nil {
+		return
+	}
+	siteCfg, _ := publishmapping.LoadSitePublishConfig("ourbits")
+	linkField := "url"
+	doubanField := "dburl"
+	if siteCfg != nil {
+		linkField = firstNonEmpty(siteCfg.FormFields["imdb_url"], linkField)
+		doubanField = firstNonEmpty(siteCfg.FormFields["douban_url"], doubanField)
+	}
+	if linkField != doubanField {
+		if strings.TrimSpace(formFields[linkField]) == "" {
+			if douban := strings.TrimSpace(formFields[doubanField]); douban != "" {
+				formFields[linkField] = douban
+			}
+		}
+		delete(formFields, doubanField)
+	}
+	delete(formFields, "pt_gen")
 }
 
 // buildOurBitsExtraFields 构造我堡上传页独立的海报和动态分类字段。

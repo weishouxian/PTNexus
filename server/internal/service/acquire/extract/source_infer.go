@@ -37,23 +37,6 @@ func InferSourceFromDescription(description string) string {
 	}
 
 	// 常见形式：日本 / 韩国、美国, 英国、China/Hong Kong 等。
-	sourceLower := strings.ToLower(sourceText)
-	switch {
-	case strings.Contains(sourceLower, "台湾") || strings.Contains(sourceLower, "taiwan") || strings.Contains(sourceLower, "twn"):
-		return "source.taiwan"
-	case strings.Contains(sourceLower, "香港") || strings.Contains(sourceLower, "hong kong") || strings.Contains(sourceLower, "hkg"):
-		return "source.hongkong"
-	case strings.Contains(sourceLower, "中国") || strings.Contains(sourceLower, "china") || strings.Contains(sourceLower, "chn"):
-		return "source.china"
-	case strings.Contains(sourceLower, "日本") || strings.Contains(sourceLower, "japan") || strings.Contains(sourceLower, "jpn"):
-		return "source.japan"
-	case strings.Contains(sourceLower, "韩国") || strings.Contains(sourceLower, "korea") || strings.Contains(sourceLower, "kor"):
-		return "source.korea"
-	case strings.Contains(sourceLower, "英国") || strings.Contains(sourceLower, "uk"):
-		return "source.uk"
-	case strings.Contains(sourceLower, "美国") || strings.Contains(sourceLower, "usa") || strings.Contains(sourceLower, "united states") || strings.Contains(sourceLower, "us "):
-		return "source.western"
-	default:
-		return ""
-	}
+	// 归一口径统一在 sourceKeyAliasGroups（见 source_key.go），此处不再单独维护分支。
+	return NormalizeSourceKeyFromText(sourceText)
 }

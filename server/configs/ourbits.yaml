@@ -96,8 +96,16 @@ source_parsers:
     tag:
       "DIY": "tag.DIY"
       "国语": "tag.国语"
+      "粤语": "tag.粤语"
       "中字": "tag.中字"
+      "首发": "tag.首发"
+      "应求": "tag.应求"
       "禁转": "tag.禁转"
+      "杜比视界": "tag.杜比"
+      "菁彩HDR": "tag.菁彩HDR"
+      "HLG": "tag.HLG"
+      "HDR10+": "tag.HDR10+"
+      "HDR10": "tag.HDR10"
 
 mappings:
   type:
@@ -127,6 +135,7 @@ mappings:
     "medium.encode_1080p": "7"
     "medium.encode_720p": "7"
     "medium.cd": "8"
+    "medium.uhdtv": "13"
     "medium.webdl": "9"
     "medium.other": "7"
     "default": "7"
@@ -138,10 +147,10 @@ mappings:
     "video.x265": "14"
     "video.hevc": "14"
     "video.mpeg2": "15"
-    "video.mpeg4": "15"
+    "video.mpeg4": "18"
     "video.vc1": "16"
     "video.xvid": "17"
-    "video.av1": "18"
+    "video.av1": "19"
     "video.other": "18"
     "default": "18"
 
@@ -161,8 +170,8 @@ mappings:
     "audio.truehd_atmos": "14"
     "audio.ddp_atmos": "14"
     "audio.dtsx": "21"
-    "audio.mpeg": "4"
-    "audio.opus": "7"
+    "audio.mpeg": "32"
+    "audio.opus": "33"
     "audio.other": "7"
     "default": "7"
 
@@ -175,12 +184,25 @@ mappings:
     "resolution.other": "0"
     "default": "0"
 
+  # 地区（processing_sel）：1=CN(中国大陆) 2=US/EU(欧美) 3=HK/TW(港台) 4=JP(日) 5=KR(韩) 6=OT(其他)
+  # 归并口径：中国大陆→1；香港/台湾→3；欧美（丹麦/法国/德国/意大利/西班牙/瑞典/英国/俄罗斯/加拿大/美国/欧洲）→2；
+  # 日本→4；韩国→5；其余地区→6。欧美各国在标准值层是细粒度键，站点只提供合并选项，必须逐个映射到 2。
   source:
     "source.china": "1"
-    "source.western": "2"
     "source.hongkong_taiwan": "3"
     "source.hongkong": "3"
     "source.taiwan": "3"
+    "source.western": "2"
+    "source.uk": "2"
+    "source.france": "2"
+    "source.germany": "2"
+    "source.italy": "2"
+    "source.spain": "2"
+    "source.sweden": "2"
+    "source.denmark": "2"
+    "source.russia": "2"
+    "source.canada": "2"
+    "source.europe": "2"
     "source.japan": "4"
     "source.korea": "5"
     "source.india": "6"
@@ -188,11 +210,15 @@ mappings:
     "default": "6"
 
   tag:
-    "tag.国语": "gy"
-    "tag.粤语": "gy"
-    "tag.中字": "zz"
     "tag.DIY": "diy"
-    "tag.HDR10": "hdr10"
-    "tag.HDR10+": "hdr10p"
+    "tag.国语": "gy"
+    "tag.中字": "zz"
+    "tag.首发": "sf"
+    "tag.应求": "yq"
+    "tag.禁转": "jz"
     "tag.杜比": "db"
+    "tag.HDR10": "hdr"
+    "tag.HDR10+": "hdrp"
+    "tag.菁彩HDR": "hdrvivid"
+    "tag.HLG": "hlg"
     "default": null

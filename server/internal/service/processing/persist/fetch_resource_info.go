@@ -6,6 +6,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/repository"
+	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
 )
 
 const resourceInfoLogModule = "迁移-资源信息"
@@ -122,28 +123,8 @@ func ExtractCountryFromIntro(body string) string {
 // 失败场景：text 为空或无法识别时返回空字符串。
 // 副作用：无。
 func StandardizeSourceKeyFromCountryText(text string) string {
-	t := strings.ToLower(strings.TrimSpace(text))
-	if t == "" {
-		return ""
-	}
-	switch {
-	case strings.Contains(t, "台湾"), strings.Contains(t, "taiwan"), strings.Contains(t, "twn"):
-		return "source.taiwan"
-	case strings.Contains(t, "香港"), strings.Contains(t, "hong kong"), strings.Contains(t, "hkg"):
-		return "source.hongkong"
-	case strings.Contains(t, "中国"), strings.Contains(t, "china"), strings.Contains(t, "chn"):
-		return "source.china"
-	case strings.Contains(t, "日本"), strings.Contains(t, "japan"), strings.Contains(t, "jpn"):
-		return "source.japan"
-	case strings.Contains(t, "韩国"), strings.Contains(t, "korea"), strings.Contains(t, "kor"):
-		return "source.korea"
-	case strings.Contains(t, "英国"), strings.Contains(t, "uk"):
-		return "source.uk"
-	case strings.Contains(t, "美国"), strings.Contains(t, "usa"), strings.Contains(t, "united states"):
-		return "source.western"
-	default:
-		return ""
-	}
+	// 归一口径统一在 acquire/extract 的 sourceKeyAliasGroups（见 extract/source_key.go），避免多处维护漂移。
+	return parser.NormalizeSourceKeyFromText(text)
 }
 
 // ResourceSeedIDs 依次从豆瓣/IMDb/TMDb 链接提取三个外部 ID。
