@@ -132,19 +132,6 @@
             <el-radio :label="'1'">已删除</el-radio>
           </el-radio-group>
 
-          <el-divider content-position="left">下载器</el-divider>
-          <div style="margin-bottom: 10px">
-            <div v-if="tempFilters.downloaderIds.length > 0" style="display: flex; align-items: center">
-              <el-tag type="info" size="default" effect="plain">下载器: {{ tempFilters.downloaderIds.length }}</el-tag>
-              <el-button type="danger" link style="padding: 0; margin-left: 5px" @click="clearDownloaderFilter">清除</el-button>
-            </div>
-          </div>
-          <el-checkbox-group v-model="tempFilters.downloaderIds">
-            <el-checkbox v-for="downloader in downloadersList" :key="downloader.id" :label="downloader.id">
-              {{ downloader.name }}
-            </el-checkbox>
-          </el-checkbox-group>
-
           <el-divider content-position="left">
             <span class="target-site-filter-title">
               <el-icon><WarningFilled /></el-icon>
@@ -718,22 +705,17 @@ const currentFilterText = computed(() => {
     filterTexts.push(`不存在于: ${filters.excludeTargetSites}`)
   }
 
-  // 处理下载器筛选
-  if (filters.downloaderIds && filters.downloaderIds.length > 0) {
-    filterTexts.push(`下载器: ${filters.downloaderIds.length}`)
-  }
-
   return filterTexts.join(', ')
 })
 
 // 检查是否有任何筛选条件被应用
+// 下载器范围由顶部菜单的全局下载器决定，不再计入页面筛选条件。
 const hasActiveFilters = computed(() => {
   const filters = activeFilters.value
   return (
     (filters.paths && filters.paths.length > 0) ||
     filters.isDeleted !== '' ||
-    (filters.excludeTargetSites && filters.excludeTargetSites.trim() !== '') ||
-    (filters.downloaderIds && filters.downloaderIds.length > 0)
+    (filters.excludeTargetSites && filters.excludeTargetSites.trim() !== '')
   )
 })
 
@@ -748,15 +730,13 @@ const activeFilters = ref({
 const tempFilters = ref({ ...activeFilters.value, downloaderIds: [...(activeFilters.value.downloaderIds || [])] })
 const targetSitesList = ref<string[]>([]) // 新增：目标站点列表
 
-// 下载器列表
+// 下载器列表（仅取全量列表用于「下载器」列展示；页面内不再提供下载器筛选入口）
 const torrentsViewState = useTorrentsViewState()
 const globalDownloader = useGlobalDownloaderStore()
-const downloadersList = ref<Downloader[]>([])
 const allDownloadersList = ref<Downloader[]>([])
 
 const fetchDownloadersList = async (forceRefresh = false) => {
   const result = await torrentsViewState.fetchDownloadersList(forceRefresh)
-  downloadersList.value = result.downloadersList
   allDownloadersList.value = result.allDownloadersList
 }
 
@@ -806,11 +786,6 @@ const selectedTargetSite = computed({
 // 清除选中的目标站点
 const clearSelectedTargetSite = () => {
   tempFilters.value.excludeTargetSites = ''
-}
-
-// 清除下载器筛选
-const clearDownloaderFilter = () => {
-  tempFilters.value.downloaderIds = []
 }
 
 // 辅助函数：获取映射后的中文值
@@ -1321,14 +1296,15 @@ const handleCurrentChange = (val: number) => {
   fetchData()
 }
 
-// 清除筛选条件
+// 清除筛选条件（下载器范围来自顶部菜单，保持当前选择不变）
 const clearFilters = () => {
   activeFilters.value = {
     paths: [],
     isDeleted: '',
     excludeTargetSites: '', // 新增：清除目标站点排除筛选
-    downloaderIds: [],
+    downloaderIds: resolveDownloaderScope(),
   }
+  tempFilters.value = { ...tempFilters.value, downloaderIds: resolveDownloaderScope() }
   currentPage.value = 1
   fetchData()
   saveUiSettings()
@@ -1364,6 +1340,8 @@ const applyFilters = () => {
     ...tempFilters.value,
     downloaderIds: [...(tempFilters.value.downloaderIds || [])],
   }
+  // 下载器范围不参与页面筛选，始终以顶部菜单的全局下载器为准。
+  syncDownloaderScope()
   filterDialogVisible.value = false
   // 重置到第一页并获取数据
   currentPage.value = 1
@@ -1386,6 +1364,21 @@ const loadGlobalDownloaderSelection = async () => {
     console.error('读取全局下载器选择失败:', e)
     return ''
   }
+}
+
+// resolveDownloaderScope 返回顶部菜单全局下载器对应的查询范围。
+// 参数/返回：无参数；返回 [选中的下载器 ID]，顶部为“全部下载器”时返回空数组。
+const resolveDownloaderScope = (): string[] => {
+  const id = (globalDownloader.selectedDownloaderId || '').trim()
+  return id ? [id] : []
+}
+
+// syncDownloaderScope 把顶部下载器选择写入生效筛选与临时筛选。
+// 页面内已移除下载器筛选入口，这里同时覆盖两者，避免历史 UI 设置里的旧值残留。
+const syncDownloaderScope = () => {
+  const scope = resolveDownloaderScope()
+  activeFilters.value = { ...activeFilters.value, downloaderIds: [...scope] }
+  tempFilters.value = { ...tempFilters.value, downloaderIds: [...scope] }
 }
 
 // sameDownloaderIdList 比较两个下载器 ID 列表内容是否一致（忽略顺序与去重）。
@@ -1411,7 +1404,7 @@ watch(visibleColumns, () => {
   saveUiSettings()
 })
 
-// 顶部下载器切换即生效：收敛本页下载器筛选并重新查询。
+// 顶部下载器切换即生效：以顶部选择为准重算下载器范围并重新查询。
 watch(
   () => globalDownloader.selectedDownloaderId,
   (id) => {
@@ -1420,8 +1413,7 @@ watch(
     const nextId = (id || '').trim()
     const expected = nextId ? [nextId] : []
     if (sameDownloaderIdList(activeFilters.value.downloaderIds || [], expected)) return
-    activeFilters.value = { ...activeFilters.value, downloaderIds: expected }
-    tempFilters.value = { ...tempFilters.value, downloaderIds: [...expected] }
+    syncDownloaderScope()
     currentPage.value = 1
     fetchData()
     saveUiSettings()
@@ -1592,12 +1584,9 @@ const handleResize = () => {
 onMounted(async () => {
   // 加载UI设置
   await loadUiSettings()
-  // 顶部已选下载器时以顶部为准；顶部为“全部”时保留页面自身保存的筛选。
-  const globalDownloaderId = await loadGlobalDownloaderSelection()
-  if (globalDownloaderId) {
-    activeFilters.value = { ...activeFilters.value, downloaderIds: [globalDownloaderId] }
-    tempFilters.value = { ...tempFilters.value, downloaderIds: [globalDownloaderId] }
-  }
+  // 下载器范围只由顶部菜单决定：无论顶部是“全部”还是某个下载器，都覆盖页面保存的旧筛选值。
+  await loadGlobalDownloaderSelection()
+  syncDownloaderScope()
   // 加载检查状态筛选配置
   await loadReviewStatusFilter()
   // 加载下载器列表

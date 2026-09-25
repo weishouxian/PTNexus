@@ -205,17 +205,6 @@
               state
             }}</el-checkbox>
           </el-checkbox-group>
-
-          <el-divider content-position="left">下载器</el-divider>
-          <el-checkbox-group v-model="tempFilters.downloaderIds">
-            <el-checkbox
-              v-for="downloader in downloadersList"
-              :key="downloader.id"
-              :label="downloader.id"
-            >
-              {{ downloader.name }}
-            </el-checkbox>
-          </el-checkbox-group>
         </div>
         <div class="filter-card-footer">
           <el-button @click="filterDialogVisible = false">取消</el-button>
@@ -434,12 +423,6 @@ interface PathNode {
   children?: PathNode[]
 }
 
-interface Downloader {
-  id: string
-  name: string
-  enabled?: boolean
-}
-
 interface SiteData {
   comment: string
   state: string
@@ -508,7 +491,6 @@ const pathTreeRef = ref<InstanceType<typeof ElTree> | null>(null)
 const pathTreeData = ref<PathNode[]>([])
 const uniquePaths = ref<string[]>([])
 const uniqueStates = ref<string[]>([])
-const downloadersList = ref<Downloader[]>([])
 
 const currentPage = ref<number>(1)
 const pageSize = ref<number>(20)
@@ -558,20 +540,16 @@ const currentFilterText = computed(() => {
     filterTexts.push(`状态: ${filters.states.length}`)
   }
 
-  if (filters.downloaderIds && filters.downloaderIds.length > 0) {
-    filterTexts.push(`下载器: ${filters.downloaderIds.length}`)
-  }
-
   return filterTexts.join(', ')
 })
 
+// 下载器范围由顶部菜单的全局下载器决定，不再计入面板筛选条件。
 const hasActiveFilters = computed(() => {
   const filters = activeFilters.value
   return (
     (filters.sourceSiteAvailability && filters.sourceSiteAvailability.length > 0) ||
     (filters.paths && filters.paths.length > 0) ||
-    (filters.states && filters.states.length > 0) ||
-    (filters.downloaderIds && filters.downloaderIds.length > 0)
+    (filters.states && filters.states.length > 0)
   )
 })
 
@@ -686,16 +664,6 @@ const fetchData = async () => {
   }
 }
 
-const fetchDownloadersList = async () => {
-  try {
-    const response = await axios.get('/api/all_downloaders')
-    const allDownloaders: Downloader[] = Array.isArray(response.data) ? (response.data as Downloader[]) : []
-    downloadersList.value = allDownloaders.filter((d) => d.enabled)
-  } catch (caught: unknown) {
-    error.value = getErrorMessage(caught)
-  }
-}
-
 const fetchAllPaths = async () => {
   try {
     const params = new URLSearchParams({
@@ -734,9 +702,11 @@ const clearFilters = () => {
   activeFilters.value = {
     paths: [],
     states: [],
-    downloaderIds: [],
+    // 下载器范围来自顶部菜单，清筛选时保持当前选择不变。
+    downloaderIds: resolveDownloaderScope(),
     sourceSiteAvailability: [],
   }
+  tempFilters.value = { ...tempFilters.value, downloaderIds: resolveDownloaderScope() }
   nameSearch.value = ''
   currentPage.value = 1
 
@@ -763,6 +733,8 @@ const applyFilters = () => {
   }
 
   activeFilters.value = { ...tempFilters.value }
+  // 下载器范围不参与面板筛选，始终以顶部菜单的全局下载器为准。
+  syncDownloaderScope()
   filterDialogVisible.value = false
   currentPage.value = 1
 
@@ -1134,6 +1106,21 @@ const loadGlobalDownloaderSelection = async () => {
   }
 }
 
+// resolveDownloaderScope 返回顶部菜单全局下载器对应的查询范围。
+// 参数/返回：无参数；返回 [选中的下载器 ID]，顶部为“全部下载器”时返回空数组。
+const resolveDownloaderScope = (): string[] => {
+  const id = (globalDownloader.selectedDownloaderId || '').trim()
+  return id ? [id] : []
+}
+
+// syncDownloaderScope 把顶部下载器选择写入生效筛选与临时筛选。
+// 面板内已移除下载器筛选入口，这里同时覆盖两者，避免历史配置里的旧值残留。
+const syncDownloaderScope = () => {
+  const scope = resolveDownloaderScope()
+  activeFilters.value = { ...activeFilters.value, downloaderIds: [...scope] }
+  tempFilters.value = { ...tempFilters.value, downloaderIds: [...scope] }
+}
+
 // sameDownloaderIdList 比较两个下载器 ID 列表内容是否一致（忽略顺序与去重）。
 const sameDownloaderIdList = (left: string[], right: string[]) => {
   const normalize = (items: string[]) =>
@@ -1144,7 +1131,7 @@ const sameDownloaderIdList = (left: string[], right: string[]) => {
   return normalizedLeft.every((item, index) => item === normalizedRight[index])
 }
 
-// 顶部下载器切换即生效：收敛面板的下载器筛选并重新查询。
+// 顶部下载器切换即生效：以顶部选择为准重算下载器范围并重新查询。
 watch(
   () => globalDownloader.selectedDownloaderId,
   (id) => {
@@ -1153,8 +1140,7 @@ watch(
     const nextId = (id || '').trim()
     const expected = nextId ? [nextId] : []
     if (sameDownloaderIdList(activeFilters.value.downloaderIds || [], expected)) return
-    activeFilters.value = { ...activeFilters.value, downloaderIds: expected }
-    tempFilters.value = { ...tempFilters.value, downloaderIds: [...expected] }
+    syncDownloaderScope()
     currentPage.value = 1
     fetchData()
     saveFiltersToConfig()
@@ -1162,14 +1148,10 @@ watch(
 )
 
 onMounted(async () => {
-  await fetchDownloadersList()
   await loadFiltersFromConfig()
-  // 顶部已选下载器时以顶部为准；顶部为“全部”时保留面板自身保存的筛选。
-  const globalDownloaderId = await loadGlobalDownloaderSelection()
-  if (globalDownloaderId) {
-    activeFilters.value = { ...activeFilters.value, downloaderIds: [globalDownloaderId] }
-    tempFilters.value = { ...tempFilters.value, downloaderIds: [globalDownloaderId] }
-  }
+  // 下载器范围只由顶部菜单决定：无论顶部是“全部”还是某个下载器，都覆盖配置里保存的旧筛选值。
+  await loadGlobalDownloaderSelection()
+  syncDownloaderScope()
   await loadSiteStatuses() // 加载站点状态
   await fetchAllPaths() // 获取所有路径
   uiInitializing.value = false
