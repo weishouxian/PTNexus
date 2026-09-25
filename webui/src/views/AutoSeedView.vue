@@ -16,14 +16,6 @@
             <el-option label="保种到期（已清理）" value="retained" />
             <el-option label="有未推送原因" value="rejected" />
           </el-select>
-          <el-select v-model="filters.downloader_id" placeholder="下载器" clearable class="filter">
-            <el-option
-              v-for="item in downloaders"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
           <el-input
             v-model="filters.search"
             placeholder="搜索名称或地址"
@@ -228,20 +220,6 @@
 
       <el-tab-pane label="下载器进度" name="progress">
         <div class="toolbar glass-table">
-          <el-select
-            v-model="progressDownloader"
-            placeholder="下载器"
-            clearable
-            class="filter"
-            @change="fetchProgress"
-          >
-            <el-option
-              v-for="item in downloaders"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
           <el-button @click="fetchProgress">刷新</el-button>
         </div>
         <el-table
@@ -612,6 +590,8 @@ const selectedRows = ref<Item[]>([])
 const page = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+// 页面内不再提供下载器筛选入口：downloader_id / progressDownloader 只由顶部菜单的
+// 全局下载器选择驱动（见下方 watch），作为「任务列表」与「下载器进度」的查询条件。
 const filters = ref({
   source_site: '',
   status: '',
@@ -1118,12 +1098,10 @@ watch(
 
 onMounted(async () => {
   await Promise.all([fetchDownloaders(), fetchSiteOptions()])
-  // 顶部已选下载器时以顶部为准；顶部为“全部”时保持页面默认值。
+  // 下载器范围只由顶部菜单决定：无论顶部是“全部”还是某个下载器，都覆盖页面默认值。
   const globalDownloaderId = await loadGlobalDownloaderSelection()
-  if (globalDownloaderId) {
-    filters.value.downloader_id = globalDownloaderId
-    progressDownloader.value = globalDownloaderId
-  }
+  filters.value.downloader_id = globalDownloaderId
+  progressDownloader.value = globalDownloaderId
   await Promise.all([fetchItems(), fetchRules()])
   uiInitializing.value = false
 })
