@@ -21,6 +21,7 @@ import (
 	"github.com/pt-nexus/server/internal/repository"
 	"github.com/pt-nexus/server/internal/service"
 	"github.com/pt-nexus/server/internal/service/autoseed"
+	"github.com/pt-nexus/server/internal/service/bangumi"
 	migrationflow "github.com/pt-nexus/server/internal/service/migrationflow"
 	"github.com/pt-nexus/server/internal/service/scheduledseed"
 )
@@ -117,6 +118,11 @@ func NewApp() (*App, error) {
 	autoSeedService.Start()
 	autoSeedHandler := handler.NewAutoSeedHandler(autoSeedService)
 	resourceInfoHandler := handler.NewResourceInfoHandler(migrateRepo)
+
+	// 番组数据（bangumi-data）：启动后台调度，每 24 小时同步一次，支持页面手动触发。
+	bangumiService := bangumi.NewService(repository.NewBangumiRepository(store))
+	bangumiService.Start()
+	bangumiHandler := handler.NewBangumiHandler(bangumiService)
 
 	settingsService.SetIYUUTrigger(func() map[string]any {
 		settings := cfgManager.Get()
@@ -223,6 +229,7 @@ func NewApp() (*App, error) {
 		scheduledSeedHandler,
 		autoSeedHandler,
 		resourceInfoHandler,
+		bangumiHandler,
 	)
 
 	return &App{Engine: engine, trackerWorker: trackerService}, nil
@@ -247,6 +254,7 @@ func registerRoutes(
 	scheduledSeedHandler *handler.ScheduledSeedHandler,
 	autoSeedHandler *handler.AutoSeedHandler,
 	resourceInfoHandler *handler.ResourceInfoHandler,
+	bangumiHandler *handler.BangumiHandler,
 ) {
 	engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "服务正常", "service": "pt-nexus-go"})
@@ -263,6 +271,10 @@ func registerRoutes(
 	{
 		api.GET("/resource_info", resourceInfoHandler.List)
 		api.PUT("/resource_info/:id", resourceInfoHandler.Update)
+		// 番组数据（bangumi-data）：列表查询、同步状态与手动同步。
+		api.GET("/bangumi/items", bangumiHandler.List)
+		api.GET("/bangumi/status", bangumiHandler.Status)
+		api.POST("/bangumi/sync", bangumiHandler.Sync)
 		api.GET("/sites_list", sitesHandler.SitesList)
 		api.GET("/sites", sitesHandler.Sites)
 		api.POST("/sites/update", sitesHandler.UpdateSite)

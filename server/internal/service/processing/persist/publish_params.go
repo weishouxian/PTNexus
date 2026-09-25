@@ -44,6 +44,7 @@ func BuildStandardizedParams(row map[string]any) map[string]any {
 		"imdb_link":     toStringAny(row["imdb_link"], ""),
 		"douban_link":   toStringAny(row["douban_link"], ""),
 		"tmdb_link":     toStringAny(row["tmdb_link"], ""),
+		"bangumi_link":  toStringAny(row["bangumi_link"], ""),
 	}
 }
 
@@ -51,19 +52,20 @@ func BuildStandardizedParams(row map[string]any) map[string]any {
 func BuildFinalPublishParameters(row map[string]any) map[string]any {
 	standardized := BuildStandardizedParams(row)
 	return map[string]any{
-		"主标题 (预览)": toStringAny(row["title"], ""),
-		"副标题":      toStringAny(row["subtitle"], ""),
-		"IMDb链接":   standardized["imdb_link"],
-		"豆瓣链接":     standardized["douban_link"],
-		"TMDb链接":   standardized["tmdb_link"],
-		"类型":       standardized["type"],
-		"媒介":       standardized["medium"],
-		"视频编码":     standardized["video_codec"],
-		"音频编码":     standardized["audio_codec"],
-		"分辨率":      standardized["resolution"],
-		"制作组":      standardized["team"],
-		"产地":       standardized["source"],
-		"标签":       standardized["tags"],
+		"主标题 (预览)":  toStringAny(row["title"], ""),
+		"副标题":       toStringAny(row["subtitle"], ""),
+		"IMDb链接":    standardized["imdb_link"],
+		"豆瓣链接":      standardized["douban_link"],
+		"TMDb链接":    standardized["tmdb_link"],
+		"Bangumi链接": standardized["bangumi_link"],
+		"类型":        standardized["type"],
+		"媒介":        standardized["medium"],
+		"视频编码":      standardized["video_codec"],
+		"音频编码":      standardized["audio_codec"],
+		"分辨率":       standardized["resolution"],
+		"制作组":       standardized["team"],
+		"产地":        standardized["source"],
+		"标签":        standardized["tags"],
 	}
 }
 
@@ -77,6 +79,7 @@ func BuildCompletePublishParams(row map[string]any) map[string]any {
 		"imdb_link":        row["imdb_link"],
 		"douban_link":      row["douban_link"],
 		"tmdb_link":        row["tmdb_link"],
+		"bangumi_link":     row["bangumi_link"],
 		"intro": map[string]any{
 			"statement":                 cleanDescriptionValue(row["statement"]),
 			"poster":                    row["poster"],
@@ -107,6 +110,7 @@ func BuildRawPreviewParams(row map[string]any) map[string]any {
 		"imdb_link":        standardized["imdb_link"],
 		"douban_link":      standardized["douban_link"],
 		"tmdb_link":        standardized["tmdb_link"],
+		"bangumi_link":     standardized["bangumi_link"],
 		"type":             standardized["type"],
 		"medium":           standardized["medium"],
 		"video_codec":      standardized["video_codec"],

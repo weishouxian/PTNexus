@@ -8,6 +8,12 @@
 #   + /api/system/{countryList,getConf(TORRENT_LABEL_CONFIG)}
 # 注意：站点发种页已不再要求 medium 字段（实测线上种子 medium 全为 null），故本配置不提交 medium。
 #
+# 外链字段（无需字典，直接取自种子参数）：
+#   imdb   = 完整 IMDb 链接（https://www.imdb.com/title/tt…/）
+#   douban = 完整豆瓣链接（https://movie.douban.com/subject/…/）
+#   bangumi= 完整番组条目链接（bgm.tv / bangumi.tv 的 subject 页，长度 ≤255；裸数字 ID 会自动补成链接），
+#            数据来自「获取种子信息」阶段对动漫标签种子的自动匹配，也可在简介详情里手改。
+#
 # 映射键统一写「带前缀的完整标准值」（如 resolution.r1080p）；
 # 代码会在加载时自动为每个带点号的键补充去前缀别名（r1080p），两种上游形态都能命中，无需重复书写。
 

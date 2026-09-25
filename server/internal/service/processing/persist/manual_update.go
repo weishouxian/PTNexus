@@ -6,6 +6,7 @@ import (
 	"time"
 
 	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
+	"github.com/pt-nexus/server/internal/service/bangumi"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
@@ -60,17 +61,18 @@ func BuildManualUpdatedSeedRecord(input BuildManualUpdateInput) BuildManualUpdat
 	standardized, ok := updated["standardized_params"].(map[string]any)
 	if !ok || len(standardized) == 0 {
 		standardized = map[string]any{
-			"type":        toStringAny(updated["type"], toStringAny(existing["type"], "")),
-			"medium":      toStringAny(updated["medium"], toStringAny(existing["medium"], "")),
-			"video_codec": toStringAny(updated["video_codec"], toStringAny(existing["video_codec"], "")),
-			"audio_codec": toStringAny(updated["audio_codec"], toStringAny(existing["audio_codec"], "")),
-			"resolution":  toStringAny(updated["resolution"], toStringAny(existing["resolution"], "")),
-			"team":        toStringAny(updated["team"], toStringAny(existing["team"], "")),
-			"source":      toStringAny(updated["source"], toStringAny(existing["source"], "")),
-			"tags":        parseStringArray(updated["tags"]),
-			"imdb_link":   toStringAny(updated["imdb_link"], toStringAny(existing["imdb_link"], "")),
-			"douban_link": toStringAny(updated["douban_link"], toStringAny(existing["douban_link"], "")),
-			"tmdb_link":   toStringAny(updated["tmdb_link"], toStringAny(existing["tmdb_link"], "")),
+			"type":         toStringAny(updated["type"], toStringAny(existing["type"], "")),
+			"medium":       toStringAny(updated["medium"], toStringAny(existing["medium"], "")),
+			"video_codec":  toStringAny(updated["video_codec"], toStringAny(existing["video_codec"], "")),
+			"audio_codec":  toStringAny(updated["audio_codec"], toStringAny(existing["audio_codec"], "")),
+			"resolution":   toStringAny(updated["resolution"], toStringAny(existing["resolution"], "")),
+			"team":         toStringAny(updated["team"], toStringAny(existing["team"], "")),
+			"source":       toStringAny(updated["source"], toStringAny(existing["source"], "")),
+			"tags":         parseStringArray(updated["tags"]),
+			"imdb_link":    toStringAny(updated["imdb_link"], toStringAny(existing["imdb_link"], "")),
+			"douban_link":  toStringAny(updated["douban_link"], toStringAny(existing["douban_link"], "")),
+			"tmdb_link":    toStringAny(updated["tmdb_link"], toStringAny(existing["tmdb_link"], "")),
+			"bangumi_link": toStringAny(updated["bangumi_link"], toStringAny(existing["bangumi_link"], "")),
 		}
 	}
 
@@ -106,6 +108,13 @@ func BuildManualUpdatedSeedRecord(input BuildManualUpdateInput) BuildManualUpdat
 	draft.IMDbLink = toStringAny(standardized["imdb_link"], toStringAny(existing["imdb_link"], ""))
 	draft.DoubanLink = toStringAny(standardized["douban_link"], toStringAny(existing["douban_link"], ""))
 	draft.TMDbLink = toStringAny(standardized["tmdb_link"], toStringAny(existing["tmdb_link"], ""))
+	// 番组链接按“键存在即采用”处理（允许用户清空），键缺失时才沿用库内值；裸 ID / 非规范链接统一为规范链接。
+	bangumiLink := toStringAny(existing["bangumi_link"], "")
+	if raw, exists := updated["bangumi_link"]; exists {
+		bangumiLink = strings.TrimSpace(toStringAny(raw, ""))
+	}
+	draft.BangumiLink = bangumi.NormalizeSubjectLink(bangumiLink)
+	standardized["bangumi_link"] = draft.BangumiLink
 	draft.Type = toStringAny(standardized["type"], "")
 	draft.Medium = toStringAny(standardized["medium"], "")
 	draft.VideoCodec = toStringAny(standardized["video_codec"], "")

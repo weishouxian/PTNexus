@@ -268,6 +268,12 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	if douban := resolveMTeamDoubanLink(input, std); douban != "" {
 		textFields["douban"] = douban
 	}
+	// Bangumi：站点字段名为 bangumi，只接受 bangumi.tv / bgm.tv 的 subject 页链接（长度上限 255），
+	// 裸数字 ID 站点会自动补成链接，这里按同一规则归一后再提交。
+	bangumiLink, bangumiRaw := resolveMTeamBangumiLink(input, std)
+	if bangumiLink != "" {
+		textFields["bangumi"] = bangumiLink
+	}
 	if mediaInfo := strings.TrimSpace(input.MediaInfo); mediaInfo != "" {
 		textFields["mediainfo"] = mediaInfo
 	}
@@ -315,8 +321,14 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		logLines = append(logLines, appendLogLine)
 	}
 	logLines = append(logLines,
-		fmt.Sprintf("外链字段: imdb=%q douban=%q", textFields["imdb"], textFields["douban"]),
+		fmt.Sprintf("外链字段: imdb=%q douban=%q bangumi=%q", textFields["imdb"], textFields["douban"], textFields["bangumi"]),
 	)
+	if bangumiRaw != "" {
+		logLines = append(logLines, fmt.Sprintf(
+			"⚠️ Bangumi 链接不可用：%q 不是 Bangumi 条目链接（站点仅接受 bangumi.tv / bgm.tv 的 subject 页链接，长度不超过 %d 字符），已跳过该字段。",
+			bangumiRaw, mTeamBangumiMaxLength,
+		))
+	}
 	logLines = append(logLines, fallbackNotes...)
 
 	publishURL, attemptDetail, existing, publishErr := postMTeamTorrent(uploadURL, webBase, apiKey, textFields, torrentBytes, filepath.Base(torrentPath))
@@ -860,6 +872,54 @@ func resolveMTeamDoubanLink(input publisher.PublishInput, std map[string]any) st
 		}
 	}
 	return ""
+}
+
+// mTeamBangumiMaxLength 为站点对 bangumi 字段的长度上限（对应站点前端常量 KZ）。
+const mTeamBangumiMaxLength = 255
+
+// reMTeamBangumi 匹配站点接受的番组条目链接。
+// 站点前端的校验正则为 ^(?:https?://)?(?:www\.)?(?:bangumi\.tv|bgm\.tv)/subject/(\d+)（忽略大小写），
+// 这里保持一致；同时统一归一为 bgm.tv 链接，顺带丢掉站点「链接过长」提示里提到的跟踪参数。
+var reMTeamBangumi = regexp.MustCompile(`(?i)^(?:https?://)?(?:www\.)?(?:bangumi\.tv|bgm\.tv)/subject/(\d+)`)
+
+// reMTeamBangumiBareID 匹配裸番组条目 ID（站点前端同样会把裸 ID 补成 bangumi.tv 链接）。
+var reMTeamBangumiBareID = regexp.MustCompile(`^\d{2,}$`)
+
+// resolveMTeamBangumiLink 解析站点 bangumi 字段，返回可提交的条目链接与首个非空的原始候选值。
+// 参数/返回：input/std 为发布输入与标准化参数；返回规范链接（无法识别时为空）与原始候选（仅用于日志告警）。
+// 失败场景：候选为空、不是番组条目链接（含裸 ID）、或归一后超出站点长度上限时返回空链接。
+// 副作用：无。
+func resolveMTeamBangumiLink(input publisher.PublishInput, std map[string]any) (string, string) {
+	candidates := []string{
+		toStringAny(std["bangumi_link"], ""),
+		toStringAny(input.UploadData["bangumi_link"], ""),
+		toStringAny(std["bangumi"], ""),
+		toStringAny(input.UploadData["bangumi"], ""),
+		toStringAny(std["bangumi_id"], ""),
+		toStringAny(input.UploadData["bangumi_id"], ""),
+	}
+	for _, candidate := range candidates {
+		trimmed := strings.TrimSpace(candidate)
+		if trimmed == "" {
+			continue
+		}
+		id := ""
+		switch {
+		case reMTeamBangumi.MatchString(trimmed):
+			id = reMTeamBangumi.FindStringSubmatch(trimmed)[1]
+		case reMTeamBangumiBareID.MatchString(trimmed):
+			id = trimmed
+		}
+		if id == "" {
+			return "", trimmed
+		}
+		link := "https://bgm.tv/subject/" + id
+		if len(link) > mTeamBangumiMaxLength {
+			return "", trimmed
+		}
+		return link, ""
+	}
+	return "", ""
 }
 
 // buildMTeamDescription 规范化简介中的图片标签：统一为 BBCode 包裹的 [img]url[/img]。

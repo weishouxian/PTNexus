@@ -332,6 +332,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				imdb_link TEXT,
 				douban_link TEXT,
 				tmdb_link TEXT,
+				bangumi_link TEXT,
 				type VARCHAR(100),
 				medium VARCHAR(100),
 				video_codec VARCHAR(100),
@@ -440,6 +441,35 @@ func (m *SchemaManager) createTableSQLs() []string {
 				created_at DATETIME NOT NULL,
 				updated_at DATETIME NOT NULL
 			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
+			`CREATE TABLE IF NOT EXISTS bangumi_items (
+				id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+				bangumi_id VARCHAR(32),
+				title TEXT,
+				title_zh TEXT,
+				title_translate_json LONGTEXT,
+				sites_json LONGTEXT,
+				item_type VARCHAR(32),
+				lang VARCHAR(16),
+				official_site TEXT,
+				begin_at VARCHAR(64),
+				end_at VARCHAR(64),
+				begin_ts BIGINT NOT NULL DEFAULT 0,
+				` + "`comment`" + ` TEXT,
+				broadcast TEXT,
+				tmdb_id VARCHAR(64),
+				mal_id VARCHAR(64),
+				anidb_id VARCHAR(64),
+				anilist_id VARCHAR(64),
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
+			`CREATE TABLE IF NOT EXISTS bangumi_sync_meta (
+				meta_key VARCHAR(64) NOT NULL,
+				value_json LONGTEXT NOT NULL,
+				created_at DATETIME NOT NULL,
+				updated_at DATETIME NOT NULL,
+				PRIMARY KEY (meta_key)
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
 		}
 	case "postgresql":
 		return []string{
@@ -530,6 +560,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				imdb_link TEXT,
 				douban_link TEXT,
 				tmdb_link TEXT,
+				bangumi_link TEXT,
 				type VARCHAR(100),
 				medium VARCHAR(100),
 				video_codec VARCHAR(100),
@@ -638,6 +669,34 @@ func (m *SchemaManager) createTableSQLs() []string {
 				created_at TIMESTAMP NOT NULL,
 				updated_at TIMESTAMP NOT NULL
 			)`,
+			`CREATE TABLE IF NOT EXISTS bangumi_items (
+				id BIGSERIAL PRIMARY KEY,
+				bangumi_id VARCHAR(32),
+				title TEXT,
+				title_zh TEXT,
+				title_translate_json TEXT,
+				sites_json TEXT,
+				item_type VARCHAR(32),
+				lang VARCHAR(16),
+				official_site TEXT,
+				begin_at VARCHAR(64),
+				end_at VARCHAR(64),
+				begin_ts BIGINT NOT NULL DEFAULT 0,
+				"comment" TEXT,
+				broadcast TEXT,
+				tmdb_id VARCHAR(64),
+				mal_id VARCHAR(64),
+				anidb_id VARCHAR(64),
+				anilist_id VARCHAR(64),
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS bangumi_sync_meta (
+				meta_key VARCHAR(64) PRIMARY KEY,
+				value_json TEXT NOT NULL,
+				created_at TIMESTAMP NOT NULL,
+				updated_at TIMESTAMP NOT NULL
+			)`,
 		}
 	default:
 		return []string{
@@ -728,6 +787,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				imdb_link TEXT,
 				douban_link TEXT,
 				tmdb_link TEXT,
+				bangumi_link TEXT,
 				type TEXT,
 				medium TEXT,
 				video_codec TEXT,
@@ -833,6 +893,34 @@ func (m *SchemaManager) createTableSQLs() []string {
 				trigger_tag TEXT NOT NULL,
 				last_run_at TEXT NULL,
 				next_run_at TEXT NOT NULL,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS bangumi_items (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				bangumi_id TEXT,
+				title TEXT,
+				title_zh TEXT,
+				title_translate_json TEXT,
+				sites_json TEXT,
+				item_type TEXT,
+				lang TEXT,
+				official_site TEXT,
+				begin_at TEXT,
+				end_at TEXT,
+				begin_ts INTEGER NOT NULL DEFAULT 0,
+				` + "`comment`" + ` TEXT,
+				broadcast TEXT,
+				tmdb_id TEXT,
+				mal_id TEXT,
+				anidb_id TEXT,
+				anilist_id TEXT,
+				created_at TEXT NOT NULL,
+				updated_at TEXT NOT NULL
+			)`,
+			`CREATE TABLE IF NOT EXISTS bangumi_sync_meta (
+				meta_key TEXT PRIMARY KEY,
+				value_json TEXT NOT NULL,
 				created_at TEXT NOT NULL,
 				updated_at TEXT NOT NULL
 			)`,
@@ -956,6 +1044,7 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "imdb_link", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "douban_link", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "tmdb_link", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "bangumi_link", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "type", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(100)", "postgresql": "VARCHAR(100)"}},
 			{name: "medium", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(100)", "postgresql": "VARCHAR(100)"}},
 			{name: "video_codec", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(100)", "postgresql": "VARCHAR(100)"}},
@@ -1039,6 +1128,33 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "created_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
 			{name: "updated_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
 		},
+		"bangumi_items": {
+			{name: "bangumi_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(32)", "postgresql": "VARCHAR(32)"}},
+			{name: "title", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "title_zh", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "title_translate_json", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
+			{name: "sites_json", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
+			{name: "item_type", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(32)", "postgresql": "VARCHAR(32)"}},
+			{name: "lang", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(16)", "postgresql": "VARCHAR(16)"}},
+			{name: "official_site", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "begin_at", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "end_at", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "begin_ts", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "comment", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "broadcast", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "tmdb_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "mal_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "anidb_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "anilist_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "created_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
+			{name: "updated_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
+		},
+		"bangumi_sync_meta": {
+			{name: "meta_key", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(64) NOT NULL", "postgresql": "VARCHAR(64) NOT NULL"}},
+			{name: "value_json", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "LONGTEXT NOT NULL", "postgresql": "TEXT NOT NULL"}},
+			{name: "created_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
+			{name: "updated_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
+		},
 		"publish_logs": {
 			{name: "publish_trigger", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(32) NOT NULL", "postgresql": "VARCHAR(32) NOT NULL"}},
 			{name: "scene", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(32)", "postgresql": "VARCHAR(32)"}},
@@ -1093,6 +1209,10 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "resource_info", name: "idx_resource_info_imdb_id", columns: []string{"imdb_id"}},
 		{table: "resource_info", name: "idx_resource_info_tmdb_id", columns: []string{"tmdb_id"}},
 		{table: "resource_info", name: "idx_resource_info_updated_at", columns: []string{"updated_at"}},
+
+		{table: "bangumi_items", name: "idx_bangumi_items_bangumi_id", columns: []string{"bangumi_id"}},
+		{table: "bangumi_items", name: "idx_bangumi_items_item_type", columns: []string{"item_type"}},
+		{table: "bangumi_items", name: "idx_bangumi_items_begin_ts", columns: []string{"begin_ts"}},
 	}
 }
 
