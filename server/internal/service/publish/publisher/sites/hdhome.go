@@ -58,7 +58,6 @@ func (hdhomePublisher) BuildExtraFormFields(input publisher.PublishInput) (map[s
 func (hdhomePublisher) AdjustFormFields(input publisher.PublishInput, formFields map[string]string) {
 	ensureHDHomeRequiredFields(input, formFields)
 	adjustHDHomeCategory(input, formFields)
-	adjustHDHomeCodec(input, formFields)
 	adjustHDHomeAudio(input, formFields)
 }
 
@@ -127,10 +126,12 @@ func buildHDHomeExtraFields(input publisher.PublishInput) map[string]string {
 	}
 	standardized := hdhomeStandardized(input)
 	medium := strings.TrimSpace(toStringAny(standardized["medium"], ""))
+	resolution := strings.TrimSpace(toStringAny(standardized["resolution"], ""))
+	title := firstNonEmpty(strings.TrimSpace(input.Title), toStringAny(input.UploadData["name"], ""))
 
 	result := map[string]string{}
 	sourceField := firstNonEmpty(siteCfg.FormFields["source"], "source_sel")
-	if value := resolveHDHomeSourceValue(medium); value != "" {
+	if value := resolveHDHomeSourceValue(medium, resolution, title); value != "" {
 		result[sourceField] = value
 	}
 	processingField := firstNonEmpty(siteCfg.FormFields["processing"], "processing_sel")
@@ -238,21 +239,6 @@ func ensureHDHomeRequiredFields(input publisher.PublishInput, formFields map[str
 	applyMapped("audio_codec", "audio_codec", "audiocodec_sel", toStringAny(standardized["audio_codec"], ""))
 }
 
-func adjustHDHomeCodec(input publisher.PublishInput, formFields map[string]string) {
-	if formFields == nil {
-		return
-	}
-	standardized := hdhomeStandardized(input)
-	video := strings.TrimSpace(toStringAny(standardized["video_codec"], ""))
-	if video != "video.h265" && video != "video.x265" && video != "video.hevc" {
-		return
-	}
-	if !strings.Contains(strings.ToLower(input.Title), "hevc") {
-		return
-	}
-	formFields["codec_sel"] = "@index:6"
-}
-
 func adjustHDHomeAudio(input publisher.PublishInput, formFields map[string]string) {
 	if formFields == nil {
 		return
@@ -294,20 +280,57 @@ func buildHDHomeDescription(input publisher.PublishInput) string {
 	return strings.Join(parts, "\n")
 }
 
-func resolveHDHomeSourceValue(medium string) string {
-	switch strings.TrimSpace(medium) {
-	case "medium.uhd_bluray", "medium.uhd_diy":
-		return "@index:1"
-	case "medium.bluray", "medium.bluray_diy", "medium.remux", "medium.encode", "medium.encode_2160p", "medium.encode_1080p", "medium.encode_720p":
-		return "@index:2"
+// resolveHDHomeSourceValue 依据「媒介 + 分辨率」推导家园「来源」字段（source_sel）的选项索引。
+// 家园的「来源」表示素材的源盘类型：UHD Blu-ray / Blu-ray / HDTV / DVD / WEB-DL / Other；
+// 蓝光家族媒介（原盘/DIY/Remux/Encode）在 2160p/4320p 时源盘只能是 UHD Blu-ray，其余为 Blu-ray。
+func resolveHDHomeSourceValue(medium string, resolution string, title string) string {
+	normalizedMedium := strings.ToLower(strings.TrimSpace(medium))
+	normalizedResolution := strings.ToLower(strings.TrimSpace(resolution))
+	normalizedTitle := strings.ToLower(strings.TrimSpace(title))
+
+	switch normalizedMedium {
 	case "medium.hdtv":
 		return "@index:3"
 	case "medium.dvd":
 		return "@index:4"
 	case "medium.webdl":
 		return "@index:5"
-	default:
+	}
+
+	if !isHDHomeBlurayFamilyMedium(normalizedMedium) {
 		return "@index:6"
+	}
+	if isHDHomeUHDBluraySource(normalizedMedium, normalizedResolution, normalizedTitle) {
+		return "@index:1"
+	}
+	return "@index:2"
+}
+
+// isHDHomeBlurayFamilyMedium 判断标准化媒介是否属于蓝光家族（原盘/DIY/Remux/Encode）。
+func isHDHomeBlurayFamilyMedium(medium string) bool {
+	switch medium {
+	case "medium.uhd_bluray", "medium.uhd_diy", "medium.bluray", "medium.bluray_diy",
+		"medium.remux", "medium.encode", "medium.encode_2160p", "medium.encode_1080p", "medium.encode_720p":
+		return true
+	}
+	// 兜底：上游可能给出带细分的标准值（如 medium.uhd_bluray_remux / medium.bluray_remux）
+	return strings.Contains(medium, "bluray") || strings.Contains(medium, "remux") || strings.Contains(medium, "uhd")
+}
+
+// isHDHomeUHDBluraySource 判断蓝光家族素材的来源是否应记为 UHD Blu-ray。
+func isHDHomeUHDBluraySource(medium string, resolution string, title string) bool {
+	if strings.Contains(medium, "uhd") || strings.Contains(medium, "2160p") || strings.Contains(medium, "4320p") {
+		return true
+	}
+	switch resolution {
+	case "resolution.r2160p", "resolution.r4320p":
+		return true
+	case "":
+		// 分辨率缺失时用标题兜底（hdhomeStandardized 通常已按标题推断出分辨率，这里只做保险）
+		return strings.Contains(title, "2160p") || strings.Contains(title, "4320p") ||
+			strings.Contains(title, "8k") || strings.Contains(title, "uhd")
+	default:
+		return false
 	}
 }
 
