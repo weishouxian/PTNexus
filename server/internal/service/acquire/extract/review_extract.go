@@ -2463,14 +2463,6 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		}
 		return false
 	}
-	hasAll := func(parts ...string) bool {
-		for _, part := range parts {
-			if part != "" && strings.Contains(upperAll, strings.ToUpper(part)) {
-				return true
-			}
-		}
-		return false
-	}
 
 	if looksLikeTVSeriesText(upperTech) {
 		values["type"] = "category.tv_series"
@@ -2546,22 +2538,11 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		}
 	}
 
-	switch {
-	// 产地推断只接受“明确国家/地区”字样，不再使用“国语/国配/CHN”等音轨语言提示，避免误判日本片为中国。
-	case hasAll("中国", "CHINA"):
-		values["source"] = "source.china"
-	case hasAll("香港", "HKG"):
-		values["source"] = "source.hongkong"
-	case hasAll("台湾", "TWN"):
-		values["source"] = "source.taiwan"
-	case hasAll("日本", "日语", "JAPAN", "JPN"):
-		values["source"] = "source.japan"
-	case hasAll("韩国", "韩语", "KOREA", "KOR"):
-		values["source"] = "source.korea"
-	case hasAll("英国", "UK"):
-		values["source"] = "source.uk"
-	case hasAll("美国", "USA", "ENGLISH", "US "):
-		values["source"] = "source.western"
+	// 产地推断只接受明确的“国家/地区”字样（统一走 source_key.go 的归一表，
+	// 覆盖欧美全量国家：英/法/德/意/西/瑞典/丹麦/俄/加/欧洲），
+	// 不再使用“国语/国配/CHN/ENGLISH”等音轨语言提示，避免误判日本片为中国。
+	if sourceKey := NormalizeSourceKeyFromText(upperAll); sourceKey != "" {
+		values["source"] = sourceKey
 	}
 
 	// 对齐 Python：标签补全不在这里基于“正文/全页文本”做推断，避免噪声误判。
