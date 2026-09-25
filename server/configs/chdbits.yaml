@@ -18,6 +18,7 @@ site_name: "CHDBits"
 #   6. 站点无 DVD/Other 媒介：未知媒介回落 Encode(4)；
 #      分辨率有 Other(5)，未知分辨率直接兜底到 Other
 #   7. 无 pt_gen、无 dburl，只有 url（IMDb 链接文本框）；无 CD/DVD 之外的豆瓣字段
+#   8. 带"动画/动漫"标签的种子强制归入 405=Animations（见文末 type_by_tag）
 
 upload_file_field: "torrentfile"
 
@@ -338,3 +339,10 @@ mappings:
     "team.grammyfan": "29"
     "team.other": "3"
     "default": "3"
+
+# 标签决定分类：带"动画/动漫"标签的种子必须归入 405=Animations，
+# 覆盖按来源文本解析出的类型（例如来源站把动画剧集解析成"电视剧/402"）。
+# 值为标准类型值，经上面 mappings.type 换算成站点取值（命中即覆盖，不走 default 兜底）。
+type_by_tag:
+  "tag.动画": "category.animation"
+  "tag.动漫": "category.animation"
