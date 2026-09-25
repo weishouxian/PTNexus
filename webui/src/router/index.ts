@@ -52,6 +52,11 @@ const router = createRouter({
       component: () => import('../views/ResourceInfoView.vue'),
     },
     {
+      path: '/bangumi',
+      name: 'bangumi',
+      component: () => import('../views/BangumiView.vue'),
+    },
+    {
       path: '/settings',
       name: 'settings',
       component: () => import('../views/SettingsView.vue'),

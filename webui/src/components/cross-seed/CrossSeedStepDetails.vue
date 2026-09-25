@@ -447,6 +447,16 @@
               </el-form-item>
             </el-col>
           </el-row>
+          <el-row :gutter="20">
+            <el-col :span="8">
+              <el-form-item label="Bangumi链接">
+                <el-input
+                  v-model="torrentData.bangumi_link"
+                  placeholder="含动漫标签的种子会自动匹配，可手动修改"
+                />
+              </el-form-item>
+            </el-col>
+          </el-row>
         </el-form>
       </el-tab-pane>
       <el-tab-pane label="媒体信息" name="mediainfo">

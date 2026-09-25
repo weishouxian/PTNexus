@@ -83,6 +83,7 @@ type DbSeedRecord = {
   imdb_link?: string
   douban_link?: string
   tmdb_link?: string
+  bangumi_link?: string
   screenshot_review_status?: string
   statement?: string
   poster?: string
@@ -435,6 +436,7 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             imdb_link: dbData.imdb_link,
             douban_link: dbData.douban_link,
             tmdb_link: dbData.tmdb_link,
+            bangumi_link: dbData.bangumi_link || '',
             screenshot_review_status: normalizeScreenshotReviewStatus(
               dbData.screenshot_review_status,
             ),
@@ -524,6 +526,7 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
           imdb_link: dbData.imdb_link || '',
           douban_link: dbData.douban_link || '',
           tmdb_link: dbData.tmdb_link || '',
+          bangumi_link: dbData.bangumi_link || '',
           screenshot_review_status: normalizeScreenshotReviewStatus(dbData.screenshot_review_status),
           intro: {
             statement: filterExtraEmptyLines(dbData.statement || '') || '',
@@ -783,6 +786,7 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             imdb_link: dbData.imdb_link,
             douban_link: dbData.douban_link,
             tmdb_link: dbData.tmdb_link,
+            bangumi_link: dbData.bangumi_link || '',
             screenshot_review_status: normalizeScreenshotReviewStatus(
               dbData.screenshot_review_status,
             ),
@@ -1132,6 +1136,7 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
         imdb_link: torrentData.value.imdb_link,
         douban_link: torrentData.value.douban_link,
         tmdb_link: torrentData.value.tmdb_link,
+        bangumi_link: torrentData.value.bangumi_link,
         screenshot_review_status: torrentData.value.screenshot_review_status,
         poster: torrentData.value.intro.poster,
         screenshots: torrentData.value.intro.screenshots,

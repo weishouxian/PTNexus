@@ -45,6 +45,7 @@
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
+        <el-menu-item index="/bangumi">番组数据</el-menu-item>
         <el-menu-item index="/settings">设置</el-menu-item>
       </el-menu>
       <div
@@ -196,6 +197,7 @@
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
+        <el-menu-item index="/bangumi">番组数据</el-menu-item>
         <el-menu-item index="/settings">设置</el-menu-item>
         <el-menu-item index="/settings/general" class="mobile-settings-sub-item">
           基础设置
@@ -304,6 +306,7 @@ const routeTitleMap: Record<string, string> = {
   '/publish-logs': '发种日志',
   '/sites': '做种检索',
   '/resource-info': '资源信息',
+  '/bangumi': '番组数据',
   '/settings': '设置',
 }
 
