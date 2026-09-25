@@ -54,6 +54,7 @@ export interface TorrentData {
   imdb_link: string
   douban_link: string
   tmdb_link: string
+  bangumi_link: string
   screenshot_review_status: ScreenshotReviewStatus
   intro: IntroData
   mediainfo: string

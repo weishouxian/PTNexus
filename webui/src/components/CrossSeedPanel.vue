@@ -412,6 +412,7 @@ const getInitialTorrentData = (): TorrentData => ({
   imdb_link: '',
   douban_link: '',
   tmdb_link: '',
+  bangumi_link: '',
   official_site: '',
   screenshot_review_status: 'none',
   intro: { statement: '', poster: '', body: '', screenshots: '', removed_ardtudeclarations: [] },

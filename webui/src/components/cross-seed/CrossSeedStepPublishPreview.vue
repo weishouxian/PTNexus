@@ -143,6 +143,23 @@
                   </span>
                 </div>
               </div>
+              <div class="stacked-param-row">
+                <div class="stacked-param-head">
+                  <span class="param-label">Bangumi链接</span>
+                  <span class="param-colon">：</span>
+                </div>
+                <div class="stacked-param-value-line">
+                  <span
+                    :class="[
+                      'param-value',
+                      'single-line-value',
+                      { empty: !torrentData.bangumi_link || torrentData.bangumi_link === 'N/A' },
+                    ]"
+                  >
+                    {{ torrentData.bangumi_link || 'N/A' }}
+                  </span>
+                </div>
+              </div>
             </div>
             <div class="param-item tags-item half-width">
               <div class="stacked-param-row">
