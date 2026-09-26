@@ -2,9 +2,11 @@ package repository
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/glebarez/sqlite"
 	"github.com/pt-nexus/server/internal/config"
@@ -17,6 +19,27 @@ import (
 type Store struct {
 	DB     *gorm.DB
 	DBType string
+}
+
+// DatabaseTimeZone 是所有数据库连接统一使用的会话时区（东八区）。
+// 参数/返回：无参数；返回固定为 Asia/Shanghai 的位置对象。
+// 失败场景：时区数据缺失时退回固定 UTC+8 偏移，保证时间仍是北京时间。
+// 副作用：无。
+// 说明：队列时间字段以 "2006-01-02 15:04:05" 文本形式落库，不带时区信息，
+// 若各驱动解析出的会话时区不一致（例如容器内 /etc/localtime 为 Etc/UTC 时
+// MySQL 的 loc=Local 会解析成 UTC），同一列就会出现两种时刻的混用。
+// 统一钉死为东八区后，写入与读出都按北京时间解释。
+var DatabaseTimeZone = resolveDatabaseTimeZone()
+
+// resolveDatabaseTimeZone 解析数据库会话时区，优先 Asia/Shanghai，失败时退回固定 UTC+8。
+// 参数/返回：无参数；返回 time.Location 指针（非 nil）。
+// 失败场景：运行环境缺少 tzdata 时无法加载 Asia/Shanghai，此时退回 FixedZone("CST", 8*3600)。
+// 副作用：无。
+func resolveDatabaseTimeZone() *time.Location {
+	if loc, err := time.LoadLocation("Asia/Shanghai"); err == nil && loc != nil {
+		return loc
+	}
+	return time.FixedZone("CST", 8*3600)
 }
 
 func NewStore(paths config.RuntimePaths) (*Store, error) {
@@ -50,7 +73,13 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 		password := firstNonEmpty(os.Getenv("MYSQL_PASSWORD"), desktopCfg.MySQL.Password)
 		database := firstNonEmpty(os.Getenv("MYSQL_DATABASE"), desktopCfg.MySQL.Database)
 		port := firstNonEmpty(os.Getenv("MYSQL_PORT"), intToString(desktopCfg.MySQL.Port), "3306")
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local", user, password, host, port, database)
+		// loc 必须显式写成 URL 转义后的时区名，不能用 loc=Local：
+		// 容器内 /etc/localtime 常常是 Etc/UTC（宿主机时区由 TZ 环境变量提供），
+		// 此时 Local 会解析成 UTC，导致读出的时间比实际早 8 小时。
+		dsn := fmt.Sprintf(
+			"%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=%s",
+			user, password, host, port, database, url.QueryEscape("Asia/Shanghai"),
+		)
 		db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	case "postgresql":
 		host := firstNonEmpty(os.Getenv("POSTGRES_HOST"), desktopCfg.PostgreSQL.Host)
@@ -59,7 +88,8 @@ func NewStore(paths config.RuntimePaths) (*Store, error) {
 		database := firstNonEmpty(os.Getenv("POSTGRES_DATABASE"), desktopCfg.PostgreSQL.Database)
 		port := firstNonEmpty(os.Getenv("POSTGRES_PORT"), intToString(desktopCfg.PostgreSQL.Port), "5432")
 		sslMode := firstNonEmpty(os.Getenv("POSTGRES_SSLMODE"), desktopCfg.PostgreSQL.SSLMode, "disable")
-		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=Asia/Shanghai", host, user, password, database, port, sslMode)
+		// TimeZone 与 MySQL 的 loc 保持同一个时区（东八区），避免两种驱动下同一列解释不一致。
+		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=%s TimeZone=%s", host, user, password, database, port, sslMode, DatabaseTimeZone.String())
 		db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	case "sqlite":
 		fallthrough
