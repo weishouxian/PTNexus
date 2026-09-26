@@ -35,6 +35,9 @@ type MigrateService struct {
 	queueStartOnce sync.Once
 	queueStopCh    chan struct{}
 	queueDoneCh    chan struct{}
+	// queueWakeCh 用于「立即发布」等操作唤醒队列线程，立刻执行一轮扫描而不必等下一个轮询周期。
+	// 带缓冲（容量 1）以支持非阻塞投递：已有待处理唤醒时重复投递被丢弃即可。
+	queueWakeCh chan struct{}
 }
 
 func NewMigrateService(repo *repository.MigrateRepository, cfg *config.Manager) *MigrateService {

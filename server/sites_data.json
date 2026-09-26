@@ -1186,7 +1186,7 @@
     "migration": 0,
     "speed_limit": 50
   },
-  {
+/*  {
     "site": "yhpp",
     "nickname": "昆仑",
     "base_url": "www.yhpp.cc",
@@ -1194,7 +1194,7 @@
     "group": null,
     "migration": 2,
     "speed_limit": 50
-  },
+  },*/
   {
     "site": "asmr",
     "nickname": "ASMR",

@@ -49,6 +49,9 @@ export type PublishFlowDeps = {
   autoAddExistingToDownloader: Ref<boolean>
   autoUpdateExistingTorrent: Ref<boolean>
 
+  // 页面显式设置的发种间隔（分钟）：0 表示沿用下载器设置里的发布节奏。
+  publishIntervalMinutes: Ref<number>
+
   downloaderList: Ref<DownloaderListItem[]>
 
   finalResultsList: Ref<RawPublishResult[]>
@@ -117,6 +120,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     selectedTargetSites,
     autoAddExistingToDownloader,
     autoUpdateExistingTorrent,
+    publishIntervalMinutes,
     downloaderList,
     finalResultsList,
     publishResultsBySite,
@@ -202,6 +206,14 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
   const isBatchPublishing = ref(false)
   const batchPublishConcurrency = ref(1)
 
+  // 页面显式设置的发种间隔（分钟）；0 表示不覆盖，沿用下载器设置里的发布节奏。
+  // 上限与「设置 → 下载器」的间隔输入保持一致（1440 分钟 = 1 天）。
+  const resolvePublishIntervalOverride = (): number => {
+    const raw = Number(publishIntervalMinutes.value)
+    if (!Number.isFinite(raw) || raw <= 0) return 0
+    return Math.min(1440, Math.floor(raw))
+  }
+
   const resetBatchPublishRuntime = () => {
     isBatchPublishing.value = false
     batchPublishConcurrency.value = 1
@@ -264,6 +276,8 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
         auto_update_existing_torrent: autoUpdateExistingTorrent.value,
         publish_scene: publishScene,
+        // 页面显式设置的发种间隔：0 表示由后端沿用下载器设置里的发布节奏。
+        publish_interval_minutes: resolvePublishIntervalOverride(),
       })
 
       if (!startResponse.data?.success || !startResponse.data?.batch_id) {
@@ -274,8 +288,9 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
 
       const pacingMinutes = Number(startResponse.data?.publish_interval_minutes || 0)
       if (pacingMinutes > 0) {
+        const overrideMinutes = resolvePublishIntervalOverride()
         ElNotification({
-          title: '已按下载器发布节奏执行',
+          title: overrideMinutes > 0 ? '已按页面设置的发种间隔执行' : '已按下载器发布节奏执行',
           message: `每 ${startResponse.data?.concurrency ?? 1} 个站点一波，波间隔 ${pacingMinutes} 分钟`,
           type: 'info',
           duration: 4000,
@@ -445,7 +460,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
 
     const results = []
 
-    for (const siteName of selectedTargetSites.value) {
+    for (const [siteIndex, siteName] of selectedTargetSites.value.entries()) {
       try {
         const response = await axios.post('/api/migrate/publish', {
           task_id: taskId.value,
@@ -629,7 +644,23 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       }
       // Update publish progress
       publishProgress.value.current++
-      await new Promise((resolve) => setTimeout(resolve, 1000))
+      // 站点之间的等待：页面设置了发种间隔时按间隔错峰（回退路径本就是逐站串行，等价并发 1），
+      // 否则沿用原来的 1 秒缓冲；最后一个站点不再等待。
+      const serialSiteList = selectedTargetSites.value
+      if (siteIndex < serialSiteList.length - 1) {
+        const intervalMinutes = resolvePublishIntervalOverride()
+        if (intervalMinutes > 0) {
+          ElNotification({
+            title: '等待发种间隔',
+            message: `将在 ${intervalMinutes} 分钟后发布下一站（共 ${serialSiteList.length} 站）`,
+            type: 'info',
+            duration: 3000,
+          })
+          await new Promise((resolve) => setTimeout(resolve, intervalMinutes * 60_000))
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 1000))
+        }
+      }
     }
 
     ElNotification.closeAll()
@@ -797,6 +828,8 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
         auto_update_existing_torrent: autoUpdateExistingTorrent.value,
         publish_scene: publishScene,
+        // 页面显式设置的发种间隔：0 表示由后端沿用下载器设置里的发布节奏。
+        publish_interval_minutes: resolvePublishIntervalOverride(),
       })
 
       if (!response.data?.success || !response.data?.group_id) {

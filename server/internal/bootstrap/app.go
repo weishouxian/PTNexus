@@ -368,6 +368,8 @@ func registerRoutes(
 		migrateAPI.POST("/publish_queue/enqueue_batch", migrateHandler.PublishQueueEnqueueBatch)
 		migrateAPI.POST("/publish_queue/enqueue_batch_by_names", migrateHandler.PublishQueueEnqueueBatchByNames)
 		migrateAPI.GET("/publish_queue/tasks", migrateHandler.PublishQueueTasks)
+		migrateAPI.POST("/publish_queue/next_wave", migrateHandler.PublishQueuePublishNextWave)
+		migrateAPI.POST("/publish_queue/tasks/:queue_task_id/publish_now", migrateHandler.PublishQueuePublishNow)
 		migrateAPI.DELETE("/publish_queue/tasks/:queue_task_id", migrateHandler.PublishQueueDeleteTask)
 
 		migrateAPI.POST("/batch_fetch_seed_data", migrateHandler.BatchFetchSeedData)

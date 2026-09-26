@@ -1134,6 +1134,31 @@
     white-space: nowrap;
   }
 
+  .toolbar-interval-row {
+    flex-wrap: wrap;
+  }
+
+  .toolbar-interval-row .toolbar-toggle-item {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .interval-label {
+    cursor: help;
+    text-decoration: underline dotted;
+    text-underline-offset: 3px;
+  }
+
+  .interval-input {
+    width: 108px;
+  }
+
+  .interval-hint {
+    font-size: 12px;
+    color: #e6a23c;
+    white-space: nowrap;
+  }
+
   .auto-update-toggle-text {
     color: #ff8f1f;
     font-weight: 600;

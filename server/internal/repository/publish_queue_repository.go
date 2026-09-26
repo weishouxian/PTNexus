@@ -369,6 +369,76 @@ func (r *PublishQueueRepository) CancelQueuedTask(id int64, reason string) error
 	return ErrPublishQueueTaskNotQueued
 }
 
+// PromoteQueuedTaskToNow 把 queued 任务的可执行时间提前到当前时刻，使队列下一轮扫描立即领取执行。
+// 参数/返回：id 为任务主键；now 为当前时间；返回 error。
+// 失败场景：任务不存在返回 ErrPublishQueueTaskNotFound；任务非 queued 返回 ErrPublishQueueTaskNotQueued；更新失败返回 error。
+// 副作用：更新 publish_queue_tasks 的 scheduled_at/next_run_at/last_error/updated_at（状态仍保持 queued）。
+// 说明：仅改时间不改状态，任务依旧由队列调度器按正常流程领取执行，
+// 因此不会绕过预检查、可发种时间等限制（不满足时会被重新排队）。
+func (r *PublishQueueRepository) PromoteQueuedTaskToNow(id int64, now time.Time) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish queue repo is nil")
+	}
+	if id <= 0 {
+		return ErrPublishQueueTaskNotFound
+	}
+
+	nowText := now.Format(PublishQueueTimeLayout)
+	result := r.store.DB.Table("publish_queue_tasks").
+		Where("id = ? AND status = ?", id, PublishQueueStatusQueued).
+		Updates(map[string]any{
+			"scheduled_at": nowText,
+			"next_run_at":  nowText,
+			"last_error":   "",
+			"updated_at":   nowText,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+
+	exists := int64(0)
+	if err := r.store.DB.Table("publish_queue_tasks").Where("id = ?", id).Count(&exists).Error; err != nil {
+		return err
+	}
+	if exists == 0 {
+		return ErrPublishQueueTaskNotFound
+	}
+	return ErrPublishQueueTaskNotQueued
+}
+
+// PromoteWaveToNow 把同一批次的某一波（同 group_id + 同计划发布时间）待发布任务整体提前到当前时刻。
+// 参数/返回：groupID 为队列分组；scheduledAt 为该波原计划发布时间（PublishQueueTimeLayout 文本）；
+// now 为当前时间；返回实际提前的任务数与 error。
+// 失败场景：DB 未初始化、参数为空或更新失败返回 error。
+// 副作用：更新 publish_queue_tasks 的 scheduled_at/next_run_at/last_error/updated_at（状态仍保持 queued）。
+func (r *PublishQueueRepository) PromoteWaveToNow(groupID string, scheduledAt string, now time.Time) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish queue repo is nil")
+	}
+	groupID = strings.TrimSpace(groupID)
+	scheduledAt = strings.TrimSpace(scheduledAt)
+	if groupID == "" || scheduledAt == "" {
+		return 0, nil
+	}
+
+	nowText := now.Format(PublishQueueTimeLayout)
+	result := r.store.DB.Table("publish_queue_tasks").
+		Where("group_id = ? AND scheduled_at = ? AND status = ?", groupID, scheduledAt, PublishQueueStatusQueued).
+		Updates(map[string]any{
+			"scheduled_at": nowText,
+			"next_run_at":  nowText,
+			"last_error":   "",
+			"updated_at":   nowText,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 // BatchCancelByTaskIDs 批量取消 queued 状态的队列任务（仅取消仍处于 queued 的任务，跳过其他状态）。
 // 参数/返回：ids 为队列任务主键列表；reason 为取消原因；返回实际取消行数与 error。
 // 失败场景：DB 未初始化或更新失败返回 error。
@@ -529,6 +599,71 @@ func (r *PublishQueueRepository) CountTaskStatuses(query PublishQueueTaskQuery) 
 		}
 	}
 	return counts, nil
+}
+
+// PublishQueueWave 描述一个尚未到点的发布波次：同批次内计划发布时间相同的待发布任务视为一波。
+type PublishQueueWave struct {
+	GroupID     string `json:"group_id" gorm:"column:group_id"`
+	ScheduledAt string `json:"scheduled_at" gorm:"column:scheduled_at"`
+	TaskCount   int64  `json:"task_count" gorm:"column:task_count"`
+}
+
+// ListPendingWaves 列出筛选范围内计划发布时间仍在未来的待发布波次（按计划时间升序）。
+// 参数/返回：query 为查询条件（Statuses 会被忽略，固定只看 queued）；now 为当前时间；limit 为最大波次数；
+// 返回波次列表与 error。
+// 失败场景：DB 未初始化或查询失败返回 error。
+// 副作用：读取 publish_queue_tasks。
+// 说明：scheduled_at 为该表统一的定长本地时间字符串，字符串序即时间序，可直接比较。
+// 只看 scheduled_at 而忽略 next_run_at，是为了把「发布节奏分波」与「预检查/可发种时间重排队」区分开：
+// 前者写 scheduled_at，后者只写 next_run_at（此时 scheduled_at 已过期），因此等待限制解除的任务不会被当成下一波。
+func (r *PublishQueueRepository) ListPendingWaves(query PublishQueueTaskQuery, now time.Time, limit int) ([]PublishQueueWave, error) {
+	waves := make([]PublishQueueWave, 0)
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return waves, errors.New("publish queue repo is nil")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+
+	query.Statuses = nil
+	nowText := now.Format(PublishQueueTimeLayout)
+
+	if err := r.applyTaskFilters(r.store.DB.Model(&PublishQueueTask{}), query).
+		Where("status = ?", PublishQueueStatusQueued).
+		Where("scheduled_at IS NOT NULL AND scheduled_at <> '' AND scheduled_at > ?", nowText).
+		Select("group_id, scheduled_at, COUNT(*) AS task_count").
+		Group("group_id, scheduled_at").
+		Order("scheduled_at ASC, group_id ASC").
+		Limit(limit).
+		Scan(&waves).Error; err != nil {
+		return nil, err
+	}
+	return waves, nil
+}
+
+// ListWaveTasks 列出某一波（同 group_id + 同计划发布时间）中仍处于 queued 的任务。
+// 参数/返回：groupID 为队列分组；scheduledAt 为该波计划发布时间文本；返回任务列表与 error。
+// 失败场景：DB 未初始化或查询失败返回 error。
+// 副作用：读取 publish_queue_tasks。
+func (r *PublishQueueRepository) ListWaveTasks(groupID string, scheduledAt string) ([]PublishQueueTask, error) {
+	rows := make([]PublishQueueTask, 0)
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return rows, errors.New("publish queue repo is nil")
+	}
+	groupID = strings.TrimSpace(groupID)
+	scheduledAt = strings.TrimSpace(scheduledAt)
+	if groupID == "" || scheduledAt == "" {
+		return rows, nil
+	}
+
+	if err := r.store.DB.Model(&PublishQueueTask{}).
+		Where("group_id = ? AND scheduled_at = ? AND status = ?", groupID, scheduledAt, PublishQueueStatusQueued).
+		Order("id ASC").
+		Limit(200).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
 }
 
 // applyTaskFilters 将查询条件拼接到 GORM 语句上（列表与状态统计共用，保证过滤口径一致）。
