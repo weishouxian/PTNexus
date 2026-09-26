@@ -170,11 +170,39 @@ func FindResourceInfoForDraft(store ResourceInfoStore, draft *SeedDraft) *reposi
 	return nil
 }
 
-// ApplyResourceInfoToDraft 将命中的资源信息覆盖到草稿的发布数据中（仅海报/简介）。
+// BuildResourceLinks 用资源信息库记录里的三个 ID 还原标准外链。
+// 参数/返回：info 为命中的资源信息；mediaTypeKey 为种子类型（如 category.tv_series / category.movie），
+// 用于判断 TMDb 走 /movie/ 还是 /tv/ 路径，无法判断时按 tv 处理；对应 ID 为空时该链接返回空字符串。
+// 失败场景：info 为空时三个链接均为空。
+// 副作用：无。
+func BuildResourceLinks(info *repository.ResourceInfo, mediaTypeKey string) (string, string, string) {
+	if info == nil {
+		return "", "", ""
+	}
+	douban := ""
+	if id := strings.TrimSpace(info.DoubanID); id != "" {
+		douban = "https://movie.douban.com/subject/" + id + "/"
+	}
+	imdb := ""
+	if id := strings.TrimSpace(info.ImdbID); id != "" {
+		imdb = "https://www.imdb.com/title/" + id + "/"
+	}
+	tmdb := ""
+	if id := strings.TrimSpace(info.TmdbID); id != "" {
+		segment := "tv"
+		if strings.Contains(strings.ToLower(strings.TrimSpace(mediaTypeKey)), "movie") {
+			segment = "movie"
+		}
+		tmdb = "https://www.themoviedb.org/" + segment + "/" + id
+	}
+	return douban, imdb, tmdb
+}
+
+// ApplyResourceInfoToDraft 将命中的资源信息覆盖到草稿的发布数据中（海报/简介，并补齐缺失外链）。
 // 标题、国家/来源、视频截图保持本次抓取（种子）得到的值，不被库内数据覆盖。
 // 参数/返回：draft 为种子草稿；info 为命中的资源信息；字段为空时保持草稿原值。
 // 失败场景：无（入参为空时直接返回）。
-// 副作用：原地修改 draft.Poster/Body。
+// 副作用：原地修改 draft.Poster/Body/DoubanLink/IMDbLink/TMDbLink。
 func ApplyResourceInfoToDraft(draft *SeedDraft, info *repository.ResourceInfo) {
 	if draft == nil || info == nil {
 		return
@@ -185,6 +213,18 @@ func ApplyResourceInfoToDraft(draft *SeedDraft, info *repository.ResourceInfo) {
 	}
 	if summary := strings.TrimSpace(info.Summary); summary != "" {
 		draft.Body = summary
+	}
+	// 命中即代表库内记录与当前种子是同一部作品，用库内 ID 补齐草稿里缺失的外链，
+	// 只填空值、不覆盖本次抓取到的链接，避免源站未提供外链时丢豆瓣/IMDb/TMDb 链接。
+	douban, imdb, tmdb := BuildResourceLinks(info, draft.Type)
+	if strings.TrimSpace(draft.DoubanLink) == "" {
+		draft.DoubanLink = douban
+	}
+	if strings.TrimSpace(draft.IMDbLink) == "" {
+		draft.IMDbLink = imdb
+	}
+	if strings.TrimSpace(draft.TMDbLink) == "" {
+		draft.TMDbLink = tmdb
 	}
 }
 
@@ -290,9 +330,9 @@ func SaveResourceInfoFromRow(store ResourceInfoStore, normalized map[string]any)
 
 // AttachResourceInfoToRow 按归一化种子数据中的外链 ID 匹配资源信息并附加到响应。
 // 参数/返回：store 为资源信息仓储；normalized 为 get_db_seed_info 的归一化数据；
-// 命中时写入 normalized["resource_info"]，未命中或无 ID 时不写入。
+// 命中时写入 normalized["resource_info"]，并用库内 ID 补齐种子里缺失的外链（仅填空值）。
 // 失败场景：查库错误仅记录日志，不影响主响应。
-// 副作用：仅读取 resource_info 表，可能原地写入 normalized 的 resource_info 键。
+// 副作用：仅读取 resource_info 表，可能原地写入 normalized 的 resource_info/douban_link/imdb_link/tmdb_link 键。
 func AttachResourceInfoToRow(store ResourceInfoStore, normalized map[string]any) {
 	if store == nil || normalized == nil {
 		return
@@ -331,6 +371,18 @@ func AttachResourceInfoToRow(store ResourceInfoStore, normalized map[string]any)
 	if matched == nil {
 		return
 	}
+	// 命中即代表库内记录与当前种子是同一部作品，用库内 ID 补齐种子里缺失的外链，
+	// 只填空值、不覆盖种子自身抽取到的链接（源站没给外链时面板与发种参数也能拿到豆瓣/IMDb/TMDb）。
+	douban, imdb, tmdb := BuildResourceLinks(matched, toStringSimple(normalized["type"]))
+	fillExternalLinkIfEmpty := func(key, value string) {
+		if value == "" || strings.TrimSpace(toStringSimple(normalized[key])) != "" {
+			return
+		}
+		normalized[key] = value
+	}
+	fillExternalLinkIfEmpty("douban_link", douban)
+	fillExternalLinkIfEmpty("imdb_link", imdb)
+	fillExternalLinkIfEmpty("tmdb_link", tmdb)
 	normalized["resource_info"] = map[string]any{
 		"title":       strings.TrimSpace(matched.Title),
 		"year":        strings.TrimSpace(matched.Year),

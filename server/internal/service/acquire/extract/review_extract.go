@@ -160,6 +160,9 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 	if tmdb := normalizeExternalLink(reTMDbLink.FindString(page+"\n"+descrBBCode), reTMDbLink); tmdb != "" {
 		result.TMDbLink = tmdb
 	}
+	// 部分站点只在简介正文里给出外链（详情页其它区域没有），按页抽取会拿不到，
+	// 这里用已解析出的简介正文兜底补一次；仅填空缺，不覆盖上面已抽取到的链接。
+	fillExternalLinkFromBody(&result)
 
 	basicInfo := extractMappedBasicInfoFromPage(page, siteCode)
 	inferred := inferStandardizedValues(result.Title, result.Mediainfo, result.Body)
@@ -191,6 +194,29 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 	result.Tags = mergeExplicitSourceTags(mergedExtraTags)
 
 	return result
+}
+
+// fillExternalLinkFromBody 用简介正文兜底补全缺失的豆瓣/IMDb/TMDb 链接。
+// 参数/返回：result 为已抽取的评审数据，原地补全三个外链字段。
+// 失败场景：正文为空或正文内没有对应链接时保持原值（不写入空值）。
+// 副作用：原地修改 result 的 DoubanLink/IMDbLink/TMDbLink。
+func fillExternalLinkFromBody(result *reviewExtractedData) {
+	if result == nil {
+		return
+	}
+	body := strings.TrimSpace(result.Body)
+	if body == "" {
+		return
+	}
+	if strings.TrimSpace(result.DoubanLink) == "" {
+		result.DoubanLink = normalizeExternalLink(reDoubanLink.FindString(body), reDoubanLink)
+	}
+	if strings.TrimSpace(result.IMDbLink) == "" {
+		result.IMDbLink = normalizeExternalLink(reIMDbLink.FindString(body), reIMDbLink)
+	}
+	if strings.TrimSpace(result.TMDbLink) == "" {
+		result.TMDbLink = normalizeExternalLink(reTMDbLink.FindString(body), reTMDbLink)
+	}
 }
 
 func applyFallbackBasicInfo(result *reviewExtractedData, values map[string]string) {
@@ -403,6 +429,10 @@ func extractDescriptionSections(descrHTML, descrBBCode, extraStatementBBCode str
 		mediainfo = strings.TrimSpace(mediainfoFromQuote)
 	}
 
+	// 声明输出前统一剥离链接（源站声明常带原盘/DIY 出处链接），保留其可见文字；
+	// 正文（body）不清洗，外链抽取仍依赖正文里的豆瓣/IMDb/TMDb 链接。
+	statement = stripStatementLinks(statement)
+
 	return statement, poster, body, screens, mediainfo, statementTags, ardtuDeclarations
 }
 
@@ -497,7 +527,110 @@ func buildStatementFromExtraBBCode(extraStatementBBCode string) string {
 	if statement == "" {
 		return ""
 	}
-	return strings.TrimSpace(reManyNewlines.ReplaceAllString(statement, "\n\n"))
+	return stripStatementLinks(strings.TrimSpace(reManyNewlines.ReplaceAllString(statement, "\n\n")))
+}
+
+// 声明（statement）链接清理相关正则。
+// 源站声明常把「原盘/DIY 出处」「站内原盘」「群组/站点地址」写成 BBCode 链接
+// （[url=https://…/details.php?id=…]文字[/url]）或直接写成纯文本网址，转种到目标站后
+// 这类内容属于源站/外站引流信息，声明中一律不留：
+// 带可见文字的链接标签只保留文字，其余链接（纯链接标签、裸网址）整段删除。
+var (
+	// reStatementURLTagged 匹配带参链接标签对；内容上限 600 字节，避免源站漏写 [/url] 时跨段吞掉后文。
+	reStatementURLTagged = regexp.MustCompile(`(?is)\[url=[^\]]*\](.{0,600}?)\[/url\]`)
+	// reStatementURLBare 匹配无参链接标签对（[url]https://…[/url]）。
+	reStatementURLBare = regexp.MustCompile(`(?is)\[url\](.{0,600}?)\[/url\]`)
+	// reStatementURLDanglingOpen / Close 兜底清理不配对的孤立 url 标签（源站 BBCode 本身写坏时会出现）。
+	// 开启标签后紧跟的裸链接一并删除，闭合标签直接删除。
+	reStatementURLDanglingOpen  = regexp.MustCompile(`(?is)\[url[^\]]*\]\s*(?:https?://\S+)?`)
+	reStatementURLDanglingClose = regexp.MustCompile(`(?is)\s*\[/url\]`)
+	// reStatementBareURL 判断链接标签内的可见文字本身是否就是链接。
+	reStatementBareURL = regexp.MustCompile(`(?i)^https?://\S+$`)
+	// reStatementImgBlock 用于在清理裸网址前把图片块（官组 logo 等）摘出来保护，图片地址不能被误删。
+	reStatementImgBlock = regexp.MustCompile(`(?is)\[img\][^\[\]]*?\[/img\]`)
+	// 纯文本网址（无任何 BBCode 包裹）同样不允许出现在声明里。
+	reStatementSchemeURL = regexp.MustCompile(`(?i)https?://[^\s\[\]<>"']+`)
+	reStatementWWWURL    = regexp.MustCompile(`(?i)\bwww\.[^\s\[\]<>"']+`)
+	// reStatementBareDomain 匹配无协议的裸域名（pt.example.com、hdsky.me/details.php?id=1）。
+	// 只在小写 TLD 时命中：发布组名/资源名里的 2160p.WEB、x265.RARBG 等大写形式不会被误删。
+	reStatementBareDomain = regexp.MustCompile(`\b[A-Za-z0-9][A-Za-z0-9-]*(?:\.[A-Za-z0-9-]+)*\.(?:com|net|org|me|cc|top|info|cn|tv|xyz|io|link|site|online|club|vip|pw|us|uk|de|fr|ru|jp|kr|hk|tw|sg|eu|it|nl|pl|se|ca|au|br|mx)(?:/[^\s\[\]<>"']*)?`)
+	// reStatementExtraSpaces 删除网址后压缩行内残留的多余空格。
+	reStatementExtraSpaces = regexp.MustCompile(`[ \t]{2,}`)
+)
+
+// stripStatementLinks 剥离声明文本中的链接与纯文本网址，链接标签仅保留其可见文字。
+// 参数/返回：text 为声明 BBCode；返回清理后的声明（未含链接时原样返回，空输入原样返回）。
+// 失败场景：无失败场景。
+func stripStatementLinks(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+	out := stripStatementURLLabeledBlocks(text, reStatementURLTagged)
+	out = stripStatementURLLabeledBlocks(out, reStatementURLBare)
+	out = reStatementURLDanglingOpen.ReplaceAllString(out, "")
+	out = reStatementURLDanglingClose.ReplaceAllString(out, "")
+	out = stripStatementBareURLs(out)
+	return strings.TrimSpace(out)
+}
+
+// stripStatementURLLabeledBlocks 把「链接标签对」替换为其内部可见文字；文字为空或文字本身就是链接时整段删除。
+func stripStatementURLLabeledBlocks(text string, pattern *regexp.Regexp) string {
+	return pattern.ReplaceAllStringFunc(text, func(match string) string {
+		sub := pattern.FindStringSubmatch(match)
+		if len(sub) < 2 {
+			return ""
+		}
+		label := strings.TrimSpace(sub[1])
+		if label == "" || reStatementBareURL.MatchString(label) {
+			return ""
+		}
+		return label
+	})
+}
+
+// stripStatementBareURLs 删除声明中的纯文本网址（无 BBCode 标签包裹的裸链接）。
+// 规则：整行只由网址构成时连该行一起删除；行内还有其它文字时只删网址本身，并压缩删除后残留的多余空格。
+// 说明：[img]…[/img] 内的图片地址先摘出来保护，官组 logo 等图片不受影响。
+func stripStatementBareURLs(text string) string {
+	if text == "" {
+		return text
+	}
+	images := reStatementImgBlock.FindAllString(text, -1)
+	protected := text
+	for idx, img := range images {
+		protected = strings.Replace(protected, img, statementImgPlaceholder(idx), 1)
+	}
+
+	lines := strings.Split(protected, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			out = append(out, line)
+			continue
+		}
+		cleaned := reStatementSchemeURL.ReplaceAllString(line, "")
+		cleaned = reStatementWWWURL.ReplaceAllString(cleaned, "")
+		cleaned = reStatementBareDomain.ReplaceAllString(cleaned, "")
+		if cleaned == line {
+			out = append(out, line)
+			continue
+		}
+		cleaned = strings.TrimRight(reStatementExtraSpaces.ReplaceAllString(cleaned, " "), " \t")
+		if strings.TrimSpace(cleaned) == "" {
+			continue
+		}
+		out = append(out, cleaned)
+	}
+	joined := reManyNewlines.ReplaceAllString(strings.Join(out, "\n"), "\n\n")
+	for idx, img := range images {
+		joined = strings.Replace(joined, statementImgPlaceholder(idx), img, 1)
+	}
+	return joined
+}
+
+// statementImgPlaceholder 生成裸网址清理期间使用的图片占位符（不含可能被网址正则命中的字符）。
+func statementImgPlaceholder(idx int) string {
+	return "\x00" + strconv.Itoa(idx) + "\x00"
 }
 
 func normalizeNestedQuoteBlocks(bbcode string) string {

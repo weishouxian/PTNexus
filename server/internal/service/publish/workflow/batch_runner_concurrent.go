@@ -1,9 +1,6 @@
 package workflow
 
-import (
-	"sync"
-	"time"
-)
+import "sync"
 
 // RunBatchPublishConcurrent 以 worker pool 方式并发执行批量发布循环。
 // 参数/返回：targets 为目标站点列表；concurrency 为并发数；deps 为回调依赖；无返回值。
@@ -39,26 +36,7 @@ func RunBatchPublishConcurrent(targets []string, concurrency int, deps BatchRunn
 				continue
 			}
 
-			if deps.OnSiteStarted != nil {
-				deps.OnSiteStarted(siteName)
-			}
-
-			result := map[string]any{}
-			status := 500
-			if deps.PublishToSite != nil {
-				result, status = deps.PublishToSite(siteName)
-			}
-			if result == nil {
-				result = map[string]any{}
-			}
-			if status != 200 {
-				result["success"] = false
-			}
-
-			if deps.OnSiteFinished != nil {
-				deps.OnSiteFinished(siteName, result)
-			}
-			time.Sleep(120 * time.Millisecond)
+			runBatchSitePublish(siteName, deps)
 		}
 	}
 

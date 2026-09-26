@@ -271,6 +271,16 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       }
 
       setBatchPublishRuntime(siteCount, startResponse.data?.concurrency)
+
+      const pacingMinutes = Number(startResponse.data?.publish_interval_minutes || 0)
+      if (pacingMinutes > 0) {
+        ElNotification({
+          title: '已按下载器发布节奏执行',
+          message: `每 ${startResponse.data?.concurrency ?? 1} 个站点一波，波间隔 ${pacingMinutes} 分钟`,
+          type: 'info',
+          duration: 4000,
+        })
+      }
       publishBatchId.value = startResponse.data.batch_id
       publishBatchEventSource.value = openSSE(
         `/api/migrate/publish_batch/stream/${publishBatchId.value}`,

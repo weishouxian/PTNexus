@@ -42,6 +42,7 @@
         <el-menu-item index="/torrents">一种多站</el-menu-item>
         <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
         <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
@@ -194,6 +195,7 @@
         <el-menu-item index="/torrents">一种多站</el-menu-item>
         <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
         <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
         <el-menu-item index="/publish-logs">发种日志</el-menu-item>
         <el-menu-item index="/sites">做种检索</el-menu-item>
         <el-menu-item index="/resource-info">资源信息</el-menu-item>
@@ -303,6 +305,7 @@ const routeTitleMap: Record<string, string> = {
   '/data': '一站多种',
   '/scheduled-seeding': '定时发种',
   '/auto-seed': '自动发种',
+  '/publish-progress': '下载器发布进度',
   '/publish-logs': '发种日志',
   '/sites': '做种检索',
   '/resource-info': '资源信息',

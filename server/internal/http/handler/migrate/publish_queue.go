@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/pt-nexus/server/internal/repository"
 )
 
 // PublishQueueEnqueue 接收“加入队列”请求，将当前已审核的发布内容写入发种队列。
@@ -77,4 +78,56 @@ func (h *Handler) PublishQueueDeleteTask(c *gin.Context) {
 		status = http.StatusOK
 	}
 	c.JSON(status, result)
+}
+
+// PublishQueueTasks 分页查询发布队列任务（供前端「下载器发布进度」页面使用）。
+// 参数/返回：querystring 支持 page/page_size/search/status/scene/trigger/target_site/source_site/torrent_id/group_id/downloader_ids；
+// 其中 status 与 downloader_ids 支持逗号分隔多值；返回任务列表、分页信息与状态概览。
+// 失败场景：队列服务未初始化或查询失败时返回 5xx。
+// 副作用：无（只读）。
+func (h *Handler) PublishQueueTasks(c *gin.Context) {
+	page := parsePositiveInt(c.Query("page"), 1)
+	pageSize := parsePositiveInt(c.Query("page_size"), 20)
+	if pageSize > 200 {
+		pageSize = 200
+	}
+
+	query := repository.PublishQueueTaskQuery{
+		Page:          page,
+		PageSize:      pageSize,
+		Search:        strings.TrimSpace(c.Query("search")),
+		Statuses:      splitQueryCSV(c.Query("status")),
+		Trigger:       strings.TrimSpace(c.Query("trigger")),
+		Scene:         strings.TrimSpace(c.Query("scene")),
+		QueueGroupID:  strings.TrimSpace(c.Query("queue_group_id")),
+		TargetSite:    strings.TrimSpace(c.Query("target_site")),
+		SourceSite:    strings.TrimSpace(c.Query("source_site")),
+		TorrentID:     strings.TrimSpace(c.Query("torrent_id")),
+		DownloaderIDs: splitQueryCSV(c.Query("downloader_ids")),
+	}
+
+	result, status := h.service.ListPublishQueueTasks(query)
+	if status == 0 {
+		status = http.StatusOK
+	}
+	c.JSON(status, result)
+}
+
+// splitQueryCSV 解析逗号分隔的查询参数（用于多值筛选，如 status=queued,running）。
+// 参数/返回：raw 为原始参数；返回去空白后的非空元素切片。
+// 失败场景：无。
+// 副作用：无。
+func splitQueryCSV(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	parts := strings.Split(trimmed, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if value := strings.TrimSpace(part); value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
 }

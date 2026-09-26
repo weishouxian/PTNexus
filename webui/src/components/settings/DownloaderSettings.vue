@@ -251,22 +251,38 @@
           </el-form-item>
           <el-form-item label="发布节奏">
             <div class="publish-controls-row">
-              <el-input-number
-                v-model="downloader.publish_interval_minutes"
-                :min="0"
-                :max="1440"
-                controls-position="right"
-                class="publish-control"
-              />
-              <span class="publish-control-unit">分钟间隔</span>
-              <el-input-number
-                v-model="downloader.publish_concurrency"
-                :min="1"
-                :max="20"
-                controls-position="right"
-                class="publish-control"
-              />
-              <span class="publish-control-unit">并发数</span>
+              <div class="publish-control-line">
+                <el-input-number
+                  v-model="downloader.publish_interval_minutes"
+                  :min="0"
+                  :max="1440"
+                  controls-position="right"
+                  class="publish-control"
+                />
+                <el-tooltip
+                  content="同一条种子发往多个目标站时，每隔多少分钟发一波。填 0 表示不间隔、一次性发出。「一种多站」转种（立即发布 / 加入队列）都按这个节奏执行。"
+                  placement="top"
+                  :hide-after="0"
+                >
+                  <span class="publish-control-unit">分钟间隔</span>
+                </el-tooltip>
+              </div>
+              <div class="publish-control-line">
+                <el-input-number
+                  v-model="downloader.publish_concurrency"
+                  :min="1"
+                  :max="20"
+                  controls-position="right"
+                  class="publish-control"
+                />
+                <el-tooltip
+                  content="每一波同时处理的目标站数量。例如 3 个站、并发 2、间隔 5 分钟 → 前 2 个站先发，第 3 个站 5 分钟后发。填了「分钟间隔」后，该下载器发起的「一种多站」转种会按这里的并发数分波（覆盖设置里的批量发布并发策略）。"
+                  placement="top"
+                  :hide-after="0"
+                >
+                  <span class="publish-control-unit">并发数</span>
+                </el-tooltip>
+              </div>
             </div>
           </el-form-item>
         </el-form>
@@ -875,11 +891,19 @@ const savePathMappings = async () => {
   line-height: 1.4;
 }
 
+/* 「发布节奏」：间隔、并发各占一行 */
 .publish-controls-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.publish-control-line {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
 }
 
 .publish-control {
@@ -889,6 +913,7 @@ const savePathMappings = async () => {
 .publish-control-unit {
   color: #606266;
   white-space: nowrap;
+  cursor: help;
 }
 
 .switch-form-item {
@@ -957,7 +982,6 @@ const savePathMappings = async () => {
 
   .name-and-client-row,
   .proxy-settings-row,
-  .publish-controls-row,
   .mapping-item {
     flex-direction: column;
     align-items: stretch;

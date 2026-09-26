@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	publishworkflow "github.com/pt-nexus/server/internal/service/publish/workflow"
@@ -136,24 +137,68 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 		concurrency = len(targets)
 	}
 
+	// 下载器发布节奏：该下载器「分钟间隔」>0 时接管并发，按它的并发数分波、波间等待间隔。
+	// 存量下载器默认间隔为 0，此时完全不改变上面的并发策略。
+	pacingDownloaderID := s.resolvePublishPacingDownloaderID(payload)
+	publishInterval, pacingConcurrency := s.resolveDownloaderPublishPacing(pacingDownloaderID)
+	if publishInterval > 0 {
+		concurrency = pacingConcurrency
+		if concurrency > len(targets) {
+			concurrency = len(targets)
+		}
+		if concurrency < 1 {
+			concurrency = 1
+		}
+		logx.Infof(
+			publishQueueLogModule,
+			"批量发布按下载器节奏执行 downloader=%s interval=%s concurrency=%d targets=%d",
+			pacingDownloaderID,
+			publishInterval,
+			concurrency,
+			len(targets),
+		)
+	}
+
 	batchID := s.newID("batch")
 	s.publishState.Start(batchID, len(targets), concurrency, time.Now())
 
-	go s.runPublishBatch(batchID, payload, targets, concurrency)
-	return map[string]any{"success": true, "batch_id": batchID, "concurrency": concurrency, "message": "批量发布任务已启动"}, 200
+	// 把本批次登记到发布队列表（status=dispatched），让「下载器发布进度」页面能看到立即发布的任务。
+	// 执行仍由下面的实时 runner 负责，登记记录只用于展示与状态回写（队列调度器不会领取 dispatched）。
+	progress := s.registerLivePublishProgress(livePublishProgressInput{
+		BatchID:      batchID,
+		Payload:      payload,
+		Targets:      targets,
+		Concurrency:  concurrency,
+		Interval:     publishInterval,
+		DownloaderID: pacingDownloaderID,
+	})
+
+	go s.runPublishBatch(batchID, payload, targets, concurrency, publishInterval, progress)
+	return map[string]any{
+		"success":                  true,
+		"batch_id":                 batchID,
+		"concurrency":              concurrency,
+		"publish_interval_minutes": int(publishInterval / time.Minute),
+		"message":                  "批量发布任务已启动",
+	}, 200
 }
 
-func (s *MigrateService) runPublishBatch(batchID string, payload map[string]any, targets []string, concurrency int) {
+func (s *MigrateService) runPublishBatch(batchID string, payload map[string]any, targets []string, concurrency int, interval time.Duration, progress *livePublishProgressTracker) {
 	publishworkflow.RunManagedBatchPublishFromPayload(
 		publishworkflow.ManagedBatchFromPayloadInput{
 			BatchID:     batchID,
 			Targets:     targets,
 			Concurrency: concurrency,
+			Interval:    interval,
 			Payload:     payload,
 		},
 		publishworkflow.ManagedBatchFromPayloadDeps{
 			State:          s.publishState,
 			PublishPayload: s.Publish,
+			// 站点开始/结束时回写进度记录，使进度页的状态与实际发布时间保持实时。
+			OnSiteProgress: progress.progress,
+			// 批次被取消时，把还没轮到的记录落为「已取消」，避免卡在「待发布」。
+			OnBatchStopped: progress.markBatchStopped,
 		},
 	)
 }
