@@ -37,6 +37,11 @@ const router = createRouter({
       component: () => import('../views/AutoSeedView.vue'),
     },
     {
+      path: '/publish-progress',
+      name: 'publish-progress',
+      component: () => import('../views/PublishProgressView.vue'),
+    },
+    {
       path: '/publish-logs',
       name: 'publish-logs',
       component: () => import('../views/PublishLogsView.vue'),

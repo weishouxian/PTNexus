@@ -899,6 +899,10 @@
                   手动并发数将在发布时生效（上限
                   {{ publishConcurrencyInfo?.max_concurrency ?? '-' }}）。
                 </el-text>
+                <el-text type="info" size="small" style="display: block; margin-top: 4px">
+                  注：若某台下载器在「设置 → 下载器」里配置了发布节奏（分钟间隔 &gt;
+                  0），由该下载器发起的「一种多站」转种会按下载器的节奏执行，并发数也取下载器设置，上面的策略对这类转种不生效。
+                </el-text>
               </div>
             </el-form-item>
           </el-form>

@@ -94,6 +94,16 @@ func (s *MigrateService) runPublishQueueWorker() {
 
 	logx.Infof(publishQueueLogModule, "发布队列线程已启动 interval=%ds enabled=%v workers=%d", intervalSec, cfg.Enabled, clampInt(cfg.MaxWorkers, 1, 20))
 
+	// 「立即发布」的进度记录（dispatched）依赖进程内的实时 runner 推进，
+	// 服务重启后不会再有线程执行它们，统一标记为失败，避免进度页留下永远「待发布」的僵尸记录。
+	if s.queueRepo != nil {
+		if count, err := s.queueRepo.FailStaleDispatchedTasks("服务重启，立即发布任务未执行"); err != nil {
+			logx.Warnf(publishQueueLogModule, "清理残留的立即发布进度记录失败 err=%v", err)
+		} else if count > 0 {
+			logx.Infof(publishQueueLogModule, "已把 %d 条残留的立即发布进度记录标记为失败", count)
+		}
+	}
+
 	lastCleanup := time.Now()
 	for {
 		select {
@@ -238,11 +248,24 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	}
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(targetSites))
+	// 下载器发布节奏：多个目标站按「并发数」分波、每波间隔「分钟间隔」，错开计划发布时间。
+	publishInterval, pacingConcurrency := s.resolveDownloaderPublishPacing(downloaderID)
+	waveIndex := 0
 	for _, target := range targetSites {
 		targetSite := strings.TrimSpace(target)
 		if targetSite == "" {
 			continue
 		}
+
+		// 显式 scheduled_at 优先；否则由波次推算本站的计划发布时间。
+		plannedAt := scheduledAt
+		if plannedAt == nil && publishInterval > 0 {
+			if wave := waveIndex / pacingConcurrency; wave > 0 {
+				planned := now.Add(time.Duration(wave) * publishInterval)
+				plannedAt = &planned
+			}
+		}
+		waveIndex++
 
 		taskPayload := map[string]any{}
 		for key, value := range normalizedPayload {
@@ -280,8 +303,8 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 			UpdatedAt:      nowText,
 		}
 
-		if scheduledAt != nil {
-			value := scheduledAt.Format(repository.PublishQueueTimeLayout)
+		if plannedAt != nil {
+			value := plannedAt.Format(repository.PublishQueueTimeLayout)
 			record.ScheduledAt = &value
 			record.NextRunAt = &value
 		} else {
@@ -377,6 +400,8 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(rawSeeds))
 	skipped := 0
+	// 下载器发布节奏：未显式指定 scheduled_at 时，按各下载器已排入的种子序号分波，写入计划发布时间。
+	pacingSequence := map[string]int{}
 
 	for idx, raw := range rawSeeds {
 		seed, ok := raw.(map[string]any)
@@ -489,6 +514,19 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 			uploadData["downloader_id"] = downloaderID
 		}
 
+		// 下载器发布节奏：显式 scheduled_at 优先；否则按该下载器的「分钟间隔/并发数」把这一批分摊到时间轴上。
+		plannedAt := scheduledAt
+		if plannedAt == nil {
+			if interval, pacingConcurrency := s.resolveDownloaderPublishPacing(downloaderID); interval > 0 {
+				wave := pacingSequence[downloaderID] / pacingConcurrency
+				pacingSequence[downloaderID]++
+				if wave > 0 {
+					planned := now.Add(time.Duration(wave) * interval)
+					plannedAt = &planned
+				}
+			}
+		}
+
 		title, subtitle := resolvePublishLogTitleFromUploadData(uploadData, torrentID)
 		if title == "" {
 			title = strings.TrimSpace(torrentID)
@@ -536,8 +574,8 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 
 		nextRunAt := nowText
 		scheduledAtText := (*string)(nil)
-		if scheduledAt != nil {
-			nextRunAt = scheduledAt.Format(repository.PublishQueueTimeLayout)
+		if plannedAt != nil {
+			nextRunAt = plannedAt.Format(repository.PublishQueueTimeLayout)
 			value := nextRunAt
 			scheduledAtText = &value
 		}
