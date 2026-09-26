@@ -54,10 +54,11 @@ func (s *MigrateService) InitPublishQueue(queueRepo *repository.PublishQueueRepo
 
 // SetPublishQueueScheduledSeedContinueHook 注入发布队列“定时发种可继续下一种子”的外部通知回调。
 // 触发时机：定时发种队列任务确定性跳过（目标站点已存在、预检查限制等）时调用。
-// 参数/返回：fn 接收队列任务 trigger（格式 sched:<taskID>）；无返回值。
+// 参数/返回：fn 接收队列任务 trigger（格式 sched:<taskID>）与 countAsSkipped
+// （true 表示本次结果属确定性跳过，调度侧需把已计入的「已发布」改判为「跳过」）；无返回值。
 // 失败场景：服务为空时忽略。
 // 副作用：保存回调引用，队列任务完成时可能触发定时发种调度。
-func (s *MigrateService) SetPublishQueueScheduledSeedContinueHook(fn func(trigger string)) {
+func (s *MigrateService) SetPublishQueueScheduledSeedContinueHook(fn func(trigger string, countAsSkipped bool)) {
 	if s == nil {
 		return
 	}
@@ -1036,7 +1037,9 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			logx.Warnf(publishQueueLogModule, "标记任务成功失败 id=%d err=%v", taskID, err)
 		}
 		if processingshared.ToBool(result["is_existing_torrent"]) {
-			s.notifyScheduledSeedContinue(taskRecord, "目标站点已存在")
+			// 目标站点已存在该种子属确定性跳过：除通知调度器立即继续外，
+			// 还需把入队时计入的「已发布」改判为「跳过」（countAsSkipped=true）。
+			s.notifyScheduledSeedContinue(taskRecord, "目标站点已存在", true)
 		}
 		logx.Infof(publishQueueLogModule, "队列任务完成 id=%d success=true status=%d", taskID, status)
 		return
@@ -1048,8 +1051,9 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			_ = s.publishLogRepo.UpdateStatusAndLogsByQueueTaskID(taskID, "pre_check_limit", logText)
 		}
 		logx.Warnf(publishQueueLogModule, "队列任务失败（预检查限制） id=%d", taskID)
-		// 定时发种场景下预检查限制为确定性失败，通知调度器立即继续处理下一个种子
-		s.notifyScheduledSeedContinue(taskRecord, "预检查限制: "+strings.TrimSpace(logText))
+		// 定时发种场景下预检查限制为确定性失败：此时尚未向站点提交上传请求，站点上不会新增种子，
+		// 因此同样通知调度器立即继续处理下一个种子，并把已计入的「已发布」改判为「跳过」。
+		s.notifyScheduledSeedContinue(taskRecord, "预检查限制: "+strings.TrimSpace(logText), true)
 		return
 	}
 
@@ -1060,6 +1064,8 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			_ = s.publishLogRepo.UpdateStatusAndLogsByQueueTaskID(taskID, "failed", reason)
 		}
 		logx.Warnf(publishQueueLogModule, "队列任务失败（不可重试） id=%d status=%d", taskID, status)
+		// 4xx 为终态失败且不再重试：站点没有收到有效上传，本次入队计入的「已发布」应改判为「跳过」。
+		s.notifyScheduledSeedContinue(taskRecord, reason, true)
 		return
 	}
 
@@ -1071,9 +1077,13 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			_ = s.publishLogRepo.UpdateStatusAndLogsByQueueTaskID(taskID, "failed", reason)
 		}
 		logx.Warnf(publishQueueLogModule, "队列任务失败（达到最大重试） id=%d attempts=%d", taskID, attempt)
+		// 重试耗尽仍失败即终态失败：该种子本次确实没发出去，同样改判为「跳过」。
+		s.notifyScheduledSeedContinue(taskRecord, reason, true)
 		return
 	}
 
+	// 仍在重试窗口内的失败不做改判：重试成功时本次入队确实对应一次真实发布（保持「已发布」），
+	// 若重试最终耗尽会走上面的「超过最大重试次数」分支补记「跳过」，因此统计仍能收敛到正确口径。
 	delaySec := computeBackoffSeconds(cfg.RetryDelayBase, attempt, cfg.MaxRetryDelaySec)
 	nextRunAt := time.Now().Add(time.Duration(delaySec) * time.Second)
 	_ = s.queueRepo.UpdateTaskAfterFailure(taskID, attempt, &nextRunAt, logText, resultText)
@@ -1164,10 +1174,11 @@ func (s *MigrateService) hydrateQueuePublishLogContext(taskRecord repository.Pub
 
 // notifyScheduledSeedContinue 通知定时发种调度器当前种子无需继续等待，立即处理下一个种子。
 // 触发场景：目标站点已存在、预检查限制等确定性跳过。
-// 参数/返回：task 为刚完成的队列任务；reason 为跳过原因（用于日志）；无返回值。
+// 参数/返回：task 为刚完成的队列任务；reason 为跳过原因（用于日志）；
+// countAsSkipped 为 true 时调度侧需把已计入的「已发布」改判为「跳过」；无返回值。
 // 失败场景：未注入回调或任务非定时发种场景时直接返回。
-// 副作用：调用外部回调，可能触发定时发种调度器立即执行。
-func (s *MigrateService) notifyScheduledSeedContinue(task repository.PublishQueueTask, reason string) {
+// 副作用：调用外部回调，可能触发定时发种调度器立即执行并修正任务统计。
+func (s *MigrateService) notifyScheduledSeedContinue(task repository.PublishQueueTask, reason string, countAsSkipped bool) {
 	if s == nil || s.publishQueueScheduledSeedContinueHook == nil {
 		return
 	}
@@ -1180,14 +1191,15 @@ func (s *MigrateService) notifyScheduledSeedContinue(task repository.PublishQueu
 	}
 	logx.Infof(
 		publishQueueLogModule,
-		"定时发种队列任务跳过发布(%s)，触发继续处理下一种子 queue_task_id=%d trigger=%s torrent_id=%s target_site=%s",
+		"定时发种队列任务跳过发布(%s)，触发继续处理下一种子 queue_task_id=%d trigger=%s torrent_id=%s target_site=%s count_as_skipped=%t",
 		strings.TrimSpace(reason),
 		task.ID,
 		trigger,
 		strings.TrimSpace(task.TorrentID),
 		strings.TrimSpace(task.TargetSite),
+		countAsSkipped,
 	)
-	s.publishQueueScheduledSeedContinueHook(trigger)
+	s.publishQueueScheduledSeedContinueHook(trigger, countAsSkipped)
 }
 
 func (s *MigrateService) resolveQueueTaskDownloaderID(task repository.PublishQueueTask, payload map[string]any, ctx publishworkflow.Context) string {

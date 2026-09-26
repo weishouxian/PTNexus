@@ -93,7 +93,7 @@ func NewApp() (*App, error) {
 	scheduledSeedScheduler := scheduledseed.NewScheduler(scheduledSeedRepo)
 	scheduledSeedScheduler.SetEnqueueFn(migrateService.EnqueuePublishQueueBatch)
 	scheduledSeedScheduler.SetPublishLogRepo(publishLogRepo)
-	migrateService.SetPublishQueueScheduledSeedContinueHook(func(trigger string) {
+	migrateService.SetPublishQueueScheduledSeedContinueHook(func(trigger string, countAsSkipped bool) {
 		trimmed := strings.TrimSpace(trigger)
 		if !strings.HasPrefix(trimmed, "sched:") {
 			return
@@ -102,6 +102,10 @@ func NewApp() (*App, error) {
 		if parseErr != nil || taskID <= 0 {
 			logx.Warnf("启动", "定时发种继续触发失败 trigger=%s err=%v", trimmed, parseErr)
 			return
+		}
+		// 目标站点已存在属确定性跳过：先把本次入队计入的「已发布」改判为「跳过」，再触发下一个种子。
+		if countAsSkipped {
+			scheduledSeedScheduler.MarkResultAsSkipped(taskID)
 		}
 		scheduledSeedScheduler.TriggerTask(taskID)
 	})

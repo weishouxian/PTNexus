@@ -147,19 +147,31 @@ audio_codec:
   "audio.alac": "7"
   "audio.other": "7"
 
-# 制作组（team）：站点仅有下列小组，未命中则不提交该字段
-team:
-  "team.mteam": "9"
-  "team.mweb": "44"
-  "team.bmdru": "6"
-  "team.catedu": "25"
-  "team.jkct": "31"
-  "team.7acg": "30"
-  "team.pack": "8"
-  "team.dstudio": "64"
-  "team.starfall": "59"
-  "team.starfallweb": "59"
-  "team.other": ""
+# 制作组（team）：**当前不提交该字段**，故这里整段注释存档，仅供人工排查时对照。
+#
+# 原因：站点对 team 字段做成员权限校验——只有该制作组成员（或被授权账号）才能代表该组发布，
+# 非成员提交会被 createOredit 直接拒绝（code=1「無權限使用此製作組」），而且是**整条请求被拒**，
+# 不是只丢弃该字段。而本项目的 team 标准化值来自源种子的制作组，转载别站作品时必然带的是别站的组
+# （如 DS 的种子携带 team.dstudio=64），提交即失败。故 PublishMTeam 一律不提交 team。
+# 若日后账号确实获得了某个组的发布权限并需要提交，需同时改回 mteam.go 的提交逻辑与 mteamConfig.Team 字典。
+#
+# 下列 ID 取自 2026-09-21 用真实令牌拉取的 /api/torrent/teamList（2026-09-26 复核：共 25 个组）：
+#   MTeam=9  TnP=23  MWeb=44  TPTV=43  BMDru=6  CNHK=19  Pack=8  CatEDU=25  ARiC=26  7³ACG=30
+#   JKCT=31  G00DB0Y=35  D0=36  ZZH=63  DST=57  HBO=40  REE=41  Aisha=65  CTRL=45
+#   StarfallWeb=59  ZTR=48  126811=49  RRS=61  lijiang-tv=62  DStudio=64
+#
+# team:
+#   "team.mteam": "9"
+#   "team.mweb": "44"
+#   "team.bmdru": "6"
+#   "team.catedu": "25"
+#   "team.jkct": "31"
+#   "team.7acg": "30"
+#   "team.pack": "8"
+#   "team.dstudio": "64"
+#   "team.starfall": "59"
+#   "team.starfallweb": "59"
+#   "team.other": ""
 
 # 地区（processing）：站点按 CN / US-EU / HK-TW / JP / KR / OT 归类
 processing:

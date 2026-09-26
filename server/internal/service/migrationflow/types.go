@@ -30,7 +30,7 @@ type MigrateService struct {
 	publishLogRepo *repository.PublishLogRepository
 	statsRepo      *repository.StatsRepository
 
-	publishQueueScheduledSeedContinueHook func(trigger string)
+	publishQueueScheduledSeedContinueHook func(trigger string, countAsSkipped bool)
 
 	queueStartOnce sync.Once
 	queueStopCh    chan struct{}

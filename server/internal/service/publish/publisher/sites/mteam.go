@@ -28,6 +28,8 @@ import (
 //   - 注意：必须带 User-Agent，否则 nginx 会 302 到 google
 //
 // 因此无法复用 configs 下 NexusPHP 系的 SitePublishConfig，这里使用独立配置结构。
+//
+// 注意：站点的 team（制作组）字段一律不提交（见 PublishMTeam 内说明），故本结构体不含该字典。
 type mteamConfig struct {
 	SiteName   string            `yaml:"site_name"`
 	APIBase    string            `yaml:"api_base"`
@@ -37,7 +39,6 @@ type mteamConfig struct {
 	Standard   map[string]string `yaml:"standard"`
 	Codec      map[string]string `yaml:"video_codec"`
 	Audio      map[string]string `yaml:"audio_codec"`
-	Team       map[string]string `yaml:"team"`
 	Processing map[string]string `yaml:"processing"`
 	Country    map[string]string `yaml:"country"`
 	Tags       map[string]string `yaml:"tags"`
@@ -119,12 +120,7 @@ var mteamDefaultConfig = mteamConfig{
 		"audio.flac": "1", "audio.ape": "2", "audio.mp3": "4", "audio.mpeg": "4",
 		"audio.ogg": "5", "audio.opus": "5", "audio.alac": "7", "audio.other": "7",
 	},
-	// 制作组：站点仅提供这些小组，其余留空不提交。
-	Team: map[string]string{
-		"team.mteam": "9", "team.mweb": "44", "team.bmdru": "6", "team.catedu": "25",
-		"team.jkct": "31", "team.7acg": "30", "team.pack": "8", "team.dstudio": "64",
-		"team.starfall": "59", "team.starfallweb": "59", "team.other": "",
-	},
+	// 制作组：站点对 team 字段做成员权限校验，非该组成员提交会被整条拒绝，故不提交（字典仅存档于 configs/mteam.yaml 注释）。
 	// 地区：1=CN 2=US/EU 3=HK/TW 4=JP 5=KR 6=OT
 	Processing: map[string]string{
 		"source.china": "1", "source.hongkong": "3", "source.hongkong_taiwan": "3",
@@ -252,9 +248,13 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		"processing": pick("地区(processing)", cfg.Processing, sourceKey, cfg.Defaults.Processing),
 	}
 
-	if teamID, ok := cfg.Team[strings.ToLower(strings.TrimSpace(teamKey))]; ok && strings.TrimSpace(teamID) != "" {
-		textFields["team"] = strings.TrimSpace(teamID)
-	}
+	// 制作组（team）：一律不提交。
+	//
+	// 站点对 team 字段做成员权限校验——只有该制作组成员（或被授权账号）才能代表该组发布，
+	// 非成员提交会被 createOredit 直接拒绝（code=1「無權限使用此製作組」），且是整条请求被拒，
+	// 不是只丢弃该字段。而 PTNexus 的 team 标准化值来自源种子的制作组，转载别站作品时
+	// 必然带的是别站的组（例如 DS 的种子携带 team.dstudio），提交即失败。
+	// 因此这里彻底不提交该字段，仅把被忽略的源制作组写进日志便于追溯。
 
 	// countries 为必填（站点按分类决定是否展示）；映射不到具体国家时不提交，交由站点提示。
 	if countryID, ok := cfg.Country[strings.ToLower(strings.TrimSpace(sourceKey))]; ok && strings.TrimSpace(countryID) != "" {
@@ -306,10 +306,17 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		fmt.Sprintf("--- [m-team] 开始发布到 %s ---", strings.TrimSpace(input.TargetName)),
 		fmt.Sprintf("上传地址: %s", uploadURL),
 		fmt.Sprintf("API Token: %s（来源 %s）", mteamTokenFingerprint(apiKey), token.Source),
-		fmt.Sprintf("字段摘要: name=%q category=%s source=%s standard=%s videoCodec=%s audioCodec=%s processing=%s team=%q countries=%q labelsNew=%q anonymous=%s",
+		fmt.Sprintf("字段摘要: name=%q category=%s source=%s standard=%s videoCodec=%s audioCodec=%s processing=%s countries=%q labelsNew=%q anonymous=%s",
 			title, textFields["category"], textFields["source"], textFields["standard"],
 			textFields["videoCodec"], textFields["audioCodec"], textFields["processing"],
-			textFields["team"], textFields["countries"], textFields["labelsNew"], textFields["anonymous"]),
+			textFields["countries"], textFields["labelsNew"], textFields["anonymous"]),
+	}
+	// 源制作组被刻意忽略，单独记一行，避免事后误以为「team 没解析出来」。
+	if ignoredTeam := strings.TrimSpace(teamKey); ignoredTeam != "" && !strings.EqualFold(ignoredTeam, "team.other") {
+		logLines = append(logLines, fmt.Sprintf(
+			"制作组: 源制作组 %q 已忽略、未提交 team 字段（站点对制作组做成员权限校验，非该组成员提交会报 code=1 無權限使用此製作組）",
+			ignoredTeam,
+		))
 	}
 	if hasAnimation {
 		appendLogLine := "分类判定：命中动漫/动画标签，已按站点规则归入动画大类"
@@ -522,7 +529,6 @@ func loadMTeamConfig() mteamConfig {
 	cfg.Standard = cloneMTeamMap(cfg.Standard)
 	cfg.Codec = cloneMTeamMap(cfg.Codec)
 	cfg.Audio = cloneMTeamMap(cfg.Audio)
-	cfg.Team = cloneMTeamMap(cfg.Team)
 	cfg.Processing = cloneMTeamMap(cfg.Processing)
 	cfg.Country = cloneMTeamMap(cfg.Country)
 	cfg.Tags = cloneMTeamMap(cfg.Tags)
@@ -552,7 +558,6 @@ func loadMTeamConfig() mteamConfig {
 	mergeMTeamMap(cfg.Standard, override.Standard)
 	mergeMTeamMap(cfg.Codec, override.Codec)
 	mergeMTeamMap(cfg.Audio, override.Audio)
-	mergeMTeamMap(cfg.Team, override.Team)
 	mergeMTeamMap(cfg.Processing, override.Processing)
 	mergeMTeamMap(cfg.Country, override.Country)
 	mergeMTeamMap(cfg.Tags, override.Tags)
@@ -594,7 +599,7 @@ func cloneMTeamMap(source map[string]string) map[string]string {
 func expandMTeamAliases(cfg *mteamConfig) {
 	for _, mapping := range []map[string]string{
 		cfg.Category, cfg.Source, cfg.Standard, cfg.Codec,
-		cfg.Audio, cfg.Team, cfg.Processing, cfg.Country,
+		cfg.Audio, cfg.Processing, cfg.Country,
 	} {
 		for key, value := range mapping {
 			idx := strings.Index(key, ".")

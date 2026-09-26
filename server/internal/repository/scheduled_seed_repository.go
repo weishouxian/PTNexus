@@ -370,6 +370,34 @@ func (r *ScheduledSeedRepository) ClaimAndAdvance(
 	return result.RowsAffected > 0, nil
 }
 
+// ReclassifyPublishedAsSkipped 把已计入「已发布」的一次结果改判为「跳过」。
+//
+// 使用场景：定时发种在入队成功时即累加 total_published，但队列侧最终判定目标站点
+// 已存在该种子（确定性跳过），语义上属于跳过而非发布。因此在原计数上回退 1 次发布、
+// 补记 1 次跳过，使任务列表的「已发布/跳过」与实际发布结果一致。
+// 参数/返回：taskID 为定时发种任务 ID；返回 error 表示更新失败。
+// 失败场景：仓储未初始化或更新失败返回 error；taskID 非法时直接返回 nil。
+// 副作用：更新 scheduled_seed_tasks 的 total_published / total_skipped / updated_at。
+func (r *ScheduledSeedRepository) ReclassifyPublishedAsSkipped(taskID int64) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("scheduled seed repo is nil")
+	}
+	if taskID <= 0 {
+		return nil
+	}
+
+	updates := map[string]any{
+		// CASE WHEN 在 SQLite / MySQL / PostgreSQL 均可用，同时保证计数不会被减成负数。
+		"total_published": gorm.Expr("CASE WHEN total_published > 0 THEN total_published - 1 ELSE 0 END"),
+		"total_skipped":   gorm.Expr("total_skipped + 1"),
+		"updated_at":      time.Now().Format(scheduledSeedTimeLayout),
+	}
+	if err := r.store.DB.Table("scheduled_seed_tasks").Where("id = ?", taskID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("改判定时发种统计失败: %w", err)
+	}
+	return nil
+}
+
 // CheckDuplicate 查询发种日志，判断该种子是否已成功发布到目标站点。
 // 参数/返回：torrentID/sourceSite/targetSite 为种子与站点标识；返回 true 表示已处理过，应当跳过重复发种。
 // 失败场景：仓储未初始化或查询失败时返回 error。

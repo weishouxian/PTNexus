@@ -51,6 +51,22 @@ func (s *Scheduler) SetPublishLogRepo(repo *repository.PublishLogRepository) {
 	s.publishLogRepo = repo
 }
 
+// MarkResultAsSkipped 由发布队列回调：把本次入队已计入的「已发布」改判为「跳过」。
+// 触发场景：队列侧判定目标站点已存在该种子（确定性跳过），统计口径需与实际发布结果一致。
+// 参数/返回：taskID 为定时发种任务 ID；无返回值（失败仅记录日志，不阻断队列流程）。
+// 失败场景：调度器/仓储未初始化或更新失败时记录日志并返回。
+// 副作用：更新任务统计（total_published -1、total_skipped +1）并写日志。
+func (s *Scheduler) MarkResultAsSkipped(taskID int64) {
+	if s == nil || s.repo == nil || taskID <= 0 {
+		return
+	}
+	if err := s.repo.ReclassifyPublishedAsSkipped(taskID); err != nil {
+		logx.Warnf(schedulerLogModule, "任务 %d 改判统计失败(已发布→跳过): %v", taskID, err)
+		return
+	}
+	logx.Infof(schedulerLogModule, "任务 %d 目标站点已存在，已将本次结果由「已发布」改判为「跳过」", taskID)
+}
+
 // Start 启动后台调度协程（sync.Once 保证只启动一次）。
 func (s *Scheduler) Start() {
 	if s == nil {
