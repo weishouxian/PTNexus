@@ -7,6 +7,15 @@ import (
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 )
 
+// titleComponentOrder 记录标准标题组件的展示顺序，供组件插入时定位。
+var titleComponentOrder = func() map[string]int {
+	order := make(map[string]int, len(defaultTitleComponentKeys))
+	for idx, key := range defaultTitleComponentKeys {
+		order[key] = idx
+	}
+	return order
+}()
+
 // BuildResult 表示标题组件构建结果。
 type BuildResult struct {
 	NormalizedTitle string
@@ -163,4 +172,56 @@ func PreferredBlurayTokenFromTitle(title string) string {
 	default:
 		return ""
 	}
+}
+
+// OverrideTitleComponentValue 覆盖标题组件中指定 key 的值；key 不存在时按标准组件顺序插入。
+// 参数/返回：components 为现有组件切片；key 或 value 去空白后为空时原样返回。
+// 失败场景：不返回错误；key 不在标准顺序中时追加到末尾。
+// 副作用：无；返回新切片，不修改入参中的 map。
+// 用途：简介“年代”行等外部更权威的值需要回填到标题组件（如年份）时使用。
+func OverrideTitleComponentValue(components []map[string]any, key string, value string) []map[string]any {
+	trimmedKey := strings.TrimSpace(key)
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedKey == "" || trimmedValue == "" {
+		return components
+	}
+
+	result := make([]map[string]any, 0, len(components)+1)
+	replaced := false
+	for _, component := range components {
+		cloned := make(map[string]any, len(component)+1)
+		for field, fieldValue := range component {
+			cloned[field] = fieldValue
+		}
+		if !replaced && strings.TrimSpace(toStringAny(cloned["key"], "")) == trimmedKey {
+			cloned["value"] = trimmedValue
+			replaced = true
+		}
+		result = append(result, cloned)
+	}
+	if replaced {
+		return result
+	}
+
+	insertAt := len(result)
+	targetOrder, hasTargetOrder := titleComponentOrder[trimmedKey]
+	if hasTargetOrder {
+		for idx, component := range result {
+			currentKey := strings.TrimSpace(toStringAny(component["key"], ""))
+			currentOrder, ok := titleComponentOrder[currentKey]
+			// 未在标准顺序中的组件视为排在所有标准组件之后。
+			if !ok || currentOrder > targetOrder {
+				insertAt = idx
+				break
+			}
+		}
+	}
+	inserted := map[string]any{"key": trimmedKey, "value": trimmedValue}
+	if insertAt >= len(result) {
+		return append(result, inserted)
+	}
+	result = append(result, nil)
+	copy(result[insertAt+1:], result[insertAt:])
+	result[insertAt] = inserted
+	return result
 }
