@@ -178,7 +178,14 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 			result.Team = teamKey
 		}
 	}
-	result.Source = inferred["source"]
+	// 产地以简介“产地/国家/地区”行为准（inferStandardizedValues 已按该口径推断）。
+	// 简介推断不出可识别产地时，保留 applyFallbackBasicInfo 写入的站点页面地区字段，
+	// 最后才兜底 source.other；不能再无条件覆盖，否则站点自带地区字段永远失效。
+	if inferredSource := strings.TrimSpace(inferred["source"]); inferredSource != "" && !strings.EqualFold(inferredSource, "source.other") {
+		result.Source = inferredSource
+	} else if strings.TrimSpace(result.Source) == "" {
+		result.Source = "source.other"
+	}
 	mergedExtraTags := append([]string{}, statementTags...)
 	mergedExtraTags = append(mergedExtraTags, extractTagsFromPage(page)...)
 	result.Tags = mergeExplicitSourceTags(mergedExtraTags)
@@ -2385,7 +2392,6 @@ func splitCompactTokens(text string) []string {
 func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 	sanitizedMediainfo := SanitizeMediaTextForAnalysis(mediainfo)
 	upperTech := strings.ToUpper(strings.TrimSpace(title + "\n" + sanitizedMediainfo))
-	upperAll := strings.ToUpper(strings.TrimSpace(title + "\n" + sanitizedMediainfo + "\n" + body))
 	values := map[string]string{
 		"type":        "category.movie",
 		"medium":      "medium.other",
@@ -2538,10 +2544,11 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		}
 	}
 
-	// 产地推断只接受明确的“国家/地区”字样（统一走 source_key.go 的归一表，
-	// 覆盖欧美全量国家：英/法/德/意/西/瑞典/丹麦/俄/加/欧洲），
-	// 不再使用“国语/国配/CHN/ENGLISH”等音轨语言提示，避免误判日本片为中国。
-	if sourceKey := NormalizeSourceKeyFromText(upperAll); sourceKey != "" {
+	// 产地只认简介里的“产地/国家/地区”行（见 source_infer.go），标题与 MediaInfo 一律不参与：
+	// MediaInfo 的音轨/字幕轨语言行（TITLE : 日本語 / LANGUAGE : JAPANESE）曾被裸子串匹配命中，
+	// 把印度、巴西、西班牙、意大利等片源误判为 source.japan。
+	// 归一口径统一在 source_key.go 的 sourceKeyAliasGroups，此处不再单独维护分支。
+	if sourceKey := InferSourceFromDescription(body); sourceKey != "" {
 		values["source"] = sourceKey
 	}
 

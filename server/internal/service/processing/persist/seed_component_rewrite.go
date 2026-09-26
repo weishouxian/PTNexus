@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 )
@@ -51,6 +52,16 @@ func RewriteSeedTitleComponentsByMediaInfo(
 		logx.Warnf(logModule, "标题组件回写跳过：seed_id=%s_%s_%s 解析结果为空", hash, torrentID, siteName)
 		return false, true, false
 	}
+
+	// 年份与产地同口径以简介为准：媒体文本刷新会按标题重建组件，若不回填会把简介年份退回标题年份。
+	description := strings.TrimSpace(strings.Join([]string{toStringSimple(row["statement"]), toStringSimple(row["body"])}, "\n"))
+	if year := strings.TrimSpace(parser.InferYearFromDescription(description)); year != "" {
+		if before := titleComponentValue(result.Components, "年份"); before != year {
+			result.Components = processingtitle.OverrideTitleComponentValue(result.Components, "年份", year)
+			logx.Infof(logModule, "标题组件年份纠偏：seed_id=%s_%s_%s before=%s after=%s", hash, torrentID, siteName, before, year)
+		}
+	}
+
 	encoded, err := json.Marshal(result.Components)
 	if err != nil {
 		logx.Warnf(logModule, "标题组件回写失败：seed_id=%s_%s_%s 序列化失败 err=%v", hash, torrentID, siteName, err)

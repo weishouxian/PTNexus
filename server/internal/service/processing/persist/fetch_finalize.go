@@ -9,6 +9,7 @@ import (
 	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
+	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 )
 
 // FinalizeFetchedSeedInput 定义抓取阶段草稿收敛为可入库记录所需的输入。
@@ -77,6 +78,16 @@ func FinalizeFetchedSeed(input FinalizeFetchedSeedInput) (FinalizeFetchedSeedRes
 
 	draft.BuildTitleComponents(input.BuildSimpleTitleComponents)
 
+	// 年份改以简介“年代”行为准：站点标题常缺年份，或标题年份与发行年份不一致（如重映/合集）。
+	if year := strings.TrimSpace(parser.InferYearFromDescription(description)); year != "" {
+		titleComponentsBefore := titleComponentValue(draft.TitleComponents, "年份")
+		if titleComponentsBefore != year {
+			draft.TitleComponents = processingtitle.OverrideTitleComponentValue(draft.TitleComponents, "年份", year)
+			logx.Infof("抓取-年份纠偏", "按简介年代行覆盖标题组件年份 torrent_id=%s before=%s after=%s",
+				draft.TorrentID, titleComponentsBefore, year)
+		}
+	}
+
 	// 源站类型为动画时按“季集”重判类型：有季集值视为电视剧，无季集值视为电影。
 	seasonEpisode := SeasonEpisodeFromTitleComponents(draft.TitleComponents)
 	if typeBefore, typeAfter := draft.CorrectAnimationTypeBySeasonEpisode(); typeBefore != typeAfter {
@@ -128,4 +139,19 @@ func FinalizeFetchedSeed(input FinalizeFetchedSeedInput) (FinalizeFetchedSeedRes
 		TitleAfter:        titleAfter,
 		UnmappedTags:      unmappedTags,
 	}, nil
+}
+
+// titleComponentValue 读取标题组件中指定 key 的值；组件缺失或值为空时返回空字符串。
+func titleComponentValue(components []map[string]any, key string) string {
+	trimmedKey := strings.TrimSpace(key)
+	if trimmedKey == "" {
+		return ""
+	}
+	for _, component := range components {
+		if strings.TrimSpace(toStringAny(component["key"], "")) != trimmedKey {
+			continue
+		}
+		return strings.TrimSpace(toStringAny(component["value"], ""))
+	}
+	return ""
 }
