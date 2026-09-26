@@ -218,6 +218,7 @@ export interface CrossSeedPanelContext {
   isUbitsDisabled: ComputedRef<boolean>
   allSitesStatus: Ref<SiteStatus[]>
   selectedTargetSites: Ref<string[]>
+  publishIntervalMinutes: Ref<number>
   selectAllTargetSites: () => void
   clearAllTargetSites: () => void
   getButtonType: (site: SiteStatus) => ElButtonType

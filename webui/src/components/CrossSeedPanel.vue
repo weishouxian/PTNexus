@@ -739,6 +739,8 @@ const allSitesStatus = ref<SiteStatus[]>([])
 const selectedTargetSites = ref<string[]>([])
 const autoAddExistingToDownloader = ref(false)
 const autoUpdateExistingTorrent = ref(false)
+// 发种间隔时间（分钟）：0 表示沿用下载器设置里的发布节奏；>0 时本次发布按该间隔错峰。
+const publishIntervalMinutes = ref(0)
 const screenshotCount = ref(3)
 const isLoading = ref(false)
 const isEnqueueing = ref(false)
@@ -2669,6 +2671,7 @@ const publishFlow = createPublishFlow({
 
   autoAddExistingToDownloader,
   autoUpdateExistingTorrent,
+  publishIntervalMinutes,
 
   downloaderList,
 
@@ -2776,6 +2779,7 @@ provide(crossSeedPanelContextKey, {
   isUbitsDisabled,
   allSitesStatus,
   selectedTargetSites,
+  publishIntervalMinutes,
   selectAllTargetSites,
   clearAllTargetSites,
   getButtonType,

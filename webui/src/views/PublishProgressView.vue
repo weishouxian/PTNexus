@@ -25,6 +25,21 @@
       </div>
 
       <div class="overview-actions">
+        <el-tooltip
+          content="跳过等待时间：把「计划时间最早且还没到点」的那一波待发布任务立刻发出（范围＝顶部所选下载器）。等待预检查或可发种时间的任务不在此列，会照常等待。"
+          placement="bottom"
+          :hide-after="0"
+        >
+          <el-button
+            size="small"
+            type="primary"
+            :icon="Promotion"
+            :loading="promotingWave"
+            @click="publishNextWave"
+          >
+            发布下一波
+          </el-button>
+        </el-tooltip>
         <span class="refresh-hint">
           {{ autoRefresh ? `${autoRefreshInterval} 秒自动刷新` : '已暂停自动刷新' }}
         </span>
@@ -225,12 +240,31 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="150" align="center" fixed="right">
+        <el-table-column label="操作" width="245" align="center" fixed="right">
           <template #default="scope">
             <div class="action-buttons">
+              <el-tooltip
+                :disabled="scope.row.status !== 'queued'"
+                content="跳过等待时间，立刻发布这条任务（范围仅此一条，不影响其它波次）"
+                placement="top"
+                :hide-after="0"
+              >
+                <span class="publish-now-button-wrap">
+                  <el-button
+                    size="small"
+                    type="success"
+                    :disabled="scope.row.status !== 'queued'"
+                    :loading="publishingTaskId === Number(scope.row.id)"
+                    @click="publishNow(scope.row)"
+                  >
+                    立即发布
+                  </el-button>
+                </span>
+              </el-tooltip>
               <el-button
                 size="small"
                 type="primary"
+                style="margin-left: 5px"
                 :disabled="!scope.row.group_id"
                 @click="openPublishLogs(scope.row)"
               >
@@ -266,7 +300,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Promotion } from '@element-plus/icons-vue'
 import axios from 'axios'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { Downloader } from '@/types'
@@ -320,6 +354,9 @@ const globalDownloader = useGlobalDownloaderStore()
 
 const loading = ref(false)
 const error = ref('')
+// promotingWave：正在「发布下一波」；publishingTaskId：正在单条「立即发布」的任务 ID（0 表示无）。
+const promotingWave = ref(false)
+const publishingTaskId = ref(0)
 
 const rows = ref<QueueTaskRow[]>([])
 const total = ref(0)
@@ -500,7 +537,7 @@ const plannedTimeHint = (row: QueueTaskRow) => {
   }
 
   const plannedAt = parseQueueTime(row.effective_scheduled_at)
-  if (!plannedAt) return '立即发布'
+  if (!plannedAt) return '等待队列执行'
 
   const now = new Date(nowTick.value)
   if (plannedAt.getTime() - now.getTime() <= 1000) {
@@ -623,6 +660,70 @@ const handleCurrentChange = async (page: number) => {
   await fetchTasks()
 }
 
+// resolveRequestError 统一提取接口错误信息，优先使用后端返回的 message/error。
+const resolveRequestError = (e: unknown, fallback: string) => {
+  if (axios.isAxiosError(e)) {
+    const data = e.response?.data as { message?: string; error?: string } | undefined
+    return data?.message || data?.error || e.message || fallback
+  }
+  return e instanceof Error ? e.message : fallback
+}
+
+// publishNextWave 跳过等待时间，把计划时间最早的一波待发布任务立刻发出（范围＝顶部全局下载器）。
+const publishNextWave = async () => {
+  if (promotingWave.value) return
+  promotingWave.value = true
+  try {
+    const response = await axios.post('/api/migrate/publish_queue/next_wave', {
+      downloader_ids: resolveDownloaderScope(),
+    })
+    const data = response.data || {}
+    if (data.success === false) {
+      throw new Error(data.message || '发布下一波失败')
+    }
+
+    const promoted = Number(data.promoted || 0)
+    if (promoted > 0) {
+      ElMessage.success(data.message || `已发布下一波（${promoted} 个目标站）`)
+    } else {
+      ElMessage.info(data.message || '当前没有等待中的下一波')
+    }
+
+    await fetchTasks()
+    if (promoted > 0) {
+      // 队列领取有极短延迟，稍后再拉一次以便看到「发布中」。
+      window.setTimeout(() => void fetchTasks({ silent: true }), 1200)
+    }
+  } catch (e: unknown) {
+    ElMessage.error(resolveRequestError(e, '发布下一波失败'))
+  } finally {
+    promotingWave.value = false
+  }
+}
+
+// publishNow 单条任务跳过等待，立刻交给队列执行（不影响其它波次）。
+const publishNow = async (row: QueueTaskRow) => {
+  const id = Number(row.id)
+  if (id <= 0 || (row.status || '').trim() !== 'queued' || publishingTaskId.value === id) return
+
+  publishingTaskId.value = id
+  try {
+    const response = await axios.post(`/api/migrate/publish_queue/tasks/${id}/publish_now`)
+    const data = response.data || {}
+    if (data.success === false) {
+      throw new Error(data.message || '立即发布失败')
+    }
+
+    ElMessage.success(data.message || '已提交立即发布')
+    await fetchTasks()
+    window.setTimeout(() => void fetchTasks({ silent: true }), 1200)
+  } catch (e: unknown) {
+    ElMessage.error(resolveRequestError(e, '立即发布失败'))
+  } finally {
+    publishingTaskId.value = 0
+  }
+}
+
 const cancelTask = async (row: QueueTaskRow) => {
   const id = Number(row.id)
   if (id <= 0 || (row.status || '').trim() !== 'queued') return
@@ -643,14 +744,7 @@ const cancelTask = async (row: QueueTaskRow) => {
     await fetchTasks()
   } catch (e: unknown) {
     if (e === 'cancel' || e === 'close') return
-    const message = axios.isAxiosError(e)
-      ? ((e.response?.data as { message?: string; error?: string } | undefined)?.message ||
-        (e.response?.data as { error?: string } | undefined)?.error ||
-        e.message)
-      : e instanceof Error
-        ? e.message
-        : '取消失败'
-    ElMessage.error(message)
+    ElMessage.error(resolveRequestError(e, '取消失败'))
   }
 }
 
@@ -905,6 +999,10 @@ watch([autoRefresh, autoRefreshInterval], () => {
 }
 
 .cancel-button-wrap {
+  display: inline-block;
+}
+
+.publish-now-button-wrap {
   display: inline-block;
 }
 

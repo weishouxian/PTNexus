@@ -139,8 +139,10 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 
 	// 下载器发布节奏：该下载器「分钟间隔」>0 时接管并发，按它的并发数分波、波间等待间隔。
 	// 存量下载器默认间隔为 0，此时完全不改变上面的并发策略。
+	// 页面（「选择发布站点」步骤）填了「发种间隔时间」>0 时，以页面值为准，并发仍取该下载器配置。
 	pacingDownloaderID := s.resolvePublishPacingDownloaderID(payload)
-	publishInterval, pacingConcurrency := s.resolveDownloaderPublishPacing(pacingDownloaderID)
+	pacingOverrideMinutes := resolvePayloadPublishIntervalMinutes(payload)
+	publishInterval, pacingConcurrency := s.resolvePublishPacing(pacingDownloaderID, pacingOverrideMinutes)
 	if publishInterval > 0 {
 		concurrency = pacingConcurrency
 		if concurrency > len(targets) {
@@ -151,9 +153,10 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 		}
 		logx.Infof(
 			publishQueueLogModule,
-			"批量发布按下载器节奏执行 downloader=%s interval=%s concurrency=%d targets=%d",
+			"批量发布按发布节奏执行 downloader=%s interval=%s source=%s concurrency=%d targets=%d",
 			pacingDownloaderID,
 			publishInterval,
+			pacingIntervalSourceLabel(pacingOverrideMinutes),
 			concurrency,
 			len(targets),
 		)

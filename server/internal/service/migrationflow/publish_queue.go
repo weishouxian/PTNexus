@@ -20,6 +20,8 @@ import (
 const (
 	publishQueueLogModule  = "发布-队列"
 	queueAutoAddNotRunJSON = `{"success": false, "message": "未执行"}`
+	// publishQueueWakeMaxRounds 限制单次手动唤醒最多连续消费的轮数，避免积压时长期占住队列线程。
+	publishQueueWakeMaxRounds = 50
 )
 
 type publishQueueConfig struct {
@@ -80,6 +82,7 @@ func (s *MigrateService) StartPublishQueueWorker() {
 		}
 		s.queueStopCh = make(chan struct{})
 		s.queueDoneCh = make(chan struct{})
+		s.queueWakeCh = make(chan struct{}, 1)
 		go s.runPublishQueueWorker()
 	})
 }
@@ -110,6 +113,23 @@ func (s *MigrateService) runPublishQueueWorker() {
 		case <-s.queueStopCh:
 			logx.Infof(publishQueueLogModule, "发布队列线程已停止")
 			return
+		case <-s.queueWakeCh:
+			// 手动唤醒（立即发布 / 发布下一波）：连续消费到没有可执行任务为止。
+			// 单轮只领 MaxWorkers 条，若只跑一轮，手动提前的一波会被轮询周期拆散，达不到"立即发这一波"的效果。
+			if !cfg.Enabled {
+				continue
+			}
+			for round := 0; round < publishQueueWakeMaxRounds; round++ {
+				select {
+				case <-s.queueStopCh:
+					logx.Infof(publishQueueLogModule, "发布队列线程已停止")
+					return
+				default:
+				}
+				if s.drainPublishQueueOnce(cfg) == 0 {
+					break
+				}
+			}
 		case <-ticker.C:
 			cfg = s.resolvePublishQueueConfig()
 			newInterval := clampInt(cfg.MonitorIntervalSec, 5, 3600)
@@ -248,8 +268,12 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	}
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(targetSites))
-	// 下载器发布节奏：多个目标站按「并发数」分波、每波间隔「分钟间隔」，错开计划发布时间。
-	publishInterval, pacingConcurrency := s.resolveDownloaderPublishPacing(downloaderID)
+	// 发布节奏：多个目标站按「并发数」分波、每波间隔「分钟间隔」，错开计划发布时间。
+	// 页面（「选择发布站点」步骤）填了「发种间隔时间」>0 时以页面值为准，并发仍取该下载器配置。
+	publishInterval, pacingConcurrency := s.resolvePublishPacing(
+		downloaderID,
+		resolvePayloadPublishIntervalMinutes(payload),
+	)
 	waveIndex := 0
 	for _, target := range targetSites {
 		targetSite := strings.TrimSpace(target)
@@ -400,7 +424,9 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 
 	queueTasks := make([]repository.PublishQueueTask, 0, len(rawSeeds))
 	skipped := 0
-	// 下载器发布节奏：未显式指定 scheduled_at 时，按各下载器已排入的种子序号分波，写入计划发布时间。
+	// 发布节奏：未显式指定 scheduled_at 时，按各下载器已排入的种子序号分波，写入计划发布时间。
+	// 页面填了「发种间隔时间」>0 时以页面值为准（本次请求内所有下载器共用该间隔）。
+	pacingOverrideMinutes := resolvePayloadPublishIntervalMinutes(payload)
 	pacingSequence := map[string]int{}
 
 	for idx, raw := range rawSeeds {
@@ -514,10 +540,10 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 			uploadData["downloader_id"] = downloaderID
 		}
 
-		// 下载器发布节奏：显式 scheduled_at 优先；否则按该下载器的「分钟间隔/并发数」把这一批分摊到时间轴上。
+		// 发布节奏：显式 scheduled_at 优先；否则按该下载器的「分钟间隔/并发数」把这一批分摊到时间轴上。
 		plannedAt := scheduledAt
 		if plannedAt == nil {
-			if interval, pacingConcurrency := s.resolveDownloaderPublishPacing(downloaderID); interval > 0 {
+			if interval, pacingConcurrency := s.resolvePublishPacing(downloaderID, pacingOverrideMinutes); interval > 0 {
 				wave := pacingSequence[downloaderID] / pacingConcurrency
 				pacingSequence[downloaderID]++
 				if wave > 0 {
@@ -756,6 +782,181 @@ func (s *MigrateService) EnqueuePublishQueueBatchByNames(payload map[string]any)
 	return result, status
 }
 
+// queuePromoteReason 是队列任务被手动提前时可写入日志的说明文本。
+const queuePromoteReason = "已手动提前发布（跳过排队等待）"
+
+// PublishQueuedTaskNow 把一条 queued 队列任务提前到当前时刻并唤醒队列线程立刻执行。
+// 参数/返回：queueTaskID 为队列任务主键；返回操作结果与 HTTP 状态码。
+// 失败场景：队列未初始化/关闭、任务不存在、任务非 queued（含立即发布登记的 dispatched）时返回对应错误。
+// 副作用：更新 publish_queue_tasks 计划时间与 publish_logs 日志，并唤醒后台队列线程。
+func (s *MigrateService) PublishQueuedTaskNow(queueTaskID int64) (map[string]any, int) {
+	if s == nil || s.queueRepo == nil || s.queueRepo.DB() == nil {
+		return map[string]any{"success": false, "message": "队列服务未初始化"}, 500
+	}
+	if queueTaskID <= 0 {
+		return map[string]any{"success": false, "message": "缺少有效的 queue_task_id"}, 400
+	}
+
+	task, ok, err := s.queueRepo.FindTaskByID(queueTaskID)
+	if err != nil {
+		return map[string]any{"success": false, "message": "查询队列任务失败: " + err.Error()}, 500
+	}
+	if !ok || task == nil {
+		return map[string]any{"success": false, "message": "队列任务不存在"}, 404
+	}
+	if strings.TrimSpace(task.Status) != repository.PublishQueueStatusQueued {
+		return map[string]any{"success": false, "message": "仅待发布任务支持立即发布"}, 409
+	}
+
+	cfg := s.resolvePublishQueueConfig()
+	if !cfg.Enabled {
+		return map[string]any{"success": false, "message": "发布队列已关闭，无法立即发布（可先在设置中开启发布队列）"}, 400
+	}
+
+	if err := s.queueRepo.PromoteQueuedTaskToNow(queueTaskID, time.Now()); err != nil {
+		switch {
+		case errors.Is(err, repository.ErrPublishQueueTaskNotFound):
+			return map[string]any{"success": false, "message": "队列任务不存在"}, 404
+		case errors.Is(err, repository.ErrPublishQueueTaskNotQueued):
+			return map[string]any{"success": false, "message": "仅待发布任务支持立即发布"}, 409
+		default:
+			return map[string]any{"success": false, "message": "立即发布失败: " + err.Error()}, 500
+		}
+	}
+
+	s.markQueueTasksPromoted([]repository.PublishQueueTask{*task})
+	s.wakePublishQueue()
+
+	logx.Infof(publishQueueLogModule, "队列任务已手动立即发布 queue_task_id=%d group_id=%s target_site=%s", queueTaskID, strings.TrimSpace(task.GroupID), strings.TrimSpace(task.TargetSite))
+	return map[string]any{
+		"success":       true,
+		"message":       "已提交立即发布，队列将马上执行（若预检查或可发种时间未通过，任务会重新排队）",
+		"queue_task_id": queueTaskID,
+		"promoted":      1,
+	}, 200
+}
+
+// PublishNextQueueWave 把当前范围内「计划时间最早且尚未到点」的一波待发布任务整体提前到当前时刻，实现跳过等待。
+// 参数/返回：query 为范围条件（只应带下载器范围，Statuses 会被忽略）；返回操作结果与 HTTP 状态码。
+// 失败场景：队列未初始化/关闭、查询失败时返回对应错误；没有等待中的波次时返回 success=true 且 promoted=0。
+// 副作用：更新 publish_queue_tasks 计划时间与 publish_logs 日志，并唤醒后台队列线程。
+func (s *MigrateService) PublishNextQueueWave(query repository.PublishQueueTaskQuery) (map[string]any, int) {
+	if s == nil || s.queueRepo == nil || s.queueRepo.DB() == nil {
+		return map[string]any{"success": false, "message": "队列服务未初始化"}, 500
+	}
+
+	cfg := s.resolvePublishQueueConfig()
+	if !cfg.Enabled {
+		return map[string]any{"success": false, "message": "发布队列已关闭，无法发布下一波（可先在设置中开启发布队列）"}, 400
+	}
+
+	now := time.Now()
+	waves, err := s.queueRepo.ListPendingWaves(query, now, 20)
+	if err != nil {
+		return map[string]any{"success": false, "message": "查询待发布波次失败: " + err.Error()}, 500
+	}
+	if len(waves) == 0 {
+		return map[string]any{
+			"success":      true,
+			"promoted":     0,
+			"pending_wave": 0,
+			"message":      "当前没有等待中的下一波（待发布任务都已到计划时间）",
+		}, 200
+	}
+
+	current := waves[0]
+	tasks, err := s.queueRepo.ListWaveTasks(current.GroupID, current.ScheduledAt)
+	if err != nil {
+		return map[string]any{"success": false, "message": "查询下一波任务失败: " + err.Error()}, 500
+	}
+	if len(tasks) == 0 {
+		// 该波刚好被后台线程领取（或已取消）：让前端刷新即可看到最新状态。
+		return map[string]any{
+			"success":      true,
+			"promoted":     0,
+			"pending_wave": len(waves),
+			"message":      "下一波任务已被队列领取或已变更，请刷新查看",
+		}, 200
+	}
+
+	promoted, err := s.queueRepo.PromoteWaveToNow(current.GroupID, current.ScheduledAt, now)
+	if err != nil {
+		return map[string]any{"success": false, "message": "提前下一波失败: " + err.Error()}, 500
+	}
+
+	s.markQueueTasksPromoted(tasks)
+	s.wakePublishQueue()
+
+	nextWaveAt := ""
+	if len(waves) > 1 {
+		nextWaveAt = waves[1].ScheduledAt
+	}
+
+	sites := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		if site := strings.TrimSpace(task.TargetSite); site != "" {
+			sites = append(sites, site)
+		}
+	}
+
+	message := fmt.Sprintf("已发布下一波（%d 个目标站：%s）", promoted, summarizeQueueSites(sites))
+	if nextWaveAt != "" {
+		message += fmt.Sprintf("；下一波计划时间 %s，可再次点击跳过", nextWaveAt)
+	} else {
+		message += "；已无后续等待波次"
+	}
+
+	logx.Infof(
+		publishQueueLogModule,
+		"已手动提前下一波 group_id=%s scheduled_at=%s promoted=%d next_wave_at=%s",
+		current.GroupID, current.ScheduledAt, promoted, nextWaveAt,
+	)
+
+	return map[string]any{
+		"success":           true,
+		"promoted":          promoted,
+		"pending_wave":      len(waves) - 1,
+		"wave_group_id":     current.GroupID,
+		"wave_scheduled_at": current.ScheduledAt,
+		"target_sites":      sites,
+		"next_wave_at":      nextWaveAt,
+		"message":           message,
+	}, 200
+}
+
+// markQueueTasksPromoted 记录被手动提前的任务日志（同步更新 publish_logs，便于发种日志页看到原因）。
+// 参数/返回：tasks 为被提前的队列任务；无返回值。
+// 失败场景：日志仓储未初始化或写入失败时仅记录告警，不影响主流程。
+// 副作用：更新 publish_logs 状态与文本。
+func (s *MigrateService) markQueueTasksPromoted(tasks []repository.PublishQueueTask) {
+	if s == nil || s.publishLogRepo == nil || len(tasks) == 0 {
+		return
+	}
+	for _, task := range tasks {
+		if task.ID <= 0 {
+			continue
+		}
+		if err := s.publishLogRepo.UpdateStatusAndLogsByQueueTaskID(task.ID, repository.PublishQueueStatusQueued, queuePromoteReason); err != nil {
+			logx.Warnf(publishLogModule, "更新提前发布日志失败 queue_task_id=%d err=%v", task.ID, err)
+		}
+	}
+}
+
+// summarizeQueueSites 把目标站列表压缩成适合放入提示文本的短串（最多展示 5 个）。
+// 参数/返回：sites 为站点名列表；返回逗号分隔文本。
+// 失败场景：无。
+// 副作用：无。
+func summarizeQueueSites(sites []string) string {
+	if len(sites) == 0 {
+		return "-"
+	}
+	const maxShown = 5
+	if len(sites) <= maxShown {
+		return strings.Join(sites, "、")
+	}
+	return strings.Join(sites[:maxShown], "、") + fmt.Sprintf(" 等 %d 个", len(sites))
+}
+
 // DeleteQueuedPublishTask 将待发布的 queued 任务标记为 cancelled（供日志页"删除"操作调用）。
 // 参数/返回：queueTaskID 为队列任务主键；返回标准响应与状态码。
 // 失败场景：任务不存在返回 404；任务非 queued 返回 409；数据库更新失败返回 500。
@@ -874,13 +1075,18 @@ func (s *MigrateService) insertBatchQueueSkipLog(input ExternalPublishLogInput) 
 	}
 }
 
-func (s *MigrateService) drainPublishQueueOnce(cfg publishQueueConfig) {
+// drainPublishQueueOnce 领取并执行最多 MaxWorkers 条可运行的队列任务。
+// 参数/返回：cfg 为当前队列配置；返回本轮实际执行的任务数。
+// 失败场景：仓储异常时记录日志并提前返回已执行数量。
+// 副作用：更新 publish_queue_tasks / publish_logs，并可能向目标站点发种。
+func (s *MigrateService) drainPublishQueueOnce(cfg publishQueueConfig) int {
 	if s == nil || s.queueRepo == nil {
-		return
+		return 0
 	}
 
 	workers := clampInt(cfg.MaxWorkers, 1, 20)
 	now := time.Now()
+	executed := 0
 
 	latestSpeeds := map[string]float64{}
 	if cfg.TriggerUploadSpeedBelowMBps > 0 && s.statsRepo != nil {
@@ -899,12 +1105,32 @@ func (s *MigrateService) drainPublishQueueOnce(cfg publishQueueConfig) {
 		task, ok, err := s.queueRepo.ClaimNextRunnableTask(now)
 		if err != nil {
 			logx.Warnf(publishQueueLogModule, "领取队列任务失败 err=%v", err)
-			return
+			return executed
 		}
 		if !ok || task == nil {
-			return
+			return executed
 		}
 		s.executePublishQueueTask(cfg, *task, latestSpeeds)
+		executed++
+	}
+	return executed
+}
+
+// wakePublishQueue 唤醒队列线程立刻执行一轮扫描（非阻塞）。
+// 参数/返回：无参数无返回。
+// 失败场景：队列线程未启动时静默跳过；已有待处理的唤醒信号时不重复投递。
+// 副作用：向内部唤醒通道投递一次信号（队列线程会在空闲时消费）。
+func (s *MigrateService) wakePublishQueue() {
+	if s == nil {
+		return
+	}
+	wakeCh := s.queueWakeCh
+	if wakeCh == nil {
+		return
+	}
+	select {
+	case wakeCh <- struct{}{}:
+	default:
 	}
 }
 

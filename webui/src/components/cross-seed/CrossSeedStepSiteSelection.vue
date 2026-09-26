@@ -48,6 +48,34 @@
             />
           </div>
         </div>
+        <div class="toolbar-toggle-row toolbar-interval-row">
+          <div class="toolbar-toggle-item">
+            <el-tooltip placement="top" :hide-after="0">
+              <template #content>
+                <div style="max-width: 320px; line-height: 1.6">
+                  同一条种子发往多个目标站时的错峰节奏。<br />
+                  <b>填 0</b>：沿用「设置 → 下载器」里该下载器的发布节奏（默认行为）。<br />
+                  <b>填大于 0</b>：本次发布按此间隔错峰，每 N 分钟发一波；每波发几个站仍取该下载器的「并发数」。<br />
+                  对「立即发布」与「加入队列」都生效。
+                </div>
+              </template>
+              <span class="toolbar-toggle-text interval-label">发种间隔时间</span>
+            </el-tooltip>
+            <el-input-number
+              v-model="publishIntervalMinutes"
+              :min="0"
+              :max="1440"
+              :step="1"
+              size="small"
+              controls-position="right"
+              class="interval-input"
+            />
+            <span class="toolbar-toggle-text">分钟</span>
+            <span v-if="publishIntervalMinutes > 0" class="interval-hint">
+              已覆盖下载器节奏（每 {{ publishIntervalMinutes }} 分钟一波）
+            </span>
+          </div>
+        </div>
       </div>
     </div>
     <div class="site-buttons-group">
@@ -128,6 +156,7 @@ const {
   toggleSiteSelection,
   isAutoUpdateHighlightSite,
   selectedTargetSites,
+  publishIntervalMinutes,
   isIloliconSite,
   isCurrentSeedAnimationRelated,
 } = useCrossSeedPanelContext()
