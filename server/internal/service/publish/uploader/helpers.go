@@ -35,11 +35,11 @@ func DetectRestrictedTags(uploadData map[string]any) []string {
 	return processingtagging.DetectRestrictedTags(rawTags)
 }
 
-// TrimDescriptionAtMovieParams 若简介包含【影片参数】参数段落标记，则删除该标记及其之后的全部内容（含标记本身），仅保留其前面的影片介绍。
-// 说明：实现委托给 descclean 包（抓取向量与发种向共用同一份逻辑，单一真源）。
+// TrimDescriptionAtMovieParams 截断简介中的冗余段落，删除命中的标记及其之后的全部内容（含标记本身），仅保留其前面的影片介绍。
+// 说明：实现委托给 descclean 包（抓取向与发种向共用同一份逻辑，单一真源）；当前标记含【影片参数】与「更多视频截图」两类。
 // 参数/返回：desc 为原始简介；未命中标记时原样返回。
 func TrimDescriptionAtMovieParams(desc string) string {
-	return descclean.TrimDescriptionAtMovieParams(desc)
+	return descclean.TrimDescription(desc)
 }
 
 // BuildUploadDescription 按固定顺序拼接发布描述正文。

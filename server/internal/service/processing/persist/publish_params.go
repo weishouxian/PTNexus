@@ -92,13 +92,13 @@ func BuildCompletePublishParams(row map[string]any) map[string]any {
 	}
 }
 
-// cleanDescriptionValue 对简介字段做【影片参数】截断清洗；非字符串值原样返回。
+// cleanDescriptionValue 对简介字段做冗余段落截断清洗（【影片参数】/「更多视频截图」及其后内容）；非字符串值原样返回。
 func cleanDescriptionValue(value any) any {
 	text, ok := value.(string)
 	if !ok {
 		return value
 	}
-	return descclean.TrimDescriptionAtMovieParams(text)
+	return descclean.TrimDescription(text)
 }
 
 // BuildRawPreviewParams 组装原始预览参数。
