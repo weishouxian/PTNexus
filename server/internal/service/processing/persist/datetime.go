@@ -3,6 +3,8 @@ package persist
 import (
 	"strings"
 	"time"
+
+	"github.com/pt-nexus/server/internal/repository"
 )
 
 // NormalizeSeedParameterDateTime 将任意时间值规范化为 seed_parameters 统一的 DATETIME 字符串。
@@ -42,7 +44,7 @@ func NormalizeSeedParameterDateTime(value any, fallback string) string {
 			"2006-01-02 15:04:05 -0700 MST",
 			"2006-01-02 15:04:05 -0700",
 		} {
-			if parsed, err := time.ParseInLocation(candidate, trimmed, time.Local); err == nil {
+			if parsed, err := time.ParseInLocation(candidate, trimmed, repository.DatabaseTimeZone); err == nil {
 				return parsed.Format(layout)
 			}
 		}

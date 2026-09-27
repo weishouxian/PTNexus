@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/repository"
 )
 
 const (
@@ -215,7 +216,10 @@ func (s *ExportService) copyLogFileWithTimeFilter(dst *bufio.Writer, file Export
 	wroteHeader := false
 	var exportedLines int64
 	var exportedBytes int64
-	timezone := cutoff.Location()
+	// 日志时间戳由 Go 标准库 log / logx 写入，走 time.Now()（受 TZ=Asia/Shanghai 影响），
+	// 故为北京墙钟；cutoff 来自 time.Now().Add(-window) 同样是北京时区。
+	// 但容器内 time.Local=Etc/UTC，用 cutoff.Location() 解析日志行会差 8 小时，钉死东八区。
+	timezone := repository.DatabaseTimeZone
 
 	for scanner.Scan() {
 		line := scanner.Text()

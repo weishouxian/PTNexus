@@ -1946,11 +1946,13 @@ func parseAutoSeedStoredTime(value string) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, false
 	}
-	if parsed, err := time.ParseInLocation(repository.PublishQueueTimeLayout, value, time.Local); err == nil {
+	// 用显式东八区解析，不用 time.Local：容器内 /etc/localtime 常为 Etc/UTC，
+	// time.Local 会解析成 UTC，导致与 time.Now()（北京）比较时差 8 小时。
+	if parsed, err := time.ParseInLocation(repository.PublishQueueTimeLayout, value, repository.DatabaseTimeZone); err == nil {
 		return parsed, true
 	}
 	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
-		return parsed.Local(), true
+		return parsed.In(repository.DatabaseTimeZone), true
 	}
 	return time.Time{}, false
 }
