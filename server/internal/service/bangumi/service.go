@@ -560,7 +560,7 @@ func parseTime(raw string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, layout := range []string{timeLayout, time.RFC3339} {
-		if parsed, err := time.ParseInLocation(layout, trimmed, time.Local); err == nil {
+		if parsed, err := time.ParseInLocation(layout, trimmed, repository.DatabaseTimeZone); err == nil {
 			return parsed, true
 		}
 	}

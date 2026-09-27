@@ -23,7 +23,7 @@ func parseSeedPublishAt(raw string) (time.Time, bool) {
 		return time.Time{}, false
 	}
 	for _, layout := range seedPublishAtLayouts {
-		if t, err := time.ParseInLocation(layout, raw, time.Local); err == nil {
+		if t, err := time.ParseInLocation(layout, raw, repository.DatabaseTimeZone); err == nil {
 			return t, true
 		}
 	}

@@ -468,15 +468,31 @@ const downloaderTagStyle = (downloaderId?: string | null) => {
   }
 }
 
-// 解析后端的时间格式（YYYY-MM-DD HH:MM:SS，本地时区），返回两行展示文本。
+// 解析后端的时间格式（YYYY-MM-DD HH:MM:SS 或 RFC3339），返回两行展示文本。
+// 后端 *string 时间字段经 GORM/MySQL 驱动扫描可能输出 RFC3339（带 T/Z 后缀），
+// 需统一归一到 "YYYY-MM-DD HH:MM:SS" 再拆行。
 const formatDateTimeTwoLines = (raw?: string | null) => {
   const trimmed = (raw || '').trim()
   if (!trimmed) return '-'
 
+  // 优先按空格切分（后端原始格式 "2006-01-02 15:04:05"）
   const parts = trimmed.split(' ')
-  if (parts.length >= 2) {
+  if (parts.length >= 2 && parts[0].includes('-')) {
     return `${parts[0]}\n${parts[1]}`
   }
+
+  // RFC3339 格式（2026-09-26T17:33:02Z / +08:00）→ 解析为 Date 再格式化
+  const d = new Date(trimmed)
+  if (!Number.isNaN(d.getTime())) {
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mi = String(d.getMinutes()).padStart(2, '0')
+    const ss = String(d.getSeconds()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}\n${hh}:${mi}:${ss}`
+  }
+
   return trimmed
 }
 
@@ -484,7 +500,15 @@ const shortTime = (raw?: string | null) => {
   const trimmed = (raw || '').trim()
   if (!trimmed) return ''
   const parts = trimmed.split(' ')
-  return parts.length >= 2 ? parts[1] || '' : trimmed
+  if (parts.length >= 2 && parts[0].includes('-')) {
+    return parts[1] || ''
+  }
+  // RFC3339 → 提取时分秒
+  const d = new Date(trimmed)
+  if (!Number.isNaN(d.getTime())) {
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`
+  }
+  return trimmed
 }
 
 const parseQueueTime = (raw?: string | null): Date | null => {
