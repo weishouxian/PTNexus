@@ -38,6 +38,18 @@ type MigrateService struct {
 	// queueWakeCh 用于「立即发布」等操作唤醒队列线程，立刻执行一轮扫描而不必等下一个轮询周期。
 	// 带缓冲（容量 1）以支持非阻塞投递：已有待处理唤醒时重复投递被丢弃即可。
 	queueWakeCh chan struct{}
+
+	// liveBatchesMu 保护 liveBatches；键为 batchID。
+	liveBatchesMu sync.Mutex
+	// liveBatches 记录运行中的「立即发布」批次上下文（进度回写器 + 基础 payload），
+	// 供进度页对 dispatched 记录做单站取消 / 单站立即发布时复用发布链路与进度回写。
+	liveBatches map[string]*liveBatchContext
+}
+
+// liveBatchContext 保存一个运行中的立即发布批次的站外操作所需上下文。
+type liveBatchContext struct {
+	tracker *livePublishProgressTracker
+	payload map[string]any
 }
 
 func NewMigrateService(repo *repository.MigrateRepository, cfg *config.Manager) *MigrateService {
@@ -50,6 +62,7 @@ func NewMigrateService(repo *repository.MigrateRepository, cfg *config.Manager) 
 		batchFetchState: acquirefetch.NewBatchFetchState(),
 		publishState:    publishworkflow.NewBatchState(),
 		bdinfoState:     processingbdflow.NewBDInfoState(),
+		liveBatches:     map[string]*liveBatchContext{},
 	}
 }
 

@@ -176,7 +176,18 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 		DownloaderID: pacingDownloaderID,
 	})
 
-	go s.runPublishBatch(batchID, payload, targets, concurrency, publishInterval, progress)
+	// 登记批次上下文，供进度页对 dispatched 记录做单站取消 / 单站立即发布。
+	s.liveBatchesMu.Lock()
+	s.liveBatches[batchID] = &liveBatchContext{tracker: progress, payload: payload}
+	s.liveBatchesMu.Unlock()
+
+	go func() {
+		s.runPublishBatch(batchID, payload, targets, concurrency, publishInterval, progress)
+		// 批次结束后移除上下文（状态容器保留历史供查询，站外操作只对运行中批次开放）。
+		s.liveBatchesMu.Lock()
+		delete(s.liveBatches, batchID)
+		s.liveBatchesMu.Unlock()
+	}()
 	return map[string]any{
 		"success":                  true,
 		"batch_id":                 batchID,

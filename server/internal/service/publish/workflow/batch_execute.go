@@ -39,6 +39,10 @@ func RunManagedBatchPublish(input ManagedBatchInput, deps ManagedBatchDeps) {
 		IsCancelled: func() bool {
 			return deps.State.IsCancelled(input.BatchID)
 		},
+		// 站点级跳过：进度页对 dispatched 记录做单站取消/单站立即发布后，runner 轮到该站时跳过。
+		IsSiteSkipped: func(siteName string) bool {
+			return deps.State.IsSiteHandled(input.BatchID, siteName)
+		},
 		PublishToSite: deps.PublishToSite,
 		OnSiteStarted: func(siteName string) {
 			deps.State.Emit(input.BatchID, map[string]any{"type": "site_started", "siteName": siteName})

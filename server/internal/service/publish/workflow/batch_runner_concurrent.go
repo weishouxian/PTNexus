@@ -35,6 +35,10 @@ func RunBatchPublishConcurrent(targets []string, concurrency int, deps BatchRunn
 				})
 				continue
 			}
+			// 站点已被站外处理（进度页单站取消/单站立即发布）时跳过，避免重复发布。
+			if deps.IsSiteSkipped != nil && deps.IsSiteSkipped(siteName) {
+				continue
+			}
 
 			runBatchSitePublish(siteName, deps)
 		}
