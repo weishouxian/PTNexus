@@ -162,6 +162,50 @@ const buildVideoFields = (section: ParsedMediaInfoSection | undefined): MediaInf
     .filter((field): field is MediaInfoSummaryField => Boolean(field))
 }
 
+// 音频行的中文语种前缀映射（仅前端展示，不改 MediaInfo 原文）。
+// 顺序即优先级：粤语/台配必须排在国语（chinese/mandarin）之前，否则
+// `Chinese (Cantonese)` 会被 chinese 子串先命中成国语（对齐后端 tagging 口径）。
+const audioLanguageRules: Array<{ pattern: RegExp; label: string }> = [
+  { pattern: /cantonese|粤语|广东话|香港/i, label: '粤语' },
+  { pattern: /taiwan|台配|台语|闽南语/i, label: '台配' },
+  { pattern: /mandarin|普通话|华语|mainland|cmn|mandrin|国语|chinese|中文/i, label: '国语' },
+  { pattern: /english|英语/i, label: '英语' },
+  { pattern: /japanese|日本語|日语/i, label: '日语' },
+  { pattern: /korean|韩语|한국어/i, label: '韩语' },
+  { pattern: /french|français|法语/i, label: '法语' },
+  { pattern: /german|deutsch|德语/i, label: '德语' },
+  { pattern: /russian|русский|俄语/i, label: '俄语' },
+  { pattern: /spanish|español|castellano|西班牙语/i, label: '西班牙语' },
+  { pattern: /portuguese|português|葡萄牙语/i, label: '葡萄牙语' },
+  { pattern: /italian|italiano|意大利语/i, label: '意大利语' },
+  { pattern: /hindi|हिन्दी|印地语/i, label: '印地语' },
+  { pattern: /thai|ไทย|泰语/i, label: '泰语' },
+  { pattern: /arabic|العربية|阿拉伯语/i, label: '阿拉伯语' },
+  { pattern: /ukrainian|українська|乌克兰语/i, label: '乌克兰语' },
+  { pattern: /polish|polski|波兰语/i, label: '波兰语' },
+  { pattern: /dutch|nederlands|荷兰语/i, label: '荷兰语' },
+  { pattern: /swedish|svenska|瑞典语/i, label: '瑞典语' },
+  { pattern: /danish|dansk|丹麦语/i, label: '丹麦语' },
+  { pattern: /norwegian|norsk|挪威语/i, label: '挪威语' },
+  { pattern: /finnish|suomi|芬兰语/i, label: '芬兰语' },
+  { pattern: /vietnamese|tiếng việt|越南语/i, label: '越南语' },
+  { pattern: /indonesian|bahasa indonesia|印尼语/i, label: '印尼语' },
+  { pattern: /turkish|türkçe|土耳其语/i, label: '土耳其语' },
+]
+
+// matchAudioLanguageLabel 从音频行的 Language/Title 值推断中文语种名。
+// 参数/返回：value 为 Language（缺省时 Title）字段值；返回中文语种名，无法识别返回空串。
+// 失败场景：空值或无命中时返回空串，展示层保持原样（不加前缀）。
+// 副作用：无。
+const matchAudioLanguageLabel = (value: string): string => {
+  const text = (value || '').trim()
+  if (!text) return ''
+  for (const rule of audioLanguageRules) {
+    if (rule.pattern.test(text)) return rule.label
+  }
+  return ''
+}
+
 const buildAudioLine = (section: ParsedMediaInfoSection): string => {
   const title = findFieldValue(section, ['Title'])
   const language = findFieldValue(section, ['Language'])
@@ -170,9 +214,15 @@ const buildAudioLine = (section: ParsedMediaInfoSection): string => {
   const channels = findFieldValue(section, ['Channel(s)'])
   const bitrate = findFieldValue(section, ['Bit rate'])
   const prefix = language || title
+  const langLabel = matchAudioLanguageLabel(prefix)
   const codec = normalizeAudioCodec(format, commercialName)
   const suffix = title ? ` (${title})` : ''
-  const core = [prefix, codec, channels ? normalizeAudioChannels(channels) : '']
+  const core = [
+    langLabel,
+    prefix,
+    codec,
+    channels ? normalizeAudioChannels(channels) : '',
+  ]
     .filter(Boolean)
     .join(' ')
   return (

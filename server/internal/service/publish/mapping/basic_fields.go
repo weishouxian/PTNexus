@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
+	"github.com/pt-nexus/server/internal/service/processing/tagging"
 )
 
 // ResolveBasicPublishMappings 根据标准化参数生成目标站的基础表单字段映射。
@@ -366,7 +369,24 @@ func collectAllTags(uploadData map[string]any, standardized map[string]any) []st
 			appendTags(sourceParams["标签"])
 		}
 	}
-	return result
+	return reconcileTagsWithMediaText(result, uploadData)
+}
+
+// reconcileTagsWithMediaText 以 uploadData 里的 MediaInfo/BDInfo 实际音轨语种为准，
+// 剔除矛盾的中文语种标签（源站详情页「标签」字段常见误标，如只有 English 音轨却挂「国语」）。
+// 参数/返回：tags 为汇总后的标签列表；uploadData 提供 mediainfo 原文；返回校正后的标签列表。
+// 失败场景：uploadData 缺失、无 mediainfo 或媒体文本无音轨语种线索时原样返回。
+// 副作用：无。
+func reconcileTagsWithMediaText(tags []string, uploadData map[string]any) []string {
+	if len(tags) == 0 || uploadData == nil {
+		return tags
+	}
+	mediainfo := strings.TrimSpace(toStringAnyBasic(uploadData["mediainfo"], ""))
+	if mediainfo == "" {
+		return tags
+	}
+	_, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(mediainfo)
+	return tagging.ReconcileAudioLanguageTagsWithMediaText(tags, mediainfo, isBDInfo)
 }
 
 func parseStringSlice(value any) []string {

@@ -36,6 +36,11 @@ func RecomputeStandardTags(
 	_, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(strings.TrimSpace(mediainfo))
 	rawTagCandidates = append(rawTagCandidates, ExtractRawTagsFromMediaText(mediainfo, isBDInfo)...)
 
+	// 以 MediaInfo/BDInfo 的实际音轨语种为准，剔除源站误标的中文语种标签。
+	// 典型场景：源站详情页「标签」字段挂了「国语」，但文件只有一条 English 音轨
+	//（屌丝站 Until We Meet Again 2026 S01 实例）。媒体文本无音轨语种线索时不改动。
+	rawTagCandidates = ReconcileAudioLanguageTagsWithMediaText(rawTagCandidates, mediainfo, isBDInfo)
+
 	contentName := strings.TrimSpace(title)
 	if contentName == "" {
 		contentName = strings.TrimSpace(torrentNameForPath)
