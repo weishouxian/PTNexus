@@ -395,14 +395,14 @@
             >
               转种
             </el-button>
-            <el-button
+<!--            <el-button
               size="small"
               @click.stop="resolveTorrentUrl(scope.row)"
               :loading="resolvingUrlHash === scope.row.hash"
               :disabled="!scope.row.hash"
             >
               地址
-            </el-button>
+            </el-button>-->
             <el-button
               type="danger"
               size="small"
