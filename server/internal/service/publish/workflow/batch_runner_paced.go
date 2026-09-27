@@ -41,6 +41,9 @@ func RunBatchPublishConcurrentPaced(targets []string, concurrency int, interval 
 	isCancelled := func() bool {
 		return deps.IsCancelled != nil && deps.IsCancelled()
 	}
+	isSiteSkipped := func(site string) bool {
+		return deps.IsSiteSkipped != nil && deps.IsSiteSkipped(site)
+	}
 
 	for start := 0; start < len(targets); start += waveSize {
 		end := start + waveSize
@@ -55,6 +58,10 @@ func RunBatchPublishConcurrentPaced(targets []string, concurrency int, interval 
 				defer wave.Done()
 				if isCancelled() {
 					emitStopped()
+					return
+				}
+				// 站点已被站外处理（进度页单站取消/单站立即发布）时跳过，避免重复发布。
+				if isSiteSkipped(site) {
 					return
 				}
 				runBatchSitePublish(site, deps)

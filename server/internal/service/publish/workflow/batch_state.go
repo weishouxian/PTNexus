@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,13 +26,17 @@ type BatchState struct {
 	mu    sync.RWMutex
 	tasks map[string]*BatchTask
 	subs  map[string]map[chan map[string]any]struct{}
+	// handled 记录批次内已被"站外处理"的站点（进度页单站取消 / 单站立即发布），
+	// runner 轮到这些站点时直接跳过，避免与站外执行重复发布。
+	handled map[string]map[string]bool
 }
 
 // NewBatchState 创建批量发布状态管理器。
 func NewBatchState() *BatchState {
 	return &BatchState{
-		tasks: map[string]*BatchTask{},
-		subs:  map[string]map[chan map[string]any]struct{}{},
+		tasks:   map[string]*BatchTask{},
+		subs:    map[string]map[chan map[string]any]struct{}{},
+		handled: map[string]map[string]bool{},
 	}
 }
 
@@ -135,6 +140,39 @@ func (s *BatchState) Cancel(batchID string) bool {
 		task.Cancelled = true
 	}
 	return ok && task != nil
+}
+
+// MarkSiteHandled 把批次内的单个站点标记为"已站外处理"（进度页单站取消或单站立即发布）。
+// 参数/返回：batchID 为批次标识；siteName 为站点名；无返回值。
+// 失败场景：无（批次不存在时静默记录，站点名空串忽略）。
+// 副作用：更新 handled 集合；runner 轮到该站点时经 IsSiteHandled 跳过。
+func (s *BatchState) MarkSiteHandled(batchID string, siteName string) {
+	if s == nil {
+		return
+	}
+	siteName = strings.TrimSpace(siteName)
+	if siteName == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.handled[batchID] == nil {
+		s.handled[batchID] = map[string]bool{}
+	}
+	s.handled[batchID][siteName] = true
+}
+
+// IsSiteHandled 返回批次内的站点是否已被站外处理（runner 应跳过）。
+// 参数/返回：batchID 为批次标识；siteName 为站点名；返回 true 表示跳过。
+// 失败场景：无。
+// 副作用：无。
+func (s *BatchState) IsSiteHandled(batchID string, siteName string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.handled[batchID][strings.TrimSpace(siteName)]
 }
 
 // Subscribe 订阅批量发布事件。

@@ -9,6 +9,9 @@ type BatchRunnerDeps struct {
 	OnSiteStarted  func(siteName string)
 	OnSiteFinished func(siteName string, result map[string]any)
 	OnBatchStopped func()
+	// IsSiteSkipped 为可选的站点级跳过判定：站点已被站外处理
+	//（进度页单站取消/单站立即发布）时返回 true，runner 跳过该站点避免重复发布。
+	IsSiteSkipped func(siteName string) bool
 }
 
 // batchSiteSleepDuration 单个站点发布完成后的固定等待，避免连续请求过于密集。
@@ -52,6 +55,10 @@ func RunBatchPublish(targets []string, deps BatchRunnerDeps) {
 				deps.OnBatchStopped()
 			}
 			break
+		}
+		// 站点已被站外处理（进度页单站取消/单站立即发布）时跳过，避免重复发布。
+		if deps.IsSiteSkipped != nil && deps.IsSiteSkipped(siteName) {
+			continue
 		}
 
 		runBatchSitePublish(siteName, deps)

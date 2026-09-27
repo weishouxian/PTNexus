@@ -199,7 +199,7 @@
             <div class="status-tags">
               <el-tooltip
                 :disabled="scope.row.status !== 'dispatched'"
-                content="立即发布的任务：已登记进度，由实时发布流程按波次执行（不在队列调度器里，取消请回发布面板）"
+                content="立即发布的任务：已登记进度，由实时发布流程按波次执行（不在队列调度器里）；支持在此单站立即发布或取消"
                 placement="top"
                 :hide-after="0"
               >
@@ -244,8 +244,8 @@
           <template #default="scope">
             <div class="action-buttons">
               <el-tooltip
-                :disabled="scope.row.status !== 'queued'"
-                content="跳过等待时间，立刻发布这条任务（范围仅此一条，不影响其它波次）"
+                :disabled="!isRowActionable(scope.row)"
+                content="跳过等待时间，立刻发布这条任务（范围仅此一条，不影响其它站点）"
                 placement="top"
                 :hide-after="0"
               >
@@ -253,7 +253,7 @@
                   <el-button
                     size="small"
                     type="success"
-                    :disabled="scope.row.status !== 'queued'"
+                    :disabled="!isRowActionable(scope.row)"
                     :loading="publishingTaskId === Number(scope.row.id)"
                     @click="publishNow(scope.row)"
                   >
@@ -272,7 +272,7 @@
               </el-button>
               <el-tooltip
                 :disabled="scope.row.status !== 'dispatched'"
-                content="立即发布的任务无法在此取消，请回发布面板取消该批任务"
+                content="取消该站点任务：发布 runner 轮到此站点时会自动跳过"
                 placement="top"
                 :hide-after="0"
               >
@@ -281,7 +281,7 @@
                     size="small"
                     type="danger"
                     style="margin-left: 5px"
-                    :disabled="scope.row.status !== 'queued'"
+                    :disabled="!isRowActionable(scope.row)"
                     @click="cancelTask(scope.row)"
                   >
                     取消
@@ -439,6 +439,12 @@ const formatTaskStatus = (status: string) => {
   if (status === 'failed') return '发布失败'
   if (status === 'cancelled') return '已取消'
   return status || '未知'
+}
+
+// isRowActionable 判断行是否可执行「立即发布/取消」（queued 队列任务与 dispatched 立即发布登记均支持）。
+const isRowActionable = (row: QueueTaskRow) => {
+  const status = (row.status || '').trim()
+  return status === 'queued' || status === 'dispatched'
 }
 
 const taskStatusTagType = (status: string) => {
@@ -721,7 +727,7 @@ const publishNextWave = async () => {
 // publishNow 单条任务跳过等待，立刻交给队列执行（不影响其它波次）。
 const publishNow = async (row: QueueTaskRow) => {
   const id = Number(row.id)
-  if (id <= 0 || (row.status || '').trim() !== 'queued' || publishingTaskId.value === id) return
+  if (id <= 0 || !isRowActionable(row) || publishingTaskId.value === id) return
 
   publishingTaskId.value = id
   try {
@@ -743,11 +749,14 @@ const publishNow = async (row: QueueTaskRow) => {
 
 const cancelTask = async (row: QueueTaskRow) => {
   const id = Number(row.id)
-  if (id <= 0 || (row.status || '').trim() !== 'queued') return
+  if (id <= 0 || !isRowActionable(row)) return
+  const isDispatched = (row.status || '').trim() === 'dispatched'
 
   try {
     await ElMessageBox.confirm(
-      `确认取消该队列任务？\n${row.target_site || ''} · ${row.title || ''}`,
+      isDispatched
+        ? `确认取消该站点任务？该站点会被跳过，批次内其它站点不受影响。\n${row.target_site || ''} · ${row.title || ''}`
+        : `确认取消该队列任务？\n${row.target_site || ''} · ${row.title || ''}`,
       '取消发布任务',
       { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' },
     )

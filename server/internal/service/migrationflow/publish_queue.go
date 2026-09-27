@@ -804,6 +804,10 @@ func (s *MigrateService) PublishQueuedTaskNow(queueTaskID int64) (map[string]any
 	if !ok || task == nil {
 		return map[string]any{"success": false, "message": "队列任务不存在"}, 404
 	}
+	// dispatched（立即发布登记的进度记录）走站外单站立即发布路径。
+	if strings.TrimSpace(task.Status) == repository.PublishQueueStatusDispatched {
+		return s.PublishDispatchedTaskNow(queueTaskID)
+	}
 	if strings.TrimSpace(task.Status) != repository.PublishQueueStatusQueued {
 		return map[string]any{"success": false, "message": "仅待发布任务支持立即发布"}, 409
 	}
@@ -975,6 +979,10 @@ func (s *MigrateService) DeleteQueuedPublishTask(queueTaskID int64) (map[string]
 	}
 	if !ok || task == nil {
 		return map[string]any{"success": false, "message": "队列任务不存在"}, 404
+	}
+	// dispatched（立即发布登记的进度记录）走站外单站取消路径（联动 runner 跳过）。
+	if strings.TrimSpace(task.Status) == repository.PublishQueueStatusDispatched {
+		return s.CancelDispatchedTask(queueTaskID)
 	}
 	if strings.TrimSpace(task.Status) != repository.PublishQueueStatusQueued {
 		return map[string]any{"success": false, "message": "仅待发布任务支持删除"}, 409
