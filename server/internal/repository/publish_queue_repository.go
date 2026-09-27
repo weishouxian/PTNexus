@@ -71,6 +71,63 @@ type PublishQueueTask struct {
 
 func (PublishQueueTask) TableName() string { return "publish_queue_tasks" }
 
+// AfterFind 在 GORM 读取记录后统一归一时间字段的格式。
+// 参数/返回：接收 gorm.DB 上下文；返回 error（实际永不返回错误）。
+// 失败场景：无。
+// 副作用：把 *string 时间字段从 database/sql 产生的 RFC3339Nano（如 2026-09-27T01:33:02+08:00）
+// 或 time.Time.String()（如 2026-09-27 01:33:02 +0800 CST）归一到 PublishQueueTimeLayout。
+// 原因：MySQL DATETIME 列经 go-sql-driver parseTime=True 扫入 *string 时，
+// database/sql 用 RFC3339Nano 格式化，前端按空格切分会失败。
+// 钉死格式后前端直接展示文本，不依赖浏览器时区。
+func (t *PublishQueueTask) AfterFind(gorm.DB) error {
+	normalizeQueueTimeString(t.ScheduledAt)
+	normalizeQueueTimeString(t.NextRunAt)
+	normalizeQueueTimeString(t.StartedAt)
+	normalizeQueueTimeString(t.FinishedAt)
+	// CreatedAt/UpdatedAt 是 string（非指针），database/sql 扫入 sql.NullString 再取 .String，
+	// time.Time.String() 出 "2006-01-02 15:04:05 +0800 CST"（带时区后缀）也需归一。
+	t.CreatedAt = normalizeQueueTimeStringValue(t.CreatedAt)
+	t.UpdatedAt = normalizeQueueTimeStringValue(t.UpdatedAt)
+	return nil
+}
+
+// normalizeQueueTimeString 把 *string 从 RFC3339/time.Time.String() 归一到 PublishQueueTimeLayout。
+// 只改指针指向的值（原地修改），空指针跳过。
+func normalizeQueueTimeString(s *string) {
+	if s == nil {
+		return
+	}
+	*s = normalizeQueueTimeStringValue(*s)
+}
+
+// normalizeQueueTimeStringValue 把单值从 RFC3339/time.Time.String() 归一到 PublishQueueTimeLayout。
+// 已是 "2006-01-02 15:04:05" 格式的直接返回（取前 19 位截断尾部时区后缀）。
+func normalizeQueueTimeStringValue(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return raw
+	}
+
+	// 原始格式 "2006-01-02 15:04:05"（Go 写入路径）或其截断形态
+	if len(trimmed) >= 19 &&
+		trimmed[4] == '-' && trimmed[7] == '-' && trimmed[10] == ' ' &&
+		trimmed[13] == ':' && trimmed[16] == ':' {
+		return trimmed[:19]
+	}
+
+	// RFC3339 "2006-01-02T15:04:05Z07:00" → 解析后按东八区格式化
+	if t, err := time.Parse(time.RFC3339, trimmed); err == nil {
+		return t.In(DatabaseTimeZone).Format(PublishQueueTimeLayout)
+	}
+
+	// time.Time.String() "2006-01-02 15:04:05.999999999 -0700 MST" → 按本地解析
+	if t, err := time.ParseInLocation("2006-01-02 15:04:05 -0700 MST", trimmed, DatabaseTimeZone); err == nil {
+		return t.In(DatabaseTimeZone).Format(PublishQueueTimeLayout)
+	}
+
+	return trimmed
+}
+
 // PublishQueueRepository 负责发布队列任务的入库、领取与状态更新。
 // 参数/返回：依赖 Store 访问数据库；方法返回 error 表示失败原因。
 // 失败场景：DB 未初始化、事务/更新失败等。
