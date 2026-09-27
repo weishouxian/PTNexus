@@ -72,14 +72,15 @@ type PublishQueueTask struct {
 func (PublishQueueTask) TableName() string { return "publish_queue_tasks" }
 
 // AfterFind 在 GORM 读取记录后统一归一时间字段的格式。
-// 参数/返回：接收 gorm.DB 上下文；返回 error（实际永不返回错误）。
+// 参数/返回：tx 为 GORM 事务上下文（GORM 钩子约定必须收 *gorm.DB 指针，值类型会被静默跳过）；
+// 返回 error（实际永不返回错误）。
 // 失败场景：无。
 // 副作用：把 *string 时间字段从 database/sql 产生的 RFC3339Nano（如 2026-09-27T01:33:02+08:00）
 // 或 time.Time.String()（如 2026-09-27 01:33:02 +0800 CST）归一到 PublishQueueTimeLayout。
 // 原因：MySQL DATETIME 列经 go-sql-driver parseTime=True 扫入 *string 时，
 // database/sql 用 RFC3339Nano 格式化，前端按空格切分会失败。
 // 钉死格式后前端直接展示文本，不依赖浏览器时区。
-func (t *PublishQueueTask) AfterFind(gorm.DB) error {
+func (t *PublishQueueTask) AfterFind(tx *gorm.DB) error {
 	normalizeQueueTimeString(t.ScheduledAt)
 	normalizeQueueTimeString(t.NextRunAt)
 	normalizeQueueTimeString(t.StartedAt)
