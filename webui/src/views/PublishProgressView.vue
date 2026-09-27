@@ -468,16 +468,24 @@ const downloaderTagStyle = (downloaderId?: string | null) => {
   }
 }
 
-// 解析后端的时间格式（YYYY-MM-DD HH:MM:SS），返回两行展示文本。
-// 后端 AfterFind 钩子已统一归一为 PublishQueueTimeLayout，前端只做字符串拆分。
+// 解析后端的时间格式，返回两行展示文本。
+// 后端 AfterFind 钩子保证返回 "YYYY-MM-DD HH:MM:SS"；RFC3339 兜底防漏网路径。
 const formatDateTimeTwoLines = (raw?: string | null) => {
   const trimmed = (raw || '').trim()
   if (!trimmed) return '-'
 
   const parts = trimmed.split(' ')
-  if (parts.length >= 2) {
+  if (parts.length >= 2 && /^\d{4}-\d{2}-\d{2} /.test(trimmed)) {
     return `${parts[0]}\n${parts[1]}`
   }
+
+  // RFC3339（2026-09-27T11:25:24+08:00 / Z）→ Date → 浏览器本地时区格式化
+  const d = new Date(trimmed)
+  if (!Number.isNaN(d.getTime())) {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}\n${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  }
+
   return trimmed
 }
 
@@ -485,7 +493,15 @@ const shortTime = (raw?: string | null) => {
   const trimmed = (raw || '').trim()
   if (!trimmed) return ''
   const parts = trimmed.split(' ')
-  return parts.length >= 2 ? parts[1] || '' : trimmed
+  if (parts.length >= 2 && /^\d{4}-\d{2}-\d{2} /.test(trimmed)) {
+    return parts[1] || ''
+  }
+  const d = new Date(trimmed)
+  if (!Number.isNaN(d.getTime())) {
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  }
+  return trimmed
 }
 
 // 解析队列时间文本（后端保证 "2006-01-02 15:04:05" 北京墙钟）为 Date 对象。
