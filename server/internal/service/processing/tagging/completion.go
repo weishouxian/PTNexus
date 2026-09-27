@@ -538,6 +538,117 @@ func applyLanguageTag(tags *[]string, language string) {
 	}
 }
 
+// 语种标签候选：仅这三类参与「以 MediaInfo 为准」的校正。
+// 其余语种（英语/日语/…）不参与，避免源站标签与音轨大小写/别名差异造成误删。
+var audioLanguageTagCandidates = []string{"国语", "粤语", "台配"}
+
+// DetectAudioLanguagesFromMediaText 收集媒体文本中**全部**音轨语种（不带 tag. 前缀）。
+// 与 extractRawTagsFromMediaText 不同：后者每个 Audio 段只取首个命中语种，
+// 本函数按段逐条收集，用于「以 MediaInfo 为准」校正源站语种标签。
+// 参数/返回：mediaText 为 MediaInfo/BDInfo 原文；isBDInfo 决定解析路径；返回去重后的语种列表。
+// 失败场景：文本为空、无 Audio 段或无任何语种线索时返回空切片。
+// 副作用：无。
+func DetectAudioLanguagesFromMediaText(mediaText string, isBDInfo bool) []string {
+	text := strings.TrimSpace(parser.SanitizeMediaTextForAnalysis(mediaText))
+	if text == "" {
+		return []string{}
+	}
+
+	languages := make([]string, 0, 4)
+	for _, sec := range splitMediaInfoOrBDInfoSections(text, isBDInfo) {
+		isAudioSection := false
+		if isBDInfo {
+			isAudioSection = strings.EqualFold(sec.Name, "AUDIO")
+		} else {
+			isAudioSection = strings.EqualFold(sec.Name, "Audio")
+		}
+		if !isAudioSection {
+			continue
+		}
+		if isBDInfo {
+			for _, lang := range detectLanguagesInBDInfoAudioSection(sec.Lines) {
+				languages = appendUniqueStringLocal(languages, lang)
+			}
+			continue
+		}
+		for _, lang := range detectLanguagesInMediaInfoAudioSection(sec.Lines) {
+			languages = appendUniqueStringLocal(languages, lang)
+		}
+	}
+	return languages
+}
+
+func splitMediaInfoOrBDInfoSections(text string, isBDInfo bool) []mediaInfoSection {
+	if isBDInfo {
+		return splitBDInfoSections(text)
+	}
+	return splitMediaInfoSections(text)
+}
+
+// detectLanguagesInMediaInfoAudioSection 收集 MediaInfo 单个 Audio 段中出现的全部语种。
+// 与 detectLanguageInSection 的差异：后者遇到首个命中即返回，会漏掉多音轨段的其余语种。
+func detectLanguagesInMediaInfoAudioSection(lines []string) []string {
+	languages := make([]string, 0, 2)
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		isTitle := strings.Contains(lower, "title") && strings.Contains(lower, ":")
+		isLanguage := strings.HasPrefix(lower, "language") && strings.Contains(lower, ":")
+		if !isTitle && !isLanguage {
+			continue
+		}
+		value := strings.TrimSpace(strings.SplitN(line, ":", 2)[1])
+		if lang := detectLanguageByKeyword(strings.ToLower(value)); lang != "" {
+			languages = appendUniqueStringLocal(languages, lang)
+		}
+	}
+	return languages
+}
+
+// ReconcileAudioLanguageTagsWithMediaText 以 MediaInfo/BDInfo 的实际音轨语种为准，剔除矛盾的中文语种标签。
+// 规则：仅当媒体文本能解析出**至少一个音轨语种**时才执行校正；
+// 源站标签里的「国语/粤语/台配」若未出现在音轨语种集合中，视为源站误标并丢弃
+// （典型场景：源站详情页标签挂了「国语」，但文件只有一条 English 音轨）。
+// 参数/返回：tags 为原始标签列表（可能带 tag. 前缀）；mediaText/isBDInfo 为媒体文本；返回校正后的标签列表。
+// 失败场景：媒体文本为空、无 Audio 段或无任何语种线索时**原样返回**，不做任何删减。
+// 副作用：无。
+func ReconcileAudioLanguageTagsWithMediaText(tags []string, mediaText string, isBDInfo bool) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+	audioLanguages := DetectAudioLanguagesFromMediaText(mediaText, isBDInfo)
+	if len(audioLanguages) == 0 {
+		return tags
+	}
+	available := map[string]struct{}{}
+	for _, lang := range audioLanguages {
+		available[lang] = struct{}{}
+	}
+
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		bare := strings.TrimSpace(tag)
+		if len(bare) >= 4 && strings.EqualFold(bare[:4], "tag.") {
+			bare = strings.TrimSpace(bare[4:])
+		}
+		if isAudioLanguageTagCandidate(bare) {
+			if _, ok := available[bare]; !ok {
+				continue
+			}
+		}
+		result = append(result, tag)
+	}
+	return result
+}
+
+func isAudioLanguageTagCandidate(bare string) bool {
+	for _, candidate := range audioLanguageTagCandidates {
+		if bare == candidate {
+			return true
+		}
+	}
+	return false
+}
+
 func applySubtitleTagsFromTextSection(tags *[]string, lines []string) {
 	if tags == nil || len(lines) == 0 {
 		return
