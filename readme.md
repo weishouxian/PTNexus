@@ -1,5 +1,5 @@
 # 感谢三清大佬的源码
-# 源码地址： https://github.com/sqing33/PTNexus
+# 源码地址： https://github.com/weishouxian/PTNexus
 # PT Nexus - PT 种子聚合管理平台
 
 > [!IMPORTANT]
@@ -398,7 +398,7 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 ### v3.4.7（2026.01.08）
 
-> **注：修改 Github 仓库地址为 'https://github.com/sqing33/PTNexus'，因为 'pt-nexus' 缺失横杠无法搜索到，以至于有人在安装的时候安装到了 'nexusphp'。
+> **注：修改 Github 仓库地址为 'https://github.com/weishouxian/PTNexus'，因为 'pt-nexus' 缺失横杠无法搜索到，以至于有人在安装的时候安装到了 'nexusphp'。
 结算画面： 'https://img1.pixhost.to/images/11481/682419724_4ba3b6c6-d528-471d-b898-c05c88ea4332.png' 
 新的盒子端安装地址为 curl -sL https://github.com/weishouxian/PTNexus/releases/latest/download/install-pt-nexus-box-proxy.sh | sudo bash**
 

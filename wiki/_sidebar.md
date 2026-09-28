@@ -1,9 +1,10 @@
 - [首页](/)
 - [安装](docs/安装.md)
+- [用户操作手册](docs/操作手册/README.md)
 - **功能介绍**
   - [登录](docs/功能介绍/登录.md)
   - [首页与统计](docs/功能介绍/首页与统计.md)
   - [设置](docs/功能介绍/设置.md)
   - [转种](docs/功能介绍/转种.md)
   - [API](docs/API.md)
-- [GitHub](https://github.com/sqing33/pt-nexus)
+- [GitHub](https://github.com/weishouxian/pt-nexus)
