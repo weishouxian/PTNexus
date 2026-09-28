@@ -2,7 +2,7 @@
 
 生成时间：2026-03-04  
 审查基线：本地分支 `go`（commit `b9e7e78`）  
-远端仓库：`sqing33/PTNexus`  
+远端仓库：`weishouxian/PTNexus`  
 
 > 说明  
 > 1. 本报告覆盖 GitHub Issue `#1`-`#62` 中可访问且属于 `issue` 的 58 条记录（其中 `#4` 为 PR，不在 issue 范围；`#31` 不存在；`#34/#36` 已被删除）。  

@@ -84,7 +84,7 @@
           导出后端日志
         </el-button>
         <el-link
-          href="https://github.com/sqing33/PTNexus/issues"
+          href="https://github.com/weishouxian/PTNexus/issues"
           target="_blank"
           :underline="false"
         >
@@ -235,12 +235,12 @@
           <el-icon><Link /></el-icon>
           Wiki
         </el-link>
-        <el-link href="https://github.com/sqing33/PTNexus" target="_blank" :underline="false">
+        <el-link href="https://github.com/weishouxian/PTNexus" target="_blank" :underline="false">
           <el-icon><Link /></el-icon>
           GitHub
         </el-link>
         <el-link
-          href="https://github.com/sqing33/PTNexus/issues"
+          href="https://github.com/weishouxian/PTNexus/issues"
           target="_blank"
           :underline="false"
         >
