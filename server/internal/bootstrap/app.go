@@ -48,7 +48,9 @@ func NewApp() (*App, error) {
 		return nil, fmt.Errorf("初始化数据库表结构失败: %w", err)
 	}
 	if err := schemaManager.SyncSitesFromJSON(paths.SitesData); err != nil {
-		logx.Warnf("启动", "同步站点配置失败 path=%s err=%v", paths.SitesData, err)
+		// 这里必须用 Error 级别：sites_data.json 非法时整个文件的站点元数据（含 migration 角色）
+		// 都不会写入 sites 表，站点会保持旧角色，仅 Warn 容易被忽略而误判为「配置没生效」。
+		logx.Errorf("启动", "同步站点配置失败；该文件非法会导致所有站点字段（含 migration 角色）不生效 path=%s err=%v", paths.SitesData, err)
 	}
 	if err := repository.NewMigrateRepository(store).BackfillOfficialSites(); err != nil {
 		logx.Warnf("启动", "回填官种站失败 err=%v", err)

@@ -57,7 +57,7 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 
 	items := make([]siteSeedRow, 0)
 	if err := json.Unmarshal(content, &items); err != nil {
-		return fmt.Errorf("解析站点数据失败 path=%s err=%w", path, err)
+		return fmt.Errorf("解析站点数据失败（JSON 不支持 // 或 /* */ 注释，请先删除文件中的注释块）path=%s err=%w", path, err)
 	}
 	if len(items) == 0 {
 		logx.Warnf(schemaLogModule, "站点数据为空，跳过同步 path=%s", path)
