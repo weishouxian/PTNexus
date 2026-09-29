@@ -68,7 +68,8 @@ type SubtitleSeasonEpisodeInput struct {
 //  3. 非整季合集（集数未覆盖整季）→ 原样返回；
 //  4. 季号 x：标题组件「季集」→ 主标题/种子名 → 简介「季数」；均取不到则只写「全y集」；
 //  5. 集数 y：简介「集　　数」优先，本地/种子文件集数兜底；
-//  6. 拼装：插入到副标题第一个空格之后；副标题无空格或为空则追加到末尾。
+//  6. 拼装：副标题已含季号（第X季 / Sxx）时，「全y集」紧贴该季号之后；
+//     否则插到副标题第一个空格之后；副标题无空格或为空则追加到末尾。
 func EnrichSubtitleWithSeasonEpisode(input SubtitleSeasonEpisodeInput) (string, string) {
 	subtitle := strings.TrimSpace(input.Subtitle)
 	if reSubtitleTotalEpisodeToken.MatchString(subtitle) {
@@ -96,7 +97,14 @@ func EnrichSubtitleWithSeasonEpisode(input SubtitleSeasonEpisodeInput) (string, 
 		fragment = fmt.Sprintf("全%d集", *total)
 	}
 
-	enriched := insertSeasonEpisodeFragment(subtitle, fragment)
+	enriched := ""
+	if hasSeasonInSubtitle {
+		// 副标题已有季号：把「全y集」紧贴季号之后，避免出现「简繁英字幕 全12集 第3季」这类错位。
+		enriched = insertAfterSeasonToken(subtitle, fragment)
+	}
+	if enriched == "" {
+		enriched = insertSeasonEpisodeFragment(subtitle, fragment)
+	}
 	if enriched == subtitle {
 		return subtitle, ""
 	}
@@ -231,6 +239,23 @@ func chineseSeasonNumberToInt(text string) (int, bool) {
 		return 0, false
 	}
 	return total, true
+}
+
+// insertAfterSeasonToken 将片段插到副标题中「季号」之后（如「简繁英字幕 第3季」→「简繁英字幕 第3季 全12集」）。
+// 副标题未匹配到季号时返回空串，交由 insertSeasonEpisodeFragment 兜底。
+func insertAfterSeasonToken(subtitle, fragment string) string {
+	loc := reSubtitleSeasonToken.FindStringIndex(subtitle)
+	if loc == nil {
+		return ""
+	}
+	head := strings.TrimRight(strings.TrimSpace(subtitle[:loc[1]]), " \u3000")
+	// 季号本身可能带前后空格（如「第 3 季」），保留原样只做外侧裁剪。
+	tail := strings.TrimLeft(subtitle[loc[1]:], " \u3000")
+	result := head + " " + fragment
+	if tail != "" {
+		result += " " + tail
+	}
+	return strings.TrimSpace(result)
 }
 
 // insertSeasonEpisodeFragment 将季集片段插入副标题：优先插到第一个空格（含全角）之后，无空格则追加到末尾。
