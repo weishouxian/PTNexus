@@ -1,7 +1,6 @@
 package sites
 
 import (
-	"errors"
 	"regexp"
 	"strings"
 
@@ -20,8 +19,9 @@ type ourbitsPublisher struct {
 // 副作用：调用公共发布器，并补充我堡上传页的海报、细分类和动态必填字段。
 func PublishOurBits(input publisher.PublishInput) (publisher.PublishResult, error) {
 	if isOurBitsRemux(input) {
-		err := errors.New("我堡禁止发布 Remux 资源")
-		return publisher.PublishResult{AttemptDetailLog: "发布前校验失败: " + err.Error()}, err
+		// 确定性拒绝：尚未向站点发起上传请求，用 PreCheckError 让上层按「预检查限制」跳过而不是重试。
+		reason := "我堡禁止发布 Remux 资源"
+		return publisher.PublishResult{AttemptDetailLog: "发布前校验失败: " + reason}, publisher.NewPreCheckError(reason)
 	}
 	return publishWithPublicSite(input, ourbitsPublisher{})
 }

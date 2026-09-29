@@ -75,8 +75,8 @@ func BuildUploadDescription(siteCode string, uploadData map[string]any) string {
 		}
 	}
 
-	if shouldInlineMediainfo(siteCode) && mediainfo != "" {
-		parts = append(parts, "[quote]"+mediainfo+"[/quote]")
+	if block := buildMediainfoInlineBlock(siteCode, mediainfo); block != "" {
+		parts = append(parts, block)
 	}
 
 	if screenshots != "" {
@@ -232,6 +232,26 @@ func shouldInlineMediainfo(siteCode string) bool {
 	default:
 		return false
 	}
+}
+
+// buildMediainfoInlineBlock 把 MediaInfo 内联为简介里的一个块。
+// 参数/返回：siteCode 为目标站点 code，mediaText 为 MediaInfo/BDInfo 原文；站点不要求内联或文本为空时返回空串。
+// 站点差异：北洋园（tjupt）要求用 `[mediainfo]…[/mediainfo]`（upload.php 的 BBCode 快捷按钮生成的就是这对标签，
+// 站点没有独立的 mediainfo 输入框）；其余内联站沿用 `[quote]…[/quote]`。
+// 说明：调用方负责把它放在「正文之后、截图之前」——站点对顺序有要求，不能简单追加到简介末尾。
+func buildMediainfoInlineBlock(siteCode string, mediaText string) string {
+	trimmed := strings.TrimSpace(mediaText)
+	if trimmed == "" {
+		return ""
+	}
+	code := strings.ToLower(strings.TrimSpace(siteCode))
+	if code == "tjupt" {
+		return "[mediainfo]" + trimmed + "[/mediainfo]"
+	}
+	if shouldInlineMediainfo(code) {
+		return "[quote]" + trimmed + "[/quote]"
+	}
+	return ""
 }
 
 // ExtractPublishURLFromText 从上传响应文本中提取详情页/offer 链接。

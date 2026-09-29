@@ -1,0 +1,337 @@
+site_name: "北洋园"
+
+# 北洋园 (tjupt.org) 发种映射配置
+# 抓取来源: https://tjupt.org/upload.php (2026-09-29)
+# 表单: action=takeupload.php method=post enctype=multipart/form-data，文件字段 file
+#
+# ⚠️ 本站不是标准 NexusPHP 六维度表单：upload.php 上只有 type(一级分类) / color / font / size 四个 select，
+#    没有 medium_sel / codec_sel / standard_sel / source_sel / team_sel。真正的分类信息是「两级分类 + 文本字段」：
+#      · 一级分类 type: 401 电影 402 剧集 403 综艺 404 资料 405 动漫 406 音乐 407 体育 408 软件 409 游戏 410 其他
+#                      411 纪录片 412 移动视频
+#      · 二级分类 specificcat: 由 GET /showcategorydetail.php?catid=<一级分类ID> 动态下发，各分类字段集不同，
+#                       值多为自由文本（页面上用「快捷 checkbox」拼进文本框，服务端只认文本）
+#    因此本站走专属适配器 sites/tjupt.go（engine.go 注册 case "tjupt"），本文件是它的专属字典，
+#    结构不是通用 SitePublishConfig schema（也是有意为之：字段语义完全不同，套通用 schema 只会产生误导配置）。
+#
+# 站点前端校验规则（assets/js/upload-validation.*.min.js 实测），适配器按此约束取值：
+#   · cname / ename 末尾不能带文件扩展名；cname 不得含 "/"、不得含「共X集/全X集/第X集」
+#   · cname 应含中文、ename 不应含中文；405 动漫的 ename 不得含 h264/h265/avc/hevc
+#   · 403 综艺 issuedate 格式 YYYYMMDD 或 YYYY；405 动漫 issuedate 格式 YYYY年MM月
+#   · 404 资料 specificcat 必须在站点列表内且最多 2 个；404/410 的 cname/ename 不得用全角括号
+#   · district / specificcat 全为华语地区时不得勾选 chinese(中文字幕)
+#   · ename 以 -TJUPT 结尾（405 为 substeam 以 TJUPT 结尾）时必须勾选 tjuptrip(TJUPT小组作品)
+
+upload_file_field: "file"
+upload_page_path: "/upload.php"
+upload_submit_path: "/takeupload.php"
+
+# 一级分类：PTNexus 标准 type → 站点 type
+category:
+  "category.movie": "401"
+  "category.movie_3d": "401"
+  "category.top250": "401"
+  "category.top100": "401"
+  "category.tv_series": "402"
+  "category.tv_pack": "402"
+  "category.playlet": "402"
+  "category.drama": "402"
+  "category.tv_shows": "403"
+  "category.stage": "403"
+  "category.audiobook": "404"
+  "category.ebook": "404"
+  "category.books": "404"
+  "category.study": "404"
+  "category.document": "404"
+  "category.animation": "405"
+  "category.cartoon": "405"
+  "category.music": "406"
+  "category.mv": "406"
+  "category.audio": "406"
+  "category.sports": "407"
+  "category.software": "408"
+  "category.os": "408"
+  "category.game": "409"
+  "category.other": "410"
+  "category.documentaries": "411"
+  "default": "401"
+
+# 「制片国家/地区」字段 district（自由文本，值必须为中文），按一级分类分表。
+# 注意 405 动漫的 district 语义是「制作地区：日漫/美漫/国产/其他」，与其它分类不同。
+district:
+  "401":
+    "source.china": "大陆"
+    "source.hongkong": "香港"
+    "source.taiwan": "台湾"
+    "source.hongkong_taiwan": "香港/台湾"
+    "source.japan": "日本"
+    "source.korea": "韩国"
+    "source.western": "美国"
+    "source.uk": "英国"
+    "source.france": "法国"
+    "source.germany": "德国"
+    "source.australia": "澳大利亚"
+    "source.india": "印度"
+    "default": "其他"
+  "403":
+    "source.china": "大陆"
+    "source.hongkong": "港台"
+    "source.taiwan": "港台"
+    "source.hongkong_taiwan": "港台"
+    "source.japan": "日韩"
+    "source.korea": "日韩"
+    "source.uk": "欧美"
+    "source.western": "欧美"
+    "default": "欧美"
+  "405":
+    "source.japan": "日漫"
+    "source.china": "国产"
+    "source.hongkong_taiwan": "国产"
+    "source.western": "美漫"
+    "default": "其他"
+  "412":
+    "source.china": "大陆"
+    "source.hongkong": "香港"
+    "source.taiwan": "台湾"
+    "source.hongkong_taiwan": "香港/台湾"
+    "source.japan": "日本"
+    "source.korea": "韩国"
+    "source.western": "美国"
+    "source.uk": "英国"
+    "default": "其他"
+
+# 「二级分类」字段 specificcat（自由文本），按一级分类分表。
+# 各分类语义不同：402=剧集类型 404=资料学科 405=动画形态 406=音乐介质 407=运动项目 408=软件类别 409=游戏类型
+#                 410=资源类型 411=纪录片来源/地区
+specific_cat:
+  "402":
+    "source.china": "大陆"
+    "source.hongkong": "港台"
+    "source.taiwan": "港台"
+    "source.hongkong_taiwan": "港台"
+    "source.japan": "日剧"
+    "source.korea": "韩剧"
+    "source.uk": "英剧"
+    "source.thailand": "泰剧"
+    "source.western": "美剧"
+    "default": "美剧"
+  "404":
+    # 站点限定取值（多选最多 2 个，适配器只取一个）：考试相关/信息技术/外语学习/历史哲学/文学艺术/
+    # 经济管理/体育教学/消遣娱乐/科学技术/健康养生/教学课件/精彩图集/论文期刊
+    "default": "消遣娱乐"
+  "405":
+    # 站长约束：连载/TV/剧场/OVA/OAD/漫画/周边/音乐
+    "default": "TV"
+  "406":
+    # 音乐介质：CD/WEB/Vinyl/SACD/MV/现场/多介质
+    "medium.cd": "CD"
+    "medium.cd_dvd": "CD"
+    "medium.cd_vcd": "CD"
+    "medium.track": "CD"
+    "medium.sacd": "SACD"
+    "medium.vinyl": "Vinyl"
+    "medium.webdl": "WEB"
+    "medium.mv": "MV"
+    "medium.bluray": "多介质"
+    "medium.uhd_bluray": "多介质"
+    "default": "CD"
+  "407":
+    # 运动项目：足球/篮球/羽毛球/乒乓球/网球/棒球/高尔夫/摔角/台球/F1（站点无「其他」选项）
+    "default": "足球"
+  "408":
+    # 软件类别：操作系统/应用软件/网络软件/系统工具/多媒体类/行业软件/编程开发/安全相关/办公软件/教育软件/硬件驱动/系统补丁
+    "default": "应用软件"
+  "409":
+    # 游戏类型（站点页面为 radio，提交同名字段）：ACT/AVG/FPS/.../ETC/剧情动画（站点默认勾选剧情动画）
+    "default": "剧情动画"
+  "410":
+    # 资源类型：天津大学/充电视频/图片收藏/有声读物/广播节目/电子文本/视频集锦/其他资源
+    "default": "其他资源"
+  "411":
+    # 纪录片来源/地区：Amazon/AppleTV/BBC/CCTV/Disney+/HBO/IMAX/KBS/NHK/Netflix/PBS/
+    # 国家地理/历史频道/探索频道 + 国家地区
+    "default": "其他"
+
+# 「文件格式」字段 format（自由文本），按一级分类分表。
+format:
+  "404":
+    "default": "RAR"
+  "405":
+    "medium.uhd_bluray": "BDMV"
+    "medium.bluray": "BDMV"
+    "medium.uhd_diy": "BDMV"
+    "medium.bluray_diy": "BDMV"
+    "medium.remux": "MKV"
+    "medium.encode": "MKV"
+    "medium.webdl": "MKV"
+    "medium.hdtv": "MKV"
+    "default": "MKV"
+  "406":
+    "audio.flac": "FLAC"
+    "audio.ape": "FLAC"
+    "audio.wav": "WAV"
+    "audio.mp3": "MP3"
+    "audio.aac": "AAC"
+    "medium.bluray": "BDMV"
+    "medium.uhd_bluray": "BDMV"
+    "medium.cd": "FLAC"
+    "default": "FLAC"
+  "407":
+    "default": "MKV"
+  "408":
+    "default": "压缩包"
+  "409":
+    "default": "压缩包"
+  "410":
+    "default": "RAR"
+
+# 「运行平台」字段 platform（自由文本），仅 408 软件 / 409 游戏 需要。
+platform:
+  "408":
+    "default": "其他"
+  "409":
+    "default": "PC"
+
+# 适配器在「站点无对应语义来源」时使用的兜底值。
+# ⚠️ 这些值站点前端未必能校验通过（例如动漫的 animenum 话数、音乐的 artist 艺术家在 PTNexus 侧
+#    没有可推导来源），仅用于让必填字段非空、避免被 takeupload.php 直接拒绝；发布后建议人工复核。
+defaults:
+  category: "401"
+  district: "其他"
+  specific_cat: "其他"
+  format: "MKV"
+  platform: "其他"
+  # 音乐(406) 必填：艺术家无来源，填「群星」；专辑名(hqname) 用主标题。
+  artist: "群星"
+  # 动漫(405) 必填：字幕组无来源；话数无来源时填 1。
+  substeam: "未知"
+  animenum: "1"
+
+# 供 tagging / acquire-extract 模块按站点 code 读取（tjupt 当前 migration=2 仅作目标站，
+# 此段为将来改为源站（migration=1/3）预留；键名按 NexusPHP 通用元数据约定）。
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    audio_codec:
+      source_key: "音频编码"
+    resolution:
+      source_key: "分辨率"
+    source:
+      source_key: "地区"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Movies": "category.movie"
+      "电影": "category.movie"
+      "TV-Episode": "category.tv_series"
+      "TV-Pack": "category.tv_series"
+      "TV-Show": "category.tv_shows"
+      "电视剧": "category.tv_series"
+      "综艺": "category.tv_shows"
+      "Animations": "category.animation"
+      "动漫": "category.animation"
+      "Music": "category.music"
+      "音乐": "category.music"
+      "Sports": "category.sports"
+      "体育": "category.sports"
+      "Documentaries": "category.documentaries"
+      "纪录片": "category.documentaries"
+      "Game": "category.game"
+      "游戏": "category.game"
+      "Software": "category.software"
+      "软件": "category.software"
+      "Other": "category.other"
+      "其他": "category.other"
+
+    medium:
+      "UHD Blu-ray": "medium.uhd_bluray"
+      "UHD原盘": "medium.uhd_bluray"
+      "FHD Blu-ray": "medium.bluray"
+      "Blu-ray": "medium.bluray"
+      "BD原盘": "medium.bluray"
+      "Blu-ray DIY": "medium.bluray_diy"
+      "UHD DIY": "medium.uhd_diy"
+      "Remux": "medium.remux"
+      "Encode": "medium.encode"
+      "WEB-DL": "medium.webdl"
+      "WEBRip": "medium.webrip"
+      "HDTV": "medium.hdtv"
+      "DVD": "medium.dvd"
+      "DVDR": "medium.dvdr"
+      "CD": "medium.cd"
+      "SACD": "medium.sacd"
+      "Track": "medium.track"
+      "Other": "medium.other"
+
+    video_codec:
+      "H.264": "video.h264"
+      "H.265": "video.h265"
+      "HEVC": "video.h265"
+      "AVC": "video.h264"
+      "AV1": "video.av1"
+      "MPEG-2": "video.mpeg2"
+      "VC-1": "video.vc1"
+      "Other": "video.other"
+
+    audio_codec:
+      "FLAC": "audio.flac"
+      "APE": "audio.ape"
+      "DTS": "audio.dts"
+      "DTS-HD": "audio.dts_hd"
+      "TrueHD": "audio.truehd"
+      "AC3": "audio.ac3"
+      "DD+": "audio.ddp"
+      "AAC": "audio.aac"
+      "MP3": "audio.mp3"
+      "Other": "audio.other"
+
+    resolution:
+      "8K": "resolution.r4320p"
+      "4K": "resolution.r2160p"
+      "2160p": "resolution.r2160p"
+      "1080p": "resolution.r1080p"
+      "1080i": "resolution.r1080i"
+      "720p": "resolution.r720p"
+      "SD": "resolution.sd"
+
+    source:
+      "大陆": "source.china"
+      "中国": "source.china"
+      "香港": "source.hongkong"
+      "台湾": "source.taiwan"
+      "日本": "source.japan"
+      "韩国": "source.korea"
+      "美国": "source.western"
+      "欧美": "source.western"
+      "英国": "source.uk"
+      "法国": "source.france"
+      "德国": "source.germany"
+      "印度": "source.india"
+      "Other": "source.other"
+
+    team:
+      "TJUPT": "team.tjupt"
+      "Other": "team.other"
+
+    tag:
+      "中字": "tag.中字"
+      "中文字幕": "tag.中字"
+      "国语": "tag.国语"
+      "粤语": "tag.粤语"
+      "原创": "tag.原创"
+      "首发": "tag.首发"
+      "应求": "tag.应求"
+      "禁转": "tag.禁转"
+      "限转": "tag.限转"
+      "DIY": "tag.DIY"
+      "HDR": "tag.HDR"
+      "HDR10": "tag.HDR10"
+      "杜比视界": "tag.杜比视界"
+      "动画": "tag.动画"
+      "完结": "tag.完结"
