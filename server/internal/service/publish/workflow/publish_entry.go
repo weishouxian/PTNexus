@@ -10,6 +10,7 @@ import (
 	publishchecker "github.com/pt-nexus/server/internal/service/publish/checker"
 	publishdownloader "github.com/pt-nexus/server/internal/service/publish/downloader"
 	publishguard "github.com/pt-nexus/server/internal/service/publish/guard"
+	publishpublisher "github.com/pt-nexus/server/internal/service/publish/publisher"
 	publishuploader "github.com/pt-nexus/server/internal/service/publish/uploader"
 )
 
@@ -175,6 +176,13 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		input.RootConfig,
 	)
 	if publishErr != nil {
+		// 站点适配器在发起上传前的硬性拒绝（如北洋园不接收动漫、我堡禁止 Remux）属于确定性失败：
+		// 站点上不会新增种子，且同样的参数重试必然同样失败，因此按「预检查限制」上报，
+		// 让队列与定时发种调度器把它改判为「跳过」并立即处理下一个种子。
+		if reason, isPreCheck := publishpublisher.AsPreCheckError(publishErr); isPreCheck {
+			logx.Infof("发布-预检查限制", "站点级发布前校验拦截 target=%s reason=%s", targetNickname, reason)
+			return buildPreCheckFailure(reason)
+		}
 		failureLogs := strings.TrimSpace(logs)
 		if failureLogs == "" {
 			failureLogs = fmt.Sprintf("发布到 %s 失败: %v", targetNickname, publishErr)

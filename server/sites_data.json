@@ -17,7 +17,7 @@
     "group": "-PTHome,-PTH,-PTHtv",
     "description": "PTHome",
     "migration": 2,
-    "speed_limit": 50
+    "speed_limit": 25
   },
   {
     "site": "m-team",
@@ -46,7 +46,7 @@
     "special_tracker_domain": null,
     "group": "-TJTPU",
     "description": "TJTPU",
-    "migration": 0,
+    "migration": 2,
     "speed_limit": 90
   },
   {
