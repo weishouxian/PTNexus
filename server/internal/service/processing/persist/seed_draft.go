@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 )
+
+// subtitleSeasonLogModule 副标题季集补全日志模块名。
+const subtitleSeasonLogModule = "迁移-副标题季集"
 
 // SeedDraft 表示“种子参数”在抓取/修复/纠偏过程中逐步补全的领域实体草稿。
 // 它的职责是：统一承载字段，并在流程末端生成可写入 `seed_parameters` 的 record。
@@ -264,6 +268,22 @@ func (d *SeedDraft) CompleteAndMapTags(siteIdentifier string, formatIsBDInfo boo
 	d.EpisodeTagReason = strings.TrimSpace(episodeTagResult.Reason)
 	if episodeTagResult.Matched {
 		rawTagCandidates = append(rawTagCandidates, "分集")
+	}
+
+	// 电视剧/动漫的整季合集：副标题补写「第x季 全y集」（幂等，副标题已含「全X集」时原样返回）。
+	if enriched, reason := processingtagging.EnrichSubtitleWithSeasonEpisode(processingtagging.SubtitleSeasonEpisodeInput{
+		Subtitle:         d.Subtitle,
+		Title:            d.Title,
+		SeasonEpisode:    SeasonEpisodeFromTitleComponents(d.TitleComponents),
+		Description:      descriptionForTags,
+		Type:             d.Type,
+		Tags:             rawTagCandidates,
+		TorrentFileNames: d.TorrentFileNames,
+		Completion:       completion,
+	}); enriched != d.Subtitle {
+		logx.Infof(subtitleSeasonLogModule, "%s torrent_id=%s 副标题 %q -> %q",
+			strings.TrimSpace(reason), d.TorrentID, strings.TrimSpace(d.Subtitle), enriched)
+		d.Subtitle = enriched
 	}
 
 	mappedTags, unmappedTags := processingtagging.MapTagsToStandard(rawTagCandidates, siteIdentifier)
