@@ -20,6 +20,9 @@ const (
 	// PublishQueueStatusDispatched 表示「已派发」：由「立即发布」的内存 runner 执行，
 	// 仅用于进度登记展示。队列调度器只领取 queued，因此不会重复发布这些任务。
 	PublishQueueStatusDispatched = "dispatched"
+	// PublishQueueStatusExists 表示「已存在」：发布成功但目标站点早已存在该种子，
+	// 属确定性终态（站点未新增种子）。与 success 并列但单独归类，便于进度页区分统计。
+	PublishQueueStatusExists = "exists"
 )
 
 var (
@@ -365,6 +368,31 @@ func (r *PublishQueueRepository) UpdateTaskAfterSuccess(id int64, result string)
 		}).Error
 }
 
+// UpdateTaskAfterExists 写入「已存在」终态：发布成功但目标站点早已存在该种子。
+// 参数/返回：id 为任务主键；result 为结果摘要 JSON；返回 error。
+// 失败场景：DB 未初始化或更新失败返回 error。
+// 副作用：更新 publish_queue_tasks（status=exists，并清空 last_error、写入完成时间）。
+func (r *PublishQueueRepository) UpdateTaskAfterExists(id int64, result string) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish queue repo is nil")
+	}
+	if id <= 0 {
+		return nil
+	}
+
+	nowText := time.Now().Format(PublishQueueTimeLayout)
+	return r.store.DB.Table("publish_queue_tasks").
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":      PublishQueueStatusExists,
+			"next_run_at": nil,
+			"finished_at": nowText,
+			"last_error":  "",
+			"last_result": strings.TrimSpace(result),
+			"updated_at":  nowText,
+		}).Error
+}
+
 // FindTaskByID 按主键读取队列任务。
 // 参数/返回：id 为任务主键；返回任务、是否命中与 error。
 // 失败场景：数据库查询失败返回 error。
@@ -539,7 +567,7 @@ func (r *PublishQueueRepository) CleanupFinishedTasks(olderThan time.Time) (int6
 	result := r.store.DB.Table("publish_queue_tasks").
 		Where(
 			"status IN ? AND finished_at IS NOT NULL AND finished_at < ?",
-			[]string{PublishQueueStatusSuccess, PublishQueueStatusFailed, PublishQueueStatusCancelled},
+			[]string{PublishQueueStatusSuccess, PublishQueueStatusFailed, PublishQueueStatusCancelled, PublishQueueStatusExists},
 			cutoffText,
 		).
 		Delete(&PublishQueueTask{})
@@ -578,6 +606,7 @@ type PublishQueueTaskStatusCounts struct {
 	Success    int64 `json:"success"`
 	Failed     int64 `json:"failed"`
 	Cancelled  int64 `json:"cancelled"`
+	Exists     int64 `json:"exists"`
 }
 
 // publishQueueTaskOrderClause 让「发布中/待发布（含已派发）」按计划时间升序排到最前，历史记录按完成时间倒序跟随。
@@ -654,6 +683,8 @@ func (r *PublishQueueRepository) CountTaskStatuses(query PublishQueueTaskQuery) 
 			counts.Failed = item.Total
 		case PublishQueueStatusCancelled:
 			counts.Cancelled = item.Total
+		case PublishQueueStatusExists:
+			counts.Exists = item.Total
 		}
 	}
 	return counts, nil
