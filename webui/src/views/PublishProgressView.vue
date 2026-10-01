@@ -78,6 +78,7 @@
         <el-option label="待发布" value="waiting" />
         <el-option label="发布中" value="running" />
         <el-option label="已发布" value="success" />
+        <el-option label="已存在" value="exists" />
         <el-option label="发布失败" value="failed" />
         <el-option label="已取消" value="cancelled" />
       </el-select>
@@ -203,7 +204,11 @@
                 placement="top"
                 :hide-after="0"
               >
-                <el-tag :type="taskStatusTagType(scope.row.status)" size="small">
+                <el-tag
+                  :type="taskStatusTagType(scope.row.status)"
+                  size="small"
+                  :class="{ 'status-tag-exists': scope.row.status === 'exists' }"
+                >
                   {{ formatTaskStatus(scope.row.status) }}
                 </el-tag>
               </el-tooltip>
@@ -265,7 +270,7 @@
                 size="small"
                 type="primary"
                 style="margin-left: 5px"
-                :disabled="!scope.row.group_id"
+                :disabled="!scope.row.id"
                 @click="openPublishLogs(scope.row)"
               >
                 日志
@@ -292,13 +297,35 @@
           </template>
         </el-table-column>
       </el-table>
+
+      <el-dialog
+        v-model="logDialogVisible"
+        :title="`发布日志 · ${currentLogTitle}`"
+        width="720px"
+        append-to-body
+        destroy-on-close
+      >
+        <div v-loading="logLoading" class="publish-log-dialog">
+          <template v-if="currentLog">
+            <div class="publish-log-meta">
+              <span class="meta-item">状态：<el-tag size="small" :type="publishLogStatusType(currentLog.status)">{{ publishLogStatusText(currentLog.status) }}</el-tag></span>
+              <span v-if="currentLog.target_site" class="meta-item">目标站：{{ currentLog.target_site }}</span>
+              <span v-if="currentLog.cost_ms" class="meta-item">耗时：{{ currentLog.cost_ms }} ms</span>
+            </div>
+            <div v-if="currentLog.result_url" class="publish-log-url">
+              详情页：<el-link type="primary" :href="currentLog.result_url" target="_blank" rel="noopener">{{ currentLog.result_url }}</el-link>
+            </div>
+            <pre class="publish-log-content">{{ currentLog.logs || '（无日志内容）' }}</pre>
+          </template>
+          <el-empty v-else description="暂无发布日志（该任务尚未执行或日志未生成）" :image-size="80" />
+        </div>
+      </el-dialog>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import { Refresh, Promotion } from '@element-plus/icons-vue'
 import axios from 'axios'
@@ -338,6 +365,7 @@ type StatusCounts = {
   success: number
   failed: number
   cancelled: number
+  exists: number
 }
 
 // 「待发布」在库里有两种来源：加入队列的 queued、立即发布登记的 dispatched（同样在等待执行）。
@@ -345,11 +373,11 @@ const STATUS_FILTER_VALUES: Record<string, string[]> = {
   waiting: ['queued', 'dispatched'],
   running: ['running'],
   success: ['success'],
+  exists: ['exists'],
   failed: ['failed'],
   cancelled: ['cancelled'],
 }
 
-const router = useRouter()
 const globalDownloader = useGlobalDownloaderStore()
 
 const loading = ref(false)
@@ -377,6 +405,7 @@ const statusCounts = ref<StatusCounts>({
   success: 0,
   failed: 0,
   cancelled: 0,
+  exists: 0,
 })
 
 const autoRefresh = ref(true)
@@ -394,6 +423,7 @@ const overviewItems = [
   { key: 'waiting', label: '待发布' },
   { key: 'running', label: '发布中' },
   { key: 'success', label: '已发布' },
+  { key: 'exists', label: '已存在' },
   { key: 'failed', label: '发布失败' },
   { key: 'cancelled', label: '已取消' },
 ]
@@ -411,6 +441,7 @@ const resolveStatusCount = (key: string) => {
   if (key === 'waiting') return counts.queued + counts.dispatched
   if (key === 'running') return counts.running
   if (key === 'success') return counts.success
+  if (key === 'exists') return counts.exists
   if (key === 'failed') return counts.failed
   if (key === 'cancelled') return counts.cancelled
   return counts.total
@@ -436,6 +467,7 @@ const formatTaskStatus = (status: string) => {
   if (status === 'dispatched') return '待发布'
   if (status === 'running') return '发布中'
   if (status === 'success') return '已发布'
+  if (status === 'exists') return '已存在'
   if (status === 'failed') return '发布失败'
   if (status === 'cancelled') return '已取消'
   return status || '未知'
@@ -449,6 +481,7 @@ const isRowActionable = (row: QueueTaskRow) => {
 
 const taskStatusTagType = (status: string) => {
   if (status === 'success') return 'success'
+  if (status === 'exists') return 'warning'
   if (status === 'failed') return 'danger'
   if (status === 'running') return 'warning'
   return 'info'
@@ -633,6 +666,7 @@ const fetchTasks = async (options: { silent?: boolean } = {}) => {
       success: Number(counts.success || 0),
       failed: Number(counts.failed || 0),
       cancelled: Number(counts.cancelled || 0),
+      exists: Number(counts.exists || 0),
     }
 
     nowTick.value = Date.now()
@@ -774,11 +808,78 @@ const cancelTask = async (row: QueueTaskRow) => {
   }
 }
 
-const openPublishLogs = (row: QueueTaskRow) => {
-  const query: Record<string, string> = {}
-  if (row.group_id) query.queue_group_id = String(row.group_id)
-  if (row.target_site) query.target_site = String(row.target_site)
-  router.push({ path: '/publish-logs', query })
+const logDialogVisible = ref(false)
+const logLoading = ref(false)
+const currentLog = ref<Record<string, any> | null>(null)
+const currentLogTitle = ref('')
+
+// 查看该种子（队列任务）的实际发布日志：直接内联弹窗展示，不再跳转发种日志菜单。
+const openPublishLogs = async (row: QueueTaskRow) => {
+  currentLogTitle.value = `${row.target_site || ''} · ${row.title || ''}`.trim() || `任务 #${row.id}`
+  currentLog.value = null
+  logDialogVisible.value = true
+  logLoading.value = true
+  try {
+    const params = new URLSearchParams()
+    if (row.group_id) params.set('queue_group_id', String(row.group_id))
+    if (row.target_site) params.set('target_site', String(row.target_site))
+    const qs = params.toString()
+    const response = await axios.get(`/api/publish_logs/by_queue_task/${Number(row.id)}${qs ? '?' + qs : ''}`)
+    const data = response.data || {}
+    if (data.success === false) {
+      throw new Error(data.message || '获取发布日志失败')
+    }
+    currentLog.value = data.data || null
+  } catch (e: unknown) {
+    ElMessage.error(resolveRequestError(e, '获取发布日志失败'))
+    currentLog.value = null
+  } finally {
+    logLoading.value = false
+  }
+}
+
+// publishLogStatusText 把发种日志状态映射为中文展示文案。
+const publishLogStatusText = (status?: string): string => {
+  switch (String(status || '').trim()) {
+    case 'success':
+      return '发布成功'
+    case 'edited':
+      return '发布后编辑'
+    case 'exists':
+      return '种子已存在'
+    case 'failed':
+      return '发布失败'
+    case 'pre_check_limit':
+      return '预检查限制'
+    case 'invalidated':
+      return '已作废'
+    case 'queued':
+      return '等待发布'
+    case 'running':
+      return '发布中'
+    default:
+      return String(status || '未知')
+  }
+}
+
+// publishLogStatusType 把发种日志状态映射为 el-tag 的颜色类型。
+const publishLogStatusType = (status?: string): '' | 'success' | 'warning' | 'info' | 'danger' => {
+  switch (String(status || '').trim()) {
+    case 'success':
+    case 'edited':
+    case 'exists':
+      return 'success'
+    case 'failed':
+    case 'invalidated':
+      return 'danger'
+    case 'pre_check_limit':
+      return 'warning'
+    case 'queued':
+    case 'running':
+      return 'info'
+    default:
+      return 'info'
+  }
 }
 
 const startClock = () => {
@@ -1072,5 +1173,49 @@ watch([autoRefresh, autoRefreshInterval], () => {
   .pagination-controls {
     justify-content: flex-start;
   }
+}
+
+.publish-log-dialog {
+  min-height: 120px;
+}
+
+.publish-log-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #606266;
+}
+
+.publish-log-url {
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #606266;
+  word-break: break-all;
+}
+
+.publish-log-content {
+  margin: 0;
+  padding: 12px;
+  max-height: 420px;
+  overflow: auto;
+  background-color: #f7f8fa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: #303133;
+}
+
+/* 下载器发布进度列表：「已存在」状态用黄色字体展示（金黄花色，浅黄底+黄边）。 */
+.status-tag-exists {
+  --el-tag-text-color: #d48806;
+  --el-tag-bg-color: #fffbe6;
+  --el-tag-border-color: #ffe58f;
 }
 </style>

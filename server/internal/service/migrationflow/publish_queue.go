@@ -1309,8 +1309,11 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			logx.Warnf(publishQueueLogModule, "标记任务成功失败 id=%d err=%v", taskID, err)
 		}
 		if processingshared.ToBool(result["is_existing_torrent"]) {
-			// 目标站点已存在该种子属确定性跳过：除通知调度器立即继续外，
-			// 还需把入队时计入的「已发布」改判为「跳过」（countAsSkipped=true）。
+			// 目标站点已存在该种子属确定性跳过：队列任务状态单独归为「已存在」（exists），
+			// 与「已发布」区分开；并通知调度器立即继续，把入队时计入的「已发布」改判为「跳过」（countAsSkipped=true）。
+			if err := s.queueRepo.UpdateTaskAfterExists(taskID, resultText); err != nil {
+				logx.Warnf(publishQueueLogModule, "标记任务已存在失败 id=%d err=%v", taskID, err)
+			}
 			s.notifyScheduledSeedContinue(taskRecord, "目标站点已存在", true)
 		}
 		logx.Infof(publishQueueLogModule, "队列任务完成 id=%d success=true status=%d", taskID, status)

@@ -223,6 +223,15 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	// 站点用标签表达「动画」属性，类型字段未必是动画：命中动漫/动画标签时强制归入动画大类。
 	hasAnimation := hasAnimationTag(input.UploadData)
 
+	// 馒头动漫资源硬性要求：命中动漫/动画标签时，必须提供 Bangumi 条目链接，否则不允许发布。
+	// 该检查在发起上传之前完成（确定性拒绝），站点不会新增种子；命中时由 workflow 改判为「跳过」。
+	// Bangumi 链接解析提前到此，供下面的预检查使用（非动漫分支沿用解析结果继续发种）。
+	bangumiLink, bangumiRaw := resolveMTeamBangumiLink(input, std)
+	if hasAnimation && bangumiLink == "" {
+		reason := "馒头动漫资源需要填写Bangumi链接"
+		return publisher.PublishResult{AttemptDetailLog: "发布前校验失败: " + reason}, publisher.NewPreCheckError(reason)
+	}
+
 	// 未命中即回落到 defaults，故每一维度都记录告警，便于事后核对站点字典。
 	fallbackNotes := make([]string, 0, 6)
 	pick := func(label string, mapping map[string]string, raw, fallback string) string {
@@ -270,7 +279,7 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	}
 	// Bangumi：站点字段名为 bangumi，只接受 bangumi.tv / bgm.tv 的 subject 页链接（长度上限 255），
 	// 裸数字 ID 站点会自动补成链接，这里按同一规则归一后再提交。
-	bangumiLink, bangumiRaw := resolveMTeamBangumiLink(input, std)
+	// 解析已提前到动漫预检查处完成（bangumiLink / bangumiRaw 已在上方声明），此处仅落表单字段。
 	if bangumiLink != "" {
 		textFields["bangumi"] = bangumiLink
 	}

@@ -161,6 +161,48 @@ func (s *MigrateService) ListPublishLogs(query repository.PublishLogQuery) (map[
 	}, 200
 }
 
+// GetPublishLogByQueueTask 查询指定队列任务（下载器发布进度页的一行）对应的实际发种日志。
+// 优先按 queue_task_id 精确匹配（队列发布与立即发布都会把 queue_task_id 写入 publish_logs）；
+// 若未命中则回退到 queue_group_id + target_site，兼容历史日志未回填 queue_task_id 的情况。
+// 参数/返回：queueTaskID 为 publish_queue_tasks.id；fallbackGroupID/fallbackTargetSite 为兜底筛选；
+// 返回 success/data（命中为 PublishLogEntry，未命中为 nil）/matched_by 与状态码。
+// 失败场景：日志仓储未初始化返回 500。
+// 副作用：无（只读）。
+func (s *MigrateService) GetPublishLogByQueueTask(queueTaskID int64, fallbackGroupID, fallbackTargetSite string) (map[string]any, int) {
+	if s == nil || s.publishLogRepo == nil {
+		return map[string]any{"success": false, "message": "发种日志未初始化"}, 500
+	}
+	if queueTaskID > 0 {
+		if entry, ok, err := s.publishLogRepo.FindLatestByQueueTaskID(queueTaskID); err == nil && ok && entry != nil {
+			return map[string]any{
+				"success":    true,
+				"data":       entry,
+				"matched_by": "queue_task_id",
+			}, 200
+		}
+	}
+	if strings.TrimSpace(fallbackGroupID) != "" && strings.TrimSpace(fallbackTargetSite) != "" {
+		rows, _, err := s.publishLogRepo.List(repository.PublishLogQuery{
+			QueueGroupID: strings.TrimSpace(fallbackGroupID),
+			TargetSite:   strings.TrimSpace(fallbackTargetSite),
+			Page:         1,
+			PageSize:     1,
+		})
+		if err == nil && len(rows) > 0 {
+			return map[string]any{
+				"success":    true,
+				"data":       rows[0],
+				"matched_by": "queue_group_target",
+			}, 200
+		}
+	}
+	return map[string]any{
+		"success": true,
+		"data":    nil,
+		"message": "暂无发布日志",
+	}, 200
+}
+
 // BatchDeletePublishLogs 批量删除发种日志（同时处理关联的发种队列任务）。
 // 参数/返回：ids 为发种日志主键列表；返回删除统计与状态码。
 // 失败场景：日志仓储未初始化返回 500；无有效 ID 返回 400。

@@ -352,6 +352,7 @@ func registerRoutes(
 
 		api.GET("/publish_logs", migrateHandler.PublishLogs)
 		api.POST("/publish_logs/delete", migrateHandler.BatchDeletePublishLogs)
+		api.GET("/publish_logs/by_queue_task/:id", migrateHandler.GetPublishLogByQueueTask)
 	}
 
 	migrateAPI := engine.Group("/api/migrate")

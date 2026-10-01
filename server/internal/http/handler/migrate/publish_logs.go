@@ -40,6 +40,25 @@ func (h *Handler) PublishLogs(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+// GetPublishLogByQueueTask 按队列任务 ID 查询其实际发种日志（供下载器发布进度页内联展示，不再跳转发种日志菜单）。
+// 参数/返回：path 参数 id 为队列任务 ID；query 可选 queue_group_id / target_site 作为兜底匹配；返回日志数据或 4xx/5xx。
+// 失败场景：id 非法返回 400；服务层错误返回 5xx。
+// 副作用：无（只读）。
+func (h *Handler) GetPublishLogByQueueTask(c *gin.Context) {
+	id, parseErr := strconv.ParseInt(c.Param("id"), 10, 64)
+	if parseErr != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的队列任务 ID"})
+		return
+	}
+	groupID := strings.TrimSpace(c.Query("queue_group_id"))
+	targetSite := strings.TrimSpace(c.Query("target_site"))
+	result, status := h.service.GetPublishLogByQueueTask(id, groupID, targetSite)
+	if status == 0 {
+		status = http.StatusOK
+	}
+	c.JSON(status, result)
+}
+
 // BatchDeletePublishLogs 批量删除发种日志（含关联队列任务取消）。
 // 参数/返回：请求体为 {"ids": [1, 2, 3]}；返回删除结果与状态码。
 // 失败场景：请求体解析失败或 ids 为空返回 400；服务层错误返回 5xx。
