@@ -9,6 +9,7 @@ import type {
   ProgressCounter,
   PublishDisplayResult,
   PublishDisplayStatus,
+  PublishWaveSummary,
   ReverseMappings,
   StandardParamKey,
   TitleComponent,
@@ -91,6 +92,7 @@ export type PublishFlowApi = {
   handleTagClose: (tag: string) => void
   isNextButtonDisabled: ComputedRef<boolean>
   nextButtonTooltipContent: ComputedRef<string>
+  publishWaveSummary: ComputedRef<PublishWaveSummary | null>
   groupedResults: ComputedRef<PublishDisplayResult[][]>
   showSiteLog: (siteName: string, logs: string | undefined) => void
   filterUploadedParam: (url: string) => string
@@ -205,6 +207,10 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
 
   const isBatchPublishing = ref(false)
   const batchPublishConcurrency = ref(1)
+  // 当前批次是否按发种间隔分波发布；以及波间隔（分钟）。
+  // 分波时波与波之间会串行等待间隔，剩余站点属于「已在队列中待发布」。
+  const pacingActive = ref(false)
+  const pacingIntervalMinutes = ref(0)
 
   // 页面显式设置的发种间隔（分钟）；0 表示不覆盖，沿用下载器设置里的发布节奏。
   // 上限与「设置 → 下载器」的间隔输入保持一致（1440 分钟 = 1 天）。
@@ -217,6 +223,8 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
   const resetBatchPublishRuntime = () => {
     isBatchPublishing.value = false
     batchPublishConcurrency.value = 1
+    pacingActive.value = false
+    pacingIntervalMinutes.value = 0
   }
 
   const setBatchPublishRuntime = (siteCount: number, rawConcurrency: unknown) => {
@@ -287,6 +295,8 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       setBatchPublishRuntime(siteCount, startResponse.data?.concurrency)
 
       const pacingMinutes = Number(startResponse.data?.publish_interval_minutes || 0)
+      pacingActive.value = pacingMinutes > 0
+      pacingIntervalMinutes.value = pacingMinutes
       if (pacingMinutes > 0) {
         const overrideMinutes = resolvePublishIntervalOverride()
         ElNotification({
@@ -432,6 +442,11 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     activeStep.value = 3
     isLoading.value = true
     finalResultsList.value = []
+
+    // 串行回退路径同样支持发种间隔：置为分波（每波 1 站）以便展示排队进度。
+    const serialIntervalMinutes = resolvePublishIntervalOverride()
+    pacingActive.value = serialIntervalMinutes > 0
+    pacingIntervalMinutes.value = serialIntervalMinutes
 
     // Initialize progress tracking - 确保进度条立即显示
     const siteCount = selectedTargetSites.value.length
@@ -1517,7 +1532,15 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       publishingSites.value.filter((siteName) => !resultsBySite.has(siteName)),
     )
 
-    if (isBatchPublishing.value && !isStopped && unfinishedSites.length > 0) {
+    // 分波发布：波与波之间会串行等待发种间隔，此刻没有任何站点在实际发布，
+    // 剩余站点都在队列里等下一波。此时不做「发布中」补位，统一按「待发布」展示。
+    const inWaveGap =
+      pacingActive.value &&
+      runningSites.size === 0 &&
+      resultsBySite.size > 0 &&
+      resultsBySite.size < selectedTargetSites.value.length
+
+    if (isBatchPublishing.value && !isStopped && unfinishedSites.length > 0 && !inWaveGap) {
       const expectedRunningCount = Math.min(batchPublishConcurrency.value, unfinishedSites.length)
       let missingSlots = expectedRunningCount - runningSites.size
 
@@ -1530,6 +1553,9 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         }
       }
     }
+
+    // 设置了发种间隔（分波）时，未开始的站点是在队列里等下一波，文案用「待发布」。
+    const waitingMessage = pacingActive.value ? '待发布' : '等待中'
 
     return selectedTargetSites.value.map((siteName) => {
       const existing = resultsBySite.get(siteName)
@@ -1562,9 +1588,26 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
             ? '发布中...'
             : displayStatus === 'paused'
               ? '已暂停'
-              : '等待中',
+              : waitingMessage,
       }
     })
+  })
+
+  // 分波发布时的整体汇总：已发布 X 个站点，剩余 Y 个站点已在队列中待发布。
+  // 仅在设置了发种间隔且已有站点发布完成（第一批波次结束）后出现。
+  const publishWaveSummary = computed<PublishWaveSummary | null>(() => {
+    // 批次被限制/取消中断时，剩余站点并非“排队待发布”，不展示汇总。
+    if (!pacingActive.value || limitAlert.value.visible) return null
+    const total = selectedTargetSites.value.length
+    const published = publishProgress.value.current
+    if (total <= 0 || published <= 0 || published >= total) return null
+    return {
+      published,
+      remaining: total - published,
+      total,
+      perWave: Math.max(1, batchPublishConcurrency.value),
+      intervalMinutes: pacingIntervalMinutes.value,
+    }
   })
 
   // 分组结果，每行5个
@@ -1678,6 +1721,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     handleTagClose,
     isNextButtonDisabled,
     nextButtonTooltipContent,
+    publishWaveSummary,
     groupedResults,
     showSiteLog,
     filterUploadedParam,

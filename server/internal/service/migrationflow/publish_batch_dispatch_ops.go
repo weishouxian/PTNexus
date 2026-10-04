@@ -109,6 +109,9 @@ func (s *MigrateService) PublishDispatchedTaskNow(queueTaskID int64) (map[string
 		targetPayload[key] = value
 	}
 	targetPayload["targetSite"] = siteName
+	// 与批次 runner 同口径：注入队列进度记录 ID，保证站外执行写的发种日志能与本行队列任务关联（进度页「日志」可查）。
+	targetPayload["queue_task_id"] = queueTaskID
+	targetPayload["queue_group_id"] = batchID
 
 	go func() {
 		logx.Infof(publishQueueLogModule, "立即发布任务站外执行开始 queue_task_id=%d batch_id=%s site=%s", queueTaskID, batchID, siteName)
@@ -126,7 +129,7 @@ func (s *MigrateService) PublishDispatchedTaskNow(queueTaskID int64) (map[string
 			success = false
 		}
 
-		// finished 回写会经 MarkDispatchedFinished 落库并同步 publish_logs。
+		// finished 回写经 tracker.progress 落库到 publish_queue_tasks（已存在归 exists，其余按成功/失败）。
 		ctx.tracker.progress(siteName, "finished", result)
 		s.publishState.MarkSiteResult(batchID, siteName, result, success)
 		s.publishState.Emit(batchID, map[string]any{"type": "site_finished", "siteName": siteName, "result": result})

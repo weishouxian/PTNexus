@@ -163,7 +163,9 @@ func (s *MigrateService) ListPublishLogs(query repository.PublishLogQuery) (map[
 
 // GetPublishLogByQueueTask 查询指定队列任务（下载器发布进度页的一行）对应的实际发种日志。
 // 优先按 queue_task_id 精确匹配（队列发布与立即发布都会把 queue_task_id 写入 publish_logs）；
-// 若未命中则回退到 queue_group_id + target_site，兼容历史日志未回填 queue_task_id 的情况。
+// 若未命中则回退到 queue_group_id + target_site，兼容历史日志未回填 queue_task_id 的情况；
+// 仍未命中时再按队列任务的 task_id + target_site 兜底，兼容早期「批量立即发布」日志既无
+// queue_task_id 也无 queue_group_id 的情况。
 // 参数/返回：queueTaskID 为 publish_queue_tasks.id；fallbackGroupID/fallbackTargetSite 为兜底筛选；
 // 返回 success/data（命中为 PublishLogEntry，未命中为 nil）/matched_by 与状态码。
 // 失败场景：日志仓储未初始化返回 500。
@@ -194,6 +196,19 @@ func (s *MigrateService) GetPublishLogByQueueTask(queueTaskID int64, fallbackGro
 				"data":       rows[0],
 				"matched_by": "queue_group_target",
 			}, 200
+		}
+	}
+	// 最后兜底：早期「批量立即发布」（batch_live）落库的日志没有 queue_task_id/queue_group_id，
+	// 只能用队列任务自身的 task_id + target_site 反查（同一上下文重复发同一站取最新一条）。
+	if queueTaskID > 0 && s.queueRepo != nil {
+		if task, ok, err := s.queueRepo.FindTaskByID(queueTaskID); err == nil && ok && task != nil {
+			if entry, hit, findErr := s.publishLogRepo.FindLatestByTaskAndSite(task.TaskID, task.TargetSite); findErr == nil && hit && entry != nil {
+				return map[string]any{
+					"success":    true,
+					"data":       entry,
+					"matched_by": "task_id_target_site",
+				}, 200
+			}
 		}
 	}
 	return map[string]any{

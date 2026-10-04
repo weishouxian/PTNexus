@@ -207,8 +207,19 @@ func (s *MigrateService) runPublishBatch(batchID string, payload map[string]any,
 			Payload:     payload,
 		},
 		publishworkflow.ManagedBatchFromPayloadDeps{
-			State:          s.publishState,
-			PublishPayload: s.Publish,
+			State: s.publishState,
+			// 发布前把该站点对应的队列进度记录 ID 注入 payload：发种日志据此按 queue_task_id 归并，
+			// 否则「下载器发布进度」页点「日志」会因 publish_logs 无法与队列任务关联而显示为空。
+			PublishPayload: func(targetPayload map[string]any) (map[string]any, int) {
+				if targetPayload != nil && progress != nil {
+					siteName := strings.TrimSpace(processingshared.ToString(targetPayload["targetSite"], ""))
+					if queueTaskID := progress.queueTaskID(siteName); queueTaskID > 0 {
+						targetPayload["queue_task_id"] = queueTaskID
+						targetPayload["queue_group_id"] = batchID
+					}
+				}
+				return s.Publish(targetPayload)
+			},
 			// 站点开始/结束时回写进度记录，使进度页的状态与实际发布时间保持实时。
 			OnSiteProgress: progress.progress,
 			// 批次被取消时，把还没轮到的记录落为「已取消」，避免卡在「待发布」。

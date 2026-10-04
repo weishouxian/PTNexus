@@ -152,6 +152,20 @@ export interface LimitAlert {
   message: string
 }
 
+// 分波发布（设置了发种间隔）时的整体进度汇总：已发布多少、还剩多少在队列中待发布。
+export interface PublishWaveSummary {
+  /** 已处理完成的站点数（含成功 / 失败 / 跳过）。 */
+  published: number
+  /** 仍在队列中等待后续波次发布的站点数。 */
+  remaining: number
+  /** 目标站点总数。 */
+  total: number
+  /** 每波并发站点数。 */
+  perWave: number
+  /** 波间隔（分钟）。 */
+  intervalMinutes: number
+}
+
 export interface TagOption {
   label: string
   value: string
@@ -233,6 +247,7 @@ export interface CrossSeedPanelContext {
   publishProgress: Ref<ProgressCounter>
   downloaderProgress: Ref<ProgressCounter>
   limitAlert: Ref<LimitAlert>
+  publishWaveSummary: ComputedRef<PublishWaveSummary | null>
   groupedResults: ComputedRef<PublishDisplayResult[][]>
   showSiteLog: (siteName: string, logs: string | undefined) => void
   filterUploadedParam: (url: string) => string

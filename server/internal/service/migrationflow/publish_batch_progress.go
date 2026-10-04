@@ -31,7 +31,7 @@ type livePublishProgressTracker struct {
 // progress 是 runner 的站点级进度回调（phase 为 started/finished），实现真正的状态回写。
 // 参数/返回：siteName 为站点名；phase 为阶段；result 为发布结果（started 阶段为 nil）；无返回值。
 // 失败场景：记录未登记或更新失败时只记录日志，不影响发布流程。
-// 副作用：更新 publish_queue_tasks 中对应记录的状态与时间字段。
+// 副作用：更新 publish_queue_tasks 中对应记录的状态与时间字段（已存在归 exists，其余按成功/失败）。
 func (t *livePublishProgressTracker) progress(siteName string, phase string, result map[string]any) {
 	if t == nil || t.service == nil || t.service.queueRepo == nil {
 		return
@@ -55,6 +55,15 @@ func (t *livePublishProgressTracker) progress(siteName string, phase string, res
 		}
 		detail = truncateProgressText(detail, 500)
 
+		// 目标站点早已存在该种子（且未走自动更新）：队列行单独归为「已存在」，与「已发布」区分开，
+		// 判定顺序与发种日志的 logStatus 保持一致（自动更新成功优先算「已发布」）。
+		if success && !batchResultAutoEdited(result) && processingshared.ToBool(result["is_existing_torrent"]) {
+			if err := t.service.queueRepo.MarkDispatchedExists(id, detail); err != nil {
+				logx.Warnf(publishQueueLogModule, "回写立即发布进度失败(已存在) queue_task_id=%d site=%s err=%v", id, siteName, err)
+			}
+			return
+		}
+
 		errText := ""
 		if !success {
 			errText = detail
@@ -63,6 +72,36 @@ func (t *livePublishProgressTracker) progress(siteName string, phase string, res
 			logx.Warnf(publishQueueLogModule, "回写立即发布进度失败(结束) queue_task_id=%d site=%s err=%v", id, siteName, err)
 		}
 	}
+}
+
+// batchResultAutoEdited 判断发布结果是否执行了「目标站点已存在 → 自动更新种子信息」。
+// 参数/返回：result 为发布返回结果；返回是否成功执行了自动更新。
+// 失败场景：无（字段缺失或类型不符按未执行处理）。
+// 副作用：无。
+func batchResultAutoEdited(result map[string]any) bool {
+	if !processingshared.ToBool(result["auto_edit_executed"]) {
+		return false
+	}
+	autoEditResult, ok := result["auto_edit_result"].(map[string]any)
+	if !ok || autoEditResult == nil {
+		return false
+	}
+	return processingshared.ToBool(autoEditResult["success"])
+}
+
+// queueTaskID 返回指定目标站在本批次中登记的队列进度记录 ID（未登记返回 0）。
+// 参数/返回：siteName 为站点名；返回 publish_queue_tasks.id。
+// 失败场景：无。
+// 副作用：无（只读；ids 在登记完成后不再变更）。
+func (t *livePublishProgressTracker) queueTaskID(siteName string) int64 {
+	if t == nil {
+		return 0
+	}
+	id, ok := t.ids[strings.TrimSpace(siteName)]
+	if !ok || id <= 0 {
+		return 0
+	}
+	return id
 }
 
 // markBatchStopped 在批次被取消、提前结束时，把仍未执行的进度记录标记为已取消。

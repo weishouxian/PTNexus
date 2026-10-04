@@ -916,6 +916,31 @@ func (r *PublishQueueRepository) MarkDispatchedFinished(id int64, success bool, 
 		}).Error
 }
 
+// MarkDispatchedExists 把已派发记录标记为「已存在」（发布成功但目标站点早已存在该种子）。
+// 参数/返回：id 为任务主键；result 为结果摘要；返回 error。
+// 失败场景：DB 未初始化或更新失败返回 error。
+// 副作用：更新 publish_queue_tasks（dispatched/running → exists）。
+func (r *PublishQueueRepository) MarkDispatchedExists(id int64, result string) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish queue repo is nil")
+	}
+	if id <= 0 {
+		return nil
+	}
+
+	nowText := time.Now().Format(PublishQueueTimeLayout)
+	return r.store.DB.Table("publish_queue_tasks").
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"status":      PublishQueueStatusExists,
+			"next_run_at": nil,
+			"finished_at": nowText,
+			"last_result": strings.TrimSpace(result),
+			"last_error":  "",
+			"updated_at":  nowText,
+		}).Error
+}
+
 // MarkDispatchedCancelled 把仍处于「已派发」状态的记录标记为已取消（批次被用户取消时使用）。
 // 参数/返回：ids 为任务主键列表；reason 为取消原因；返回受影响条数与 error。
 // 失败场景：DB 未初始化或更新失败返回 error。
