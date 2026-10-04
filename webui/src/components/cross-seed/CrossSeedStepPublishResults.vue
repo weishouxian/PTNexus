@@ -36,6 +36,21 @@
       </div>
     </div>
 
+    <!-- 分波发布（设置了发种间隔）时的整体进度汇总 -->
+    <div class="publish-wave-summary" v-if="publishWaveSummary">
+      <el-icon class="wave-summary-icon"><InfoFilled /></el-icon>
+      <span class="wave-summary-text">
+        已发布 {{ publishWaveSummary.published }} 个站点，剩余
+        {{ publishWaveSummary.remaining }} 个站点已在队列中待发布
+      </span>
+      <span class="wave-summary-hint">
+        每 {{ publishWaveSummary.perWave }} 个站点一波<template
+          v-if="publishWaveSummary.intervalMinutes > 0"
+          >，波间隔 {{ publishWaveSummary.intervalMinutes }} 分钟</template
+        >
+      </span>
+    </div>
+
     <div class="results-rows-container">
       <div v-for="(row, rowIndex) in groupedResults" :key="rowIndex" class="results-row">
         <div class="row-sites">
@@ -80,7 +95,7 @@
             </div>
             <h4 class="card-title">{{ result.siteName }}</h4>
             <div v-if="result.displayStatus === 'waiting'" class="status-tag">
-              <el-tag size="small" class="waiting-tag">等待中</el-tag>
+              <el-tag size="small" class="waiting-tag">{{ result.message || '等待中' }}</el-tag>
             </div>
             <div v-else-if="result.displayStatus === 'publishing'" class="status-tag">
               <el-tag type="primary" size="small">发布中</el-tag>
@@ -157,6 +172,7 @@ import {
   CircleCheckFilled,
   CircleCloseFilled,
   Clock,
+  InfoFilled,
   Loading,
   Refresh,
   Warning,
@@ -167,6 +183,7 @@ const {
   publishProgress,
   downloaderProgress,
   limitAlert,
+  publishWaveSummary,
   groupedResults,
   showSiteLog,
   filterUploadedParam,

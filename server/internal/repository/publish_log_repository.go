@@ -122,6 +122,38 @@ func (r *PublishLogRepository) FindLatestByQueueTaskID(queueTaskID int64) (*Publ
 	return &row, true, nil
 }
 
+// FindLatestByTaskAndSite 按 task_id + target_site 查询最新的一条日志记录。
+// 参数/返回：taskID 为转种上下文任务标识；targetSite 为目标站点；返回日志记录、是否命中与 error。
+// 失败场景：DB 未初始化或查询失败返回 error；taskID/targetSite 为空时直接返回未命中。
+// 副作用：读取 publish_logs。
+//
+// 说明：用于兜底匹配「早期批次发布（batch_live）」写入的日志——那批记录没有回填 queue_task_id/queue_group_id，
+// 只能靠 task_id + 目标站点定位；同一上下文重复发布到同一站点时取最新一条（id DESC）。
+func (r *PublishLogRepository) FindLatestByTaskAndSite(taskID string, targetSite string) (*PublishLogEntry, bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, false, errors.New("publish log repo is nil")
+	}
+	trimmedTaskID := strings.TrimSpace(taskID)
+	trimmedSite := strings.TrimSpace(targetSite)
+	if trimmedTaskID == "" || trimmedSite == "" {
+		return nil, false, nil
+	}
+
+	row := PublishLogEntry{}
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Where("task_id = ?", trimmedTaskID).
+		Where("target_site = ?", trimmedSite).
+		Order("id DESC").
+		Limit(1).
+		Find(&row).Error; err != nil {
+		return nil, false, err
+	}
+	if row.ID == 0 {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
 // NewPublishLogRepository 创建发种日志仓储实例。
 // 参数/返回：store 为数据库连接容器；返回可复用的仓储对象。
 // 失败场景：无直接失败场景（store 为 nil 时由调用方处理）。

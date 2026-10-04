@@ -1195,6 +1195,8 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "publish_logs", name: "idx_publish_logs_scene", columns: []string{"scene"}},
 		{table: "publish_logs", name: "idx_publish_logs_queue_task_id", columns: []string{"queue_task_id"}},
 		{table: "publish_logs", name: "idx_publish_logs_queue_group_id", columns: []string{"queue_group_id"}},
+		// 兜底匹配用：早期批次发布日志没有 queue_task_id，只能按 task_id + 目标站点反查。
+		{table: "publish_logs", name: "idx_publish_logs_task_site", columns: []string{"task_id", "target_site"}},
 
 		{table: "scheduled_seed_tasks", name: "idx_sched_seed_status_next_run", columns: []string{"status", "next_run_at"}},
 		{table: "scheduled_seed_tasks", name: "idx_sched_seed_trigger_tag", columns: []string{"trigger_tag"}},

@@ -1469,6 +1469,35 @@
     font-weight: 600;
   }
 
+  /* 分波发布（设置了发种间隔）时的整体进度汇总 */
+  .publish-wave-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: -14px 0 20px;
+    padding: 10px 16px;
+    background: #ecf5ff;
+    border: 1px solid #d9ecff;
+    border-radius: 8px;
+    font-size: 14px;
+
+    .wave-summary-icon {
+      color: #409eff;
+      font-size: 16px;
+    }
+
+    .wave-summary-text {
+      color: #303133;
+      font-weight: 600;
+    }
+
+    .wave-summary-hint {
+      color: #909399;
+      font-size: 12px;
+    }
+  }
+
   /* 🚫 发种限制提示样式 */
   .limit-alert-section {
     margin-top: 20px;
