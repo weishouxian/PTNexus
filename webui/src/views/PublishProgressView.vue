@@ -156,6 +156,14 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="大小" width="100" align="center">
+          <template #default="scope">
+            <span :title="scope.row.size ? `${scope.row.size} 字节` : ''">
+              {{ scope.row.size_formatted || '-' }}
+            </span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="下载器" width="120" align="center">
           <template #default="scope">
             <div class="status-tags">
@@ -355,6 +363,9 @@ type QueueTaskRow = {
   last_error?: string | null
   created_at?: string | null
   updated_at?: string | null
+  /** 种子体积（字节）与人类可读文本，由后端按 context_json 的 Hash 关联 torrents.size 得到；0/空表示未取到。 */
+  size?: number | null
+  size_formatted?: string | null
 }
 
 type StatusCounts = {

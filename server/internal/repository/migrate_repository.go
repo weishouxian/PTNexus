@@ -593,6 +593,65 @@ func (r *MigrateRepository) FindSeedParameterNameByTorrentID(torrentID string) (
 	return name, true, nil
 }
 
+// SeedParameterHashesByTorrentIDs 按 torrent_id 批量取种子 infohash，用于发种日志列表按种子体积展示大小。
+// 参数/返回：torrentIDs 为源站种子 ID（首尾空格不敏感、自动去重）；返回 torrent_id→hash(小写) 与 error。
+// 失败场景：仓储未初始化或数据库查询失败时返回 error；入参无有效值时返回空映射且不执行 SQL。
+// 副作用：只读 seed_parameters，不修改数据。
+//
+// 说明：同一 torrent_id 在多个站点可能对应不同 hash，这里取 updated_at 最新的一条，保证结果稳定且可预期。
+func (r *MigrateRepository) SeedParameterHashesByTorrentIDs(torrentIDs []string) (map[string]string, error) {
+	result := map[string]string{}
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return result, errors.New("migrate repo is nil")
+	}
+
+	cleaned := make([]string, 0, len(torrentIDs))
+	seen := map[string]struct{}{}
+	for _, item := range torrentIDs {
+		trimmed := strings.TrimSpace(item)
+		if trimmed == "" {
+			continue
+		}
+		if _, exists := seen[trimmed]; exists {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		cleaned = append(cleaned, trimmed)
+	}
+	if len(cleaned) == 0 {
+		return result, nil
+	}
+
+	type hashRow struct {
+		TorrentID string `gorm:"column:torrent_id"`
+		Hash      string `gorm:"column:hash"`
+		UpdatedAt string `gorm:"column:updated_at"`
+	}
+	rows := make([]hashRow, 0, len(cleaned))
+	if err := r.store.DB.Table("seed_parameters").
+		Select("torrent_id, hash, updated_at").
+		Where("torrent_id IN ? AND hash IS NOT NULL AND TRIM(hash) <> ''", cleaned).
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	latestAt := map[string]string{}
+	for _, row := range rows {
+		key := strings.TrimSpace(row.TorrentID)
+		hash := strings.ToLower(strings.TrimSpace(row.Hash))
+		if key == "" || hash == "" {
+			continue
+		}
+		updatedAt := strings.TrimSpace(row.UpdatedAt)
+		if existing, ok := result[key]; ok && existing != "" && latestAt[key] >= updatedAt {
+			continue
+		}
+		result[key] = hash
+		latestAt[key] = updatedAt
+	}
+	return result, nil
+}
+
 func (r *MigrateRepository) ListTorrentsByNames(names []string) ([]map[string]any, error) {
 	rows := make([]map[string]any, 0)
 	if len(names) == 0 {

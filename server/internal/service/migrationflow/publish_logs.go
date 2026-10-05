@@ -145,6 +145,9 @@ func (s *MigrateService) ListPublishLogs(query repository.PublishLogQuery) (map[
 		return map[string]any{"success": false, "message": "查询发种日志失败: " + err.Error()}, 500
 	}
 
+	// 回填展示用派生字段：种子体积（按 torrent_id → seed_parameters.hash → torrents.size 关联）。
+	s.fillPublishLogSizes(rows)
+
 	pageSize := query.PageSize
 	if pageSize < 1 {
 		pageSize = 20

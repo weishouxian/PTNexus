@@ -70,6 +70,11 @@ type PublishQueueTask struct {
 	// EffectiveScheduledAt 为展示用派生字段（不落库）：任务真正可执行的时间，
 	// 取 scheduled_at 与 next_run_at 中较晚者，都为空时退回 created_at（立即执行）。
 	EffectiveScheduledAt string `json:"effective_scheduled_at" gorm:"-"`
+
+	// Size / SizeFormatted 为展示用派生字段（不落库）：该任务对应种子的体积。
+	// 由服务层按 context_json 里的 Hash 关联 torrents.size 回填，原始单位为字节。
+	Size          int64  `json:"size" gorm:"-"`
+	SizeFormatted string `json:"size_formatted" gorm:"-"`
 }
 
 func (PublishQueueTask) TableName() string { return "publish_queue_tasks" }

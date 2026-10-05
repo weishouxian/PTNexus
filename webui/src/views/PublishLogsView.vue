@@ -148,6 +148,14 @@
           </template>
         </el-table-column>
 
+        <el-table-column label="大小" width="100" align="center">
+          <template #default="scope">
+            <span :title="scope.row.size ? `${scope.row.size} 字节` : ''">
+              {{ scope.row.size_formatted || '-' }}
+            </span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="发布状态" width="120" align="center">
           <template #default="scope">
             <div class="status-tags">
@@ -232,6 +240,9 @@ type PublishLogRow = {
   queue_task_id?: number | string | null
   logs?: string | null
   auto_add_result?: string | null
+  /** 种子体积（字节）与人类可读文本，由后端按 torrent_id 关联 seed_parameters.hash → torrents.size 得到；0/空表示未取到。 */
+  size?: number | null
+  size_formatted?: string | null
   [key: string]: unknown
 }
 

@@ -39,6 +39,9 @@ func (s *MigrateService) ListPublishQueueTasks(query repository.PublishQueueTask
 		rows[i].EffectiveScheduledAt = resolveQueueEffectiveScheduledAt(rows[i])
 	}
 
+	// 回填展示用派生字段：种子体积（按 context_json 的 Hash 关联 torrents.size）。
+	s.fillPublishQueueTaskSizes(rows)
+
 	counts, err := s.queueRepo.CountTaskStatuses(query)
 	if err != nil {
 		// 状态概览失败不影响列表展示，仅返回零值统计。
