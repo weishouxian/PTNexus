@@ -225,9 +225,10 @@ func pickDescriptionSection(uploadData map[string]any, intro map[string]any, key
 	return strings.TrimSpace(toStringAny(intro[key], ""))
 }
 
+// true 将MediaInfo加入到简介中
 func shouldInlineMediainfo(siteCode string) bool {
 	switch strings.ToLower(strings.TrimSpace(siteCode)) {
-	case "audiences", "btschool", "carpt", "kufei", "lemon", "oshen", "ptskit", "sewerpt", "ttg", "upxin", "zmpt", "xdypt", "pthome":
+	case "audiences", "btschool", "carpt", "kufei", "lemon", "oshen", "ptskit", "sewerpt", "ttg", "upxin", "zmpt", "xdypt", "pthome", "chdbits":
 		return true
 	default:
 		return false
