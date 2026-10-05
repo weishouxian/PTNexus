@@ -16,6 +16,10 @@ type TorrentsDataParams struct {
 	StateFilters              []string
 	SourceDataStatusFilters   []string
 	DownloaderFilters         []string
+	// TypeFilters/MediumFilters/SourceFilters 按源站抽取的类型/媒介/地区标准值筛选（如 category.movie、medium.remux、source.china）。
+	TypeFilters   []string
+	MediumFilters []string
+	SourceFilters []string
 	SourceAvailabilityFilters []string
 	ExistSiteNames            []string
 	NotExistSiteNames         []string

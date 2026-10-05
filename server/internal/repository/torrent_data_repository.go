@@ -699,6 +699,86 @@ func (r *TorrentDataRepository) SeedParameterSourceStatusByNames() (map[string]S
 	}
 	return result, nil
 }
+
+// SeedParameterBasics 描述某个种子名对应的类型/媒介/地区标准值。
+type SeedParameterBasics struct {
+	HasRecord bool
+	Type      string
+	Medium    string
+	Source    string
+}
+
+type nameSeedParameterBasics struct {
+	Name       string  `gorm:"column:name"`
+	Type       *string `gorm:"column:type"`
+	Medium     *string `gorm:"column:medium"`
+	Source     *string `gorm:"column:source"`
+	IsReviewed int     `gorm:"column:is_reviewed"`
+	UpdatedAt  *string `gorm:"column:updated_at"`
+}
+
+// SeedParameterBasicsByNames 汇总每个种子名的类型/媒介/地区标准值，供「一种多站」列表展示与筛选。
+// 参数/返回：返回 name -> SeedParameterBasics；同一名称存在多行（多站点/多 hash）时按 preferSeedParameterBasics 择优。
+// 失败场景：读取 seed_parameters 失败时返回错误，调用方可降级为空 map。
+// 副作用：只读查询，不修改数据。
+func (r *TorrentDataRepository) SeedParameterBasicsByNames() (map[string]SeedParameterBasics, error) {
+	rows := make([]nameSeedParameterBasics, 0)
+	query := `
+		SELECT name, type, medium, source,
+		       CASE WHEN is_reviewed THEN 1 ELSE 0 END AS is_reviewed,
+		       updated_at
+		FROM seed_parameters
+		WHERE name IS NOT NULL AND name != ''
+	`
+	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	result := map[string]SeedParameterBasics{}
+	picked := map[string]nameSeedParameterBasics{}
+	for _, row := range rows {
+		name := strings.TrimSpace(row.Name)
+		if name == "" {
+			continue
+		}
+		if previous, exists := picked[name]; exists && !preferSeedParameterBasics(row, previous) {
+			continue
+		}
+		picked[name] = row
+		result[name] = SeedParameterBasics{
+			HasRecord: true,
+			Type:      strings.TrimSpace(derefString(row.Type)),
+			Medium:    strings.TrimSpace(derefString(row.Medium)),
+			Source:    strings.TrimSpace(derefString(row.Source)),
+		}
+	}
+	return result, nil
+}
+
+// preferSeedParameterBasics 判定候选行是否更适合代表该种子名的类型/媒介/地区。
+// 优先级：已整理(is_reviewed) > 非空字段更多 > updated_at 更晚。
+func preferSeedParameterBasics(candidate nameSeedParameterBasics, current nameSeedParameterBasics) bool {
+	if candidate.IsReviewed != current.IsReviewed {
+		return candidate.IsReviewed > current.IsReviewed
+	}
+	candidateFilled := countFilledBasics(candidate)
+	currentFilled := countFilledBasics(current)
+	if candidateFilled != currentFilled {
+		return candidateFilled > currentFilled
+	}
+	return strings.TrimSpace(derefString(candidate.UpdatedAt)) > strings.TrimSpace(derefString(current.UpdatedAt))
+}
+
+func countFilledBasics(row nameSeedParameterBasics) int {
+	filled := 0
+	for _, value := range []*string{row.Type, row.Medium, row.Source} {
+		if strings.TrimSpace(derefString(value)) != "" {
+			filled++
+		}
+	}
+	return filled
+}
+
 func (r *TorrentDataRepository) UpdatePublishAtByName(name string, publishAt any) (int64, error) {
 	result := r.store.DB.Exec("UPDATE seed_parameters SET publish_at = ? WHERE name = ?", publishAt, name)
 	if result.Error != nil {

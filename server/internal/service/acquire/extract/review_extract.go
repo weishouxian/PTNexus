@@ -172,6 +172,11 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 	result.Resolution = inferred["resolution"]
 	result.Team = inferred["team"]
 	result.Type = strings.TrimSpace(basicInfo.Standard["type"])
+	// 简介正文「类别」行写“纪录/纪录片”时，类型强制对齐纪录片，
+	// 优先于站点页面「类型」字段（该字段常缺项，或把纪录片填成电影/剧集）。
+	if categoryType := InferTypeFromDescriptionCategory(result.Body); categoryType != "" {
+		result.Type = categoryType
+	}
 
 	applyFallbackBasicInfo(&result, basicInfo.Standard)
 	if teamFromPage := extractTeamFromPage(page); teamFromPage != "" &&
@@ -2611,6 +2616,13 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		values["type"] = "category.documentaries"
 	} else if hasTech("MUSIC", "演唱会", "音乐") {
 		values["type"] = "category.music"
+	}
+
+	// 简介正文「类别」行写“纪录/纪录片”时，类型一律对齐纪录片：
+	// 站点页面「类型」字段常缺该项，标题与 MediaInfo 也基本不会出现“纪录片”字样（只有片名+年份），
+	// 只按标题推断会漏判成 category.movie。此规则以正文类别为准，覆盖上面的推断结果。
+	if categoryType := InferTypeFromDescriptionCategory(body); categoryType != "" {
+		values["type"] = categoryType
 	}
 
 	switch {

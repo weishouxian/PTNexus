@@ -3,6 +3,7 @@ package tagging
 import (
 	"strings"
 
+	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 )
 
@@ -62,7 +63,10 @@ func RecomputeStandardTags(
 	}
 
 	mappedTags, unmappedTags := MapTagsToStandard(rawTagCandidates, siteCode)
-	return mappedTags, "", unmappedTags
+	// 简介「类别」行写“纪录/纪录片”时同步纠正类型，保证重算链路与抓取链路口径一致
+	// （未审核种子重算时会回写 seed_parameters.type）。
+	typeOverride := parser.InferTypeFromDescriptionCategory(description)
+	return mappedTags, typeOverride, unmappedTags
 }
 
 // AnyTitleComponentsToMaps 将任意数组过滤为有效 title_components 结构切片。
