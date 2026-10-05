@@ -89,6 +89,8 @@ func NewApp() (*App, error) {
 	migrateService := migrationflow.NewMigrateService(migrateRepo, cfgManager)
 	migrateService.InitPublishQueue(queueRepo, statsRepo)
 	migrateService.InitPublishLogs(publishLogRepo)
+	// 发布进度 / 发种日志列表的「大小」列：按种子 hash 关联 torrents.size。
+	migrateService.InitPublishSizeSource(torrentDataRepo)
 	torrentTransferService := service.NewTorrentTransferService(migrateRepo, cfgManager)
 
 	scheduledSeedRepo := repository.NewScheduledSeedRepository(store)

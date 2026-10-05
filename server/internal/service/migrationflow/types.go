@@ -30,6 +30,10 @@ type MigrateService struct {
 	publishLogRepo *repository.PublishLogRepository
 	statsRepo      *repository.StatsRepository
 
+	// torrentDataRepo 用于按 hash 读取种子体积（发布进度 / 发种日志列表展示「大小」）。
+	// 未注入时列表仍可用，只是不显示大小。
+	torrentDataRepo *repository.TorrentDataRepository
+
 	publishQueueScheduledSeedContinueHook func(trigger string, countAsSkipped bool)
 
 	queueStartOnce sync.Once

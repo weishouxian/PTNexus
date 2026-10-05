@@ -3,6 +3,7 @@ package repository
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -546,6 +547,41 @@ func compactLowerStrings(values []string) []string {
 		result = append(result, trimmed)
 	}
 	return result
+}
+
+// SizeByHashes 按 hash 批量读取种子体积（字节），用于发布进度 / 发种日志等列表展示种子大小。
+// 参数/返回：hashes 为种子 infohash（大小写与首尾空格不敏感、自动去重）；返回 hash(小写)→字节数 与 error。
+// 失败场景：数据库查询失败返回 error；hashes 为空时返回空映射且不执行 SQL。
+// 副作用：只读 torrents；刻意不过滤 is_hidden，因为已从下载器删除的种子同样需要显示体积。
+func (r *TorrentDataRepository) SizeByHashes(hashes []string) (map[string]int64, error) {
+	result := map[string]int64{}
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return result, errors.New("torrent data repo is nil")
+	}
+	cleaned := compactLowerStrings(hashes)
+	if len(cleaned) == 0 {
+		return result, nil
+	}
+
+	type sizeRow struct {
+		Hash string `gorm:"column:hash"`
+		Size int64  `gorm:"column:size"`
+	}
+	rows := make([]sizeRow, 0, len(cleaned))
+	if err := r.store.DB.Raw("SELECT hash, size FROM torrents WHERE LOWER(TRIM(hash)) IN ?", cleaned).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		key := strings.ToLower(strings.TrimSpace(row.Hash))
+		if key == "" {
+			continue
+		}
+		// 同一 hash 可能同时存在正常记录与隐藏残留记录，取较大值兜底（体积一致时无差别）。
+		if row.Size > result[key] {
+			result[key] = row.Size
+		}
+	}
+	return result, nil
 }
 
 func (r *TorrentDataRepository) UploadTotalsByHash() (map[string]int64, error) {

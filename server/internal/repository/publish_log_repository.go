@@ -68,6 +68,11 @@ type PublishLogEntry struct {
 
 	CreatedAt string `json:"created_at" gorm:"column:created_at"`
 	UpdatedAt string `json:"updated_at" gorm:"column:updated_at"`
+
+	// Size / SizeFormatted 为展示用派生字段（不落库）：该条日志对应种子的体积。
+	// 由服务层按 torrent_id 关联 seed_parameters.hash → torrents.size 回填，原始单位为字节；关联不到时为 0。
+	Size          int64  `json:"size" gorm:"-"`
+	SizeFormatted string `json:"size_formatted" gorm:"-"`
 }
 
 func (PublishLogEntry) TableName() string { return "publish_logs" }
