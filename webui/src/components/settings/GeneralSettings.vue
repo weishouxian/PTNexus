@@ -400,7 +400,7 @@
             >
               <el-input
                 v-model="settingsForm.pixhost_domain"
-                placeholder="img2.pixhost.cc"
+                placeholder="img3.pixhost.to"
                 @blur="autoSaveCrossSeedSettings"
               />
             </el-form-item>
