@@ -46,6 +46,18 @@ func (s *TorrentDataService) applyFilters(data []map[string]any, params Torrents
 		})
 	}
 
+	if len(params.TypeFilters) > 0 {
+		filtered = filterStandardField(filtered, "type", params.TypeFilters)
+	}
+
+	if len(params.MediumFilters) > 0 {
+		filtered = filterStandardField(filtered, "medium", params.MediumFilters)
+	}
+
+	if len(params.SourceFilters) > 0 {
+		filtered = filterStandardField(filtered, "source", params.SourceFilters)
+	}
+
 	if len(params.DownloaderFilters) > 0 {
 		allowed := toStringSet(params.DownloaderFilters)
 		filtered = filterData(filtered, func(item map[string]any) bool {
@@ -122,6 +134,18 @@ func (s *TorrentDataService) applyFilters(data []map[string]any, params Torrents
 	}
 
 	return filtered
+}
+
+// filterStandardField 按标准值集合过滤指定字段（类型/媒介/地区）。
+// 参数/返回：field 为 item 中的字段名（type/medium/source），selected 为用户勾选的标准值；返回过滤后的切片。
+// 失败场景：无。字段为空（源站数据未获取）时不会命中任何勾选项。
+// 副作用：无。
+func filterStandardField(data []map[string]any, field string, selected []string) []map[string]any {
+	allowed := toStringSet(selected)
+	return filterData(data, func(item map[string]any) bool {
+		_, ok := allowed[strings.TrimSpace(stringValue(item[field], ""))]
+		return ok
+	})
 }
 
 func (s *TorrentDataService) sortData(data []map[string]any, sortProp, sortOrder string) {

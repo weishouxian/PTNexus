@@ -31,6 +31,10 @@ export interface Torrent {
   source_data_status?: 'missing' | 'unreviewed' | 'reviewed'
   source_data_fetched?: boolean
   source_data_reviewed?: boolean
+  /** 以下三项取自源站数据（seed_parameters），标准值如 category.movie / medium.remux / source.china */
+  type?: string
+  medium?: string
+  source?: string
 }
 
 export interface ISourceInfo {

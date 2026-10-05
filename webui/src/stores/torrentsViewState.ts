@@ -23,11 +23,17 @@ interface UiSettings {
   active_filters?: {
     paths: string[]
     states: string[]
+    sourceDataStatuses?: string[]
     existSiteNames: string[]
     notExistSiteNames: string[]
     downloaderIds: string[]
+    typeFilters?: string[]
+    mediumFilters?: string[]
+    sourceFilters?: string[]
   }
   visible_columns?: string[]
+  /** 列表列结构版本：用于给老设置的 visible_columns 补上新增列（类型/媒介/地区） */
+  columns_version?: number
 }
 
 const cloneUiSettings = (settings: UiSettings): UiSettings => ({
@@ -38,11 +44,16 @@ const cloneUiSettings = (settings: UiSettings): UiSettings => ({
   active_filters: {
     paths: [...(settings.active_filters?.paths || [])],
     states: [...(settings.active_filters?.states || [])],
+    sourceDataStatuses: [...(settings.active_filters?.sourceDataStatuses || [])],
     existSiteNames: [...(settings.active_filters?.existSiteNames || [])],
     notExistSiteNames: [...(settings.active_filters?.notExistSiteNames || [])],
     downloaderIds: [...(settings.active_filters?.downloaderIds || [])],
+    typeFilters: [...(settings.active_filters?.typeFilters || [])],
+    mediumFilters: [...(settings.active_filters?.mediumFilters || [])],
+    sourceFilters: [...(settings.active_filters?.sourceFilters || [])],
   },
   visible_columns: settings.visible_columns ? [...settings.visible_columns] : undefined,
+  columns_version: settings.columns_version,
 })
 
 // 用于保存 TorrentsView 页面的初始化状态和缓存数据

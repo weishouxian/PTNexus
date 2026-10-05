@@ -18,6 +18,60 @@
         获取数据
       </el-button>
 
+      <div class="standard-filter-group">
+        <el-select
+          v-model="activeFilters.mediumFilters"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="媒介"
+          class="standard-filter-select"
+          @change="handleStandardFilterChange"
+        >
+          <el-option
+            v-for="value in uniqueMediums"
+            :key="value"
+            :label="formatStandardValue('medium', value)"
+            :value="value"
+          />
+        </el-select>
+        <el-select
+          v-model="activeFilters.typeFilters"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="类型"
+          class="standard-filter-select"
+          @change="handleStandardFilterChange"
+        >
+          <el-option
+            v-for="value in uniqueTypes"
+            :key="value"
+            :label="formatStandardValue('type', value)"
+            :value="value"
+          />
+        </el-select>
+        <el-select
+          v-model="activeFilters.sourceFilters"
+          multiple
+          collapse-tags
+          collapse-tags-tooltip
+          clearable
+          placeholder="地区"
+          class="standard-filter-select"
+          @change="handleStandardFilterChange"
+        >
+          <el-option
+            v-for="value in uniqueSources"
+            :key="value"
+            :label="formatStandardValue('source', value)"
+            :value="value"
+          />
+        </el-select>
+      </div>
+
       <div class="name-header-container">
         <el-input
           v-model="nameSearch"
@@ -169,6 +223,49 @@
           <span :class="getSourceDataStatusClass(scope.row)">
             {{ getSourceDataStatusLabel(scope.row) }}
           </span>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        v-if="isColumnVisible('type')"
+        prop="type"
+        label="类型"
+        width="100"
+        align="center"
+        header-align="center"
+      >
+        <template #default="scope">
+          <span :title="scope.row.type || ''">{{ formatStandardValue('type', scope.row.type) }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        v-if="isColumnVisible('medium')"
+        prop="medium"
+        label="媒介"
+        width="110"
+        align="center"
+        header-align="center"
+      >
+        <template #default="scope">
+          <span :title="scope.row.medium || ''">{{
+            formatStandardValue('medium', scope.row.medium)
+          }}</span>
+        </template>
+      </el-table-column>
+
+      <el-table-column
+        v-if="isColumnVisible('source')"
+        prop="source"
+        label="地区"
+        width="100"
+        align="center"
+        header-align="center"
+      >
+        <template #default="scope">
+          <span :title="scope.row.source || ''">{{
+            formatStandardValue('source', scope.row.source)
+          }}</span>
         </template>
       </el-table-column>
 
@@ -974,6 +1071,10 @@ interface ActiveFilters {
   existSiteNames: string[]
   notExistSiteNames: string[]
   downloaderIds: string[]
+  /** 顶部独立下拉：按源站数据类型/媒介/地区标准值筛选 */
+  typeFilters: string[]
+  mediumFilters: string[]
+  sourceFilters: string[]
 }
 interface PathNode {
   path: string
@@ -1100,6 +1201,9 @@ const activeFilters = reactive<ActiveFilters>({
   existSiteNames: [],
   notExistSiteNames: [],
   downloaderIds: [],
+  typeFilters: [],
+  mediumFilters: [],
+  sourceFilters: [],
 })
 const tempFilters = reactive<ActiveFilters>({ ...activeFilters })
 
@@ -1129,6 +1233,32 @@ const totalTorrents = ref<number>(0)
 
 const unique_paths = ref<string[]>([])
 const unique_states = ref<string[]>([])
+// 顶部「媒介 / 类型 / 地区」下拉候选项（源站标准值，如 category.movie、medium.remux、source.china）
+const uniqueTypes = ref<string[]>([])
+const uniqueMediums = ref<string[]>([])
+const uniqueSources = ref<string[]>([])
+// 标准值 -> 中文显示名，由 /api/data 的 reverse_mappings 下发
+const reverseMappings = ref<Record<string, Record<string, string>>>({
+  type: {},
+  medium: {},
+  source: {},
+})
+
+// 把源站标准值翻译成站点常见写法；无对应记录时原样显示。
+const formatStandardValue = (category: 'type' | 'medium' | 'source', value?: string) => {
+  const raw = (value || '').trim()
+  if (!raw) return '-'
+  return reverseMappings.value[category]?.[raw] || raw
+}
+
+// 顶部下拉变更后即时刷新列表（与分页/排序保持同一套持久化流程）
+const handleStandardFilterChange = () => {
+  currentPage.value = 1
+  syncUiSettingsCache()
+  fetchDataWithSpinner()
+  saveUiSettings()
+}
+
 type SourceDataStatus = NonNullable<Torrent['source_data_status']>
 const sourceDataStatusOptions: Array<{ value: SourceDataStatus; label: string }> = [
   { value: 'missing', label: '未获取' },
@@ -1427,6 +1557,9 @@ const progressColors = [
 // 列定义与可见性
 const torrentsColumns: ColumnDef[] = [
   { prop: 'source_data_status', label: '源站数据状态' },
+  { prop: 'type', label: '类型' },
+  { prop: 'medium', label: '媒介' },
+  { prop: 'source', label: '地区' },
   { prop: 'site_count', label: '做种数' },
   { prop: 'save_path', label: '保存路径' },
   { prop: 'downloader', label: '下载器' },
@@ -1440,6 +1573,8 @@ const torrentsColumns: ColumnDef[] = [
 ]
 
 const defaultTorrentsVisibleColumns = torrentsColumns.map((c) => c.prop)
+// 列结构版本：v2 起新增「类型 / 媒介 / 地区」列，老设置升级时补一次默认可见，之后完全由用户控制。
+const TORRENTS_COLUMNS_VERSION = 2
 const visibleColumns = ref<string[]>([...defaultTorrentsVisibleColumns])
 const isColumnVisible = (prop: string) => visibleColumns.value.includes(prop)
 
@@ -1455,8 +1590,12 @@ const buildCurrentUiSettings = () => ({
     existSiteNames: [...activeFilters.existSiteNames],
     notExistSiteNames: [...activeFilters.notExistSiteNames],
     downloaderIds: [...activeFilters.downloaderIds],
+    typeFilters: [...activeFilters.typeFilters],
+    mediumFilters: [...activeFilters.mediumFilters],
+    sourceFilters: [...activeFilters.sourceFilters],
   },
   visible_columns: [...visibleColumns.value],
+  columns_version: TORRENTS_COLUMNS_VERSION,
 })
 
 const syncUiSettingsCache = () => {
@@ -1503,6 +1642,16 @@ const loadUiSettings = async (forceRefresh = false) => {
       if (!activeFilters.sourceDataStatuses) {
         activeFilters.sourceDataStatuses = []
       }
+      // 兼容旧设置：早期版本没有类型/媒介/地区筛选
+      if (!Array.isArray(activeFilters.typeFilters)) {
+        activeFilters.typeFilters = []
+      }
+      if (!Array.isArray(activeFilters.mediumFilters)) {
+        activeFilters.mediumFilters = []
+      }
+      if (!Array.isArray(activeFilters.sourceFilters)) {
+        activeFilters.sourceFilters = []
+      }
       // 兼容旧的数据结构
       // 注意：TypeScript类型检查会报错，因为这些属性已不存在于接口定义中
       // 但在运行时可能仍然存在旧数据，所以需要处理
@@ -1517,7 +1666,15 @@ const loadUiSettings = async (forceRefresh = false) => {
       }
     }
     if (Array.isArray(settings.visible_columns)) {
-      const savedColumns = settings.visible_columns
+      const savedColumns = [...settings.visible_columns]
+      // 老设置（没有列结构版本号）补上新增的类型/媒介/地区列；保存过新版本的设置不再强制注入。
+      if ((settings.columns_version ?? 1) < TORRENTS_COLUMNS_VERSION) {
+        for (const column of ['type', 'medium', 'source']) {
+          if (!savedColumns.includes(column)) {
+            savedColumns.push(column)
+          }
+        }
+      }
       const requiredColumns = ['source_data_status', 'last_publish_at']
       visibleColumns.value = [
         ...savedColumns,
@@ -1599,6 +1756,9 @@ const fetchDataWithoutLoadingControl = async () => {
       state_filters: JSON.stringify(activeFilters.states),
       source_data_status_filters: JSON.stringify(activeFilters.sourceDataStatuses),
       downloader_filters: JSON.stringify(activeFilters.downloaderIds),
+      type_filters: JSON.stringify(activeFilters.typeFilters),
+      medium_filters: JSON.stringify(activeFilters.mediumFilters),
+      source_filters: JSON.stringify(activeFilters.sourceFilters),
     })
 
     const response = await axios.get(`/api/data?${params.toString()}`)
@@ -1611,6 +1771,16 @@ const fetchDataWithoutLoadingControl = async () => {
 
     unique_paths.value = result.unique_paths
     unique_states.value = result.unique_states
+    uniqueTypes.value = result.unique_types || []
+    uniqueMediums.value = result.unique_mediums || []
+    uniqueSources.value = result.unique_sources || []
+    if (result.reverse_mappings) {
+      reverseMappings.value = {
+        type: result.reverse_mappings.type || {},
+        medium: result.reverse_mappings.medium || {},
+        source: result.reverse_mappings.source || {},
+      }
+    }
     all_sites.value = result.all_discovered_sites
     site_link_rules.value = result.site_link_rules
     activeFilters.paths = result.active_path_filters
@@ -2161,6 +2331,9 @@ const triggerIYUUQueryForFiltered = async () => {
       state_filters: JSON.stringify(activeFilters.states),
       source_data_status_filters: JSON.stringify(activeFilters.sourceDataStatuses),
       downloader_filters: JSON.stringify(activeFilters.downloaderIds),
+      type_filters: JSON.stringify(activeFilters.typeFilters),
+      medium_filters: JSON.stringify(activeFilters.mediumFilters),
+      source_filters: JSON.stringify(activeFilters.sourceFilters),
     })
 
     const listResp = await axios.get(`/api/data?${params.toString()}`)
@@ -2360,6 +2533,9 @@ const clearAllFilters = async () => {
   activeFilters.sourceDataStatuses = []
   activeFilters.existSiteNames = []
   activeFilters.notExistSiteNames = []
+  activeFilters.typeFilters = []
+  activeFilters.mediumFilters = []
+  activeFilters.sourceFilters = []
   // 下载器范围来自顶部菜单，清筛选时保持当前选择不变。
   syncDownloaderScope()
 
@@ -3172,6 +3348,18 @@ watch(visibleColumns, () => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+/* 顶部「媒介 / 类型 / 地区」筛选下拉 */
+.standard-filter-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.standard-filter-select {
+  width: 150px;
 }
 
 /* 转种弹窗样式 */

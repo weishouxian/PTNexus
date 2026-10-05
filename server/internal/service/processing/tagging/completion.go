@@ -89,10 +89,9 @@ func extractRawTagsFromTitleComponents(components []map[string]any) []string {
 const tagDescriptionLogModule = "迁移-标签补全"
 
 var (
-	reSubtitleDelimiter       = regexp.MustCompile(`[\[\]【】\|\*\/]`)
-	reDescriptionCategoryLine = regexp.MustCompile(`(?im)[◎❁]\s*类\s*别\s*(.+?)(?:\r?\n|$)`)
-	reDescriptionDoubanScore  = regexp.MustCompile(`(?i)(?:豆瓣(?:评分|評分|分)?|douban\s*(?:rating|score)?)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:/ ?10|分)?`)
-	reAtmosFromAudio          = regexp.MustCompile(`(?i)(\bAtmos\b|Atmos\d)`)
+	reSubtitleDelimiter      = regexp.MustCompile(`[\[\]【】\|\*\/]`)
+	reDescriptionDoubanScore = regexp.MustCompile(`(?i)(?:豆瓣(?:评分|評分|分)?|douban\s*(?:rating|score)?)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*(?:/ ?10|分)?`)
+	reAtmosFromAudio         = regexp.MustCompile(`(?i)(\bAtmos\b|Atmos\d)`)
 )
 
 // extractRawTagsFromSubtitle 从副标题中提取语言/字幕/特效相关的原始标签（不带 tag. 前缀）。
@@ -246,23 +245,8 @@ func extractTagsFromDescriptionScore(description string) []string {
 // 失败场景：简介为空、类别行不存在或类别值为空时返回 false。
 // 副作用：无。
 func extractDescriptionCategoryText(description string) (string, bool) {
-	text := strings.TrimSpace(description)
-	if text == "" {
-		return "", false
-	}
-
-	// 兼容“◎类　　别　剧情 / 爱情”中的全角空格（U+3000）。
-	normalizedText := strings.ReplaceAll(text, "\u3000", " ")
-	matches := reDescriptionCategoryLine.FindStringSubmatch(normalizedText)
-	if len(matches) < 2 {
-		return "", false
-	}
-
-	categoryText := strings.TrimSpace(matches[1])
-	if categoryText == "" {
-		return "", false
-	}
-	return categoryText, true
+	// 解析口径统一收在 extract 包的 category_infer.go，避免两处正则漂移。
+	return parser.ExtractDescriptionCategoryText(description)
 }
 
 // extractRawTagsFromMediaText 从 MediaInfo/BDInfo 文本中提取语言/字幕/HDR/高帧率/高码率等原始标签（不带 tag. 前缀）。

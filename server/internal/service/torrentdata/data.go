@@ -7,6 +7,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/repository"
+	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
 
 func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any, error) {
@@ -59,6 +60,12 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 	sourceStatusMap, err := s.repo.SeedParameterSourceStatusByNames()
 	if err != nil {
 		sourceStatusMap = map[string]repository.SeedParameterSourceStatus{}
+	}
+	// 类型/媒介/地区来自 seed_parameters（按种子名关联），缺失时降级为空值，不影响列表其余字段。
+	basicsMap, err := s.repo.SeedParameterBasicsByNames()
+	if err != nil {
+		logx.Warnf(torrentDataLogModule, "加载种子类型/媒介/地区失败 err=%v", err)
+		basicsMap = map[string]repository.SeedParameterBasics{}
 	}
 
 	aggregated := map[string]*torrentSummary{}
@@ -172,6 +179,8 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 			sourceDataStatus = "missing"
 		}
 
+		basics := basicsMap[value.Name]
+
 		item := map[string]any{
 			"hash":                     value.Hash,
 			"hashes":                   append([]string{}, value.Hashes...),
@@ -198,9 +207,17 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 			"source_data_fetched":      sourceStatus.HasFetchedSourceData,
 			"source_data_reviewed":     sourceStatus.IsReviewed,
 			"official_site":            value.OfficialSite,
+			"type":                     basics.Type,
+			"medium":                   basics.Medium,
+			"source":                   basics.Source,
 		}
 		allItems = append(allItems, item)
 	}
+
+	// 筛选候选项始终基于全量聚合结果，避免用户勾选后被自身筛选条件挤掉。
+	typeOptions := collectStandardValues(allItems, "type")
+	mediumOptions := collectStandardValues(allItems, "medium")
+	sourceOptions := collectStandardValues(allItems, "source")
 
 	filtered := s.applyFilters(allItems, params, siteConfigMap)
 	s.sortData(filtered, params.SortProp, params.SortOrder)
@@ -235,10 +252,44 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 		"pageSize":             params.PageSize,
 		"unique_paths":         uniquePaths,
 		"unique_states":        uniqueStates,
+		"unique_types":         typeOptions,
+		"unique_mediums":       mediumOptions,
+		"unique_sources":       sourceOptions,
+		"reverse_mappings":     standardReverseMappings(),
 		"all_discovered_sites": allDiscoveredSites,
 		"site_link_rules":      siteLinkRules,
 		"active_path_filters":  params.PathFilters,
 	}, nil
+}
+
+// collectStandardValues 汇总指定字段出现过的标准值（去重并按字典序排列），用于前端渲染筛选下拉。
+func collectStandardValues(items []map[string]any, field string) []string {
+	seen := map[string]struct{}{}
+	for _, item := range items {
+		value := strings.TrimSpace(stringValue(item[field], ""))
+		if value == "" {
+			continue
+		}
+		seen[value] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// standardReverseMappings 只返回「一种多站」列表用得到的中文映射（类型/媒介/地区），避免整份映射表随列表接口下发。
+func standardReverseMappings() map[string]any {
+	all := reversemapping.Build(nil)
+	result := map[string]any{}
+	for _, key := range []string{"type", "medium", "source"} {
+		if value, ok := all[key]; ok {
+			result[key] = value
+		}
+	}
+	return result
 }
 
 func (s *TorrentDataService) UpdatePublishAt(payload map[string]any) (map[string]any, int) {
