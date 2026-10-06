@@ -1,0 +1,224 @@
+site_name: "OurBits"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel"
+  video_codec: "codec_sel"
+  audio_codec: "audiocodec_sel"
+  resolution: "standard_sel"
+  source: "processing_sel"
+  team: "team_sel"
+  name: "name"
+  small_descr: "small_descr"
+  imdb_url: "url"
+  douban_url: "dburl"
+  picture: "picture"
+  "tags[]": "tags[]"
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    audio_codec:
+      source_key: "音频编码"
+    resolution:
+      source_key: "分辨率"
+    source:
+      source_key: "地区"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Movies": "category.movie"
+      "Movies-3D": "category.movie"
+      "Concert": "category.mv"
+      "TV-Episode": "category.tv_series"
+      "TV-Pack": "category.tv_series"
+      "TV-Show": "category.tv_shows"
+      "Documentary": "category.documentaries"
+      "Animation": "category.animation"
+      "Sports": "category.sports"
+      "Music-Video": "category.mv"
+      "Music": "category.music"
+
+    medium:
+      "UHD Blu-ray": "medium.uhd_bluray"
+      "FHD Blu-ray": "medium.bluray"
+      "Encode": "medium.encode"
+      "WEB-DL": "medium.webdl"
+      "HDTV": "medium.hdtv"
+      "DVD": "medium.dvd"
+      "CD": "medium.cd"
+
+    video_codec:
+      "H.264": "video.h264"
+      "HEVC": "video.h265"
+      "MPEG-2": "video.mpeg2"
+      "VC-1": "video.vc1"
+      "Xvid": "video.xvid"
+      "AV1": "video.av1"
+      "Other": "video.other"
+
+    audio_codec:
+      "DTS X": "audio.dtsx"
+      "DTS-HDMA": "audio.dts_hd_ma"
+      "TrueHD": "audio.truehd"
+      "DTS": "audio.dts"
+      "LPCM": "audio.lpcm"
+      "FLAC": "audio.flac"
+      "APE": "audio.ape"
+      "AAC": "audio.aac"
+      "AC3": "audio.ac3"
+      "WAV": "audio.wav"
+      "MPEG": "audio.mpeg"
+      "OPUS": "audio.opus"
+
+    resolution:
+      "SD": "resolution.sd"
+      "720p": "resolution.r720p"
+      "1080i": "resolution.r1080i"
+      "1080p": "resolution.r1080p"
+      "2160p": "resolution.r2160p"
+
+    source:
+      "CN(中国大陆)": "source.china"
+      "US/EU(欧美)": "source.western"
+      "HK/TW(港台)": "source.hongkong_taiwan"
+      "JP(日)": "source.japan"
+      "KR(韩)": "source.korea"
+      "OT(其他)": "source.other"
+
+    tag:
+      "DIY": "tag.DIY"
+      "国语": "tag.国语"
+      "粤语": "tag.粤语"
+      "中字": "tag.中字"
+      "首发": "tag.首发"
+      "应求": "tag.应求"
+      "禁转": "tag.禁转"
+      "杜比视界": "tag.杜比"
+      "菁彩HDR": "tag.菁彩HDR"
+      "HLG": "tag.HLG"
+      "HDR10+": "tag.HDR10+"
+      "HDR10": "tag.HDR10"
+
+mappings:
+  type:
+    "category.movie": "401"
+    "category.movie_3d": "402"
+    "category.tv_series": "412"
+    "category.tv_pack": "405"
+    "category.tv_shows": "413"
+    "category.documentaries": "410"
+    "category.animation": "411"
+    "category.sports": "415"
+    "category.mv": "414"
+    "category.music": "416"
+    "category.stage": "419"
+    "category.other": "401"
+    "default": "401"
+
+  medium:
+    "medium.bluray": "1"
+    "medium.uhd_bluray": "12"
+    "medium.uhd_diy": "12"
+    "medium.dvd": "2"
+    "medium.remux": "3"
+    "medium.hdtv": "5"
+    "medium.encode": "7"
+    "medium.encode_2160p": "7"
+    "medium.encode_1080p": "7"
+    "medium.encode_720p": "7"
+    "medium.cd": "8"
+    "medium.uhdtv": "13"
+    "medium.webdl": "9"
+    "medium.other": "7"
+    "default": "7"
+
+  video_codec:
+    "video.h264": "12"
+    "video.x264": "12"
+    "video.h265": "14"
+    "video.x265": "14"
+    "video.hevc": "14"
+    "video.mpeg2": "15"
+    "video.mpeg4": "18"
+    "video.vc1": "16"
+    "video.xvid": "17"
+    "video.av1": "19"
+    "video.other": "18"
+    "default": "18"
+
+  audio_codec:
+    "audio.dts_hd_ma": "1"
+    "audio.dts_hd": "1"
+    "audio.dts_hd_hr": "1"
+    "audio.truehd": "2"
+    "audio.dts": "4"
+    "audio.lpcm": "5"
+    "audio.ac3": "6"
+    "audio.ddp": "6"
+    "audio.aac": "7"
+    "audio.wav": "11"
+    "audio.ape": "12"
+    "audio.flac": "13"
+    "audio.truehd_atmos": "14"
+    "audio.ddp_atmos": "14"
+    "audio.dtsx": "21"
+    "audio.mpeg": "32"
+    "audio.opus": "33"
+    "audio.other": "7"
+    "default": "7"
+
+  resolution:
+    "resolution.r2160p": "5"
+    "resolution.r1080p": "1"
+    "resolution.r1080i": "2"
+    "resolution.r720p": "3"
+    "resolution.sd": "4"
+    "resolution.other": "0"
+    "default": "0"
+
+  # 地区（processing_sel）：1=CN(中国大陆) 2=US/EU(欧美) 3=HK/TW(港台) 4=JP(日) 5=KR(韩) 6=OT(其他)
+  # 归并口径：中国大陆→1；香港/台湾→3；欧美（丹麦/法国/德国/意大利/西班牙/瑞典/英国/俄罗斯/加拿大/美国/欧洲）→2；
+  # 日本→4；韩国→5；其余地区→6。欧美各国在标准值层是细粒度键，站点只提供合并选项，必须逐个映射到 2。
+  source:
+    "source.china": "1"
+    "source.hongkong_taiwan": "3"
+    "source.hongkong": "3"
+    "source.taiwan": "3"
+    "source.western": "2"
+    "source.uk": "2"
+    "source.france": "2"
+    "source.germany": "2"
+    "source.italy": "2"
+    "source.spain": "2"
+    "source.sweden": "2"
+    "source.denmark": "2"
+    "source.russia": "2"
+    "source.canada": "2"
+    "source.europe": "2"
+    "source.japan": "4"
+    "source.korea": "5"
+    "source.india": "6"
+    "source.other": "6"
+    "default": "6"
+
+  tag:
+    "tag.DIY": "diy"
+    "tag.国语": "gy"
+    "tag.中字": "zz"
+    "tag.首发": "sf"
+    "tag.应求": "yq"
+    "tag.禁转": "jz"
+    "tag.杜比": "db"
+    "tag.HDR10": "hdr"
+    "tag.HDR10+": "hdrp"
+    "tag.菁彩HDR": "hdrvivid"
+    "tag.HLG": "hlg"
+    "default": null

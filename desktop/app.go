@@ -51,10 +51,16 @@ func (a *App) startup(ctx context.Context) {
 		a.trayService.Start(ctx)
 	}
 
-	// 注入桌面运行时路径（DB 配置文件等），并尝试拉起 sidecar。
+	// 注入桌面运行时路径（DB 配置文件等）并启动后端。
+	// 单文件分发时 server 在进程内启动；updater 属于可选能力，缺失时仅降级提示，
+	// 不能让「更新不可用」阻断登录、迁移、发种等主流程。
 	env := desktopapp.EnsureDesktopRuntimeEnv()
-	if err := a.ensureSidecarsStarted(env); err != nil {
-		fmt.Printf("PT Nexus 桌面端 sidecar 启动失败: %v\n", err)
+	if err := a.ensureServerStarted(env); err != nil {
+		fmt.Printf("PT Nexus 桌面端后端启动失败: %v\n", err)
+		return
+	}
+	if err := a.ensureUpdaterStarted(env); err != nil {
+		fmt.Printf("PT Nexus 桌面端更新模块不可用（其它功能不受影响）: %v\n", err)
 	}
 }
 

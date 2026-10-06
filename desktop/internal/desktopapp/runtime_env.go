@@ -86,13 +86,19 @@ func EnsureDesktopRuntimeEnv() DesktopRuntimeEnv {
 }
 
 // resolveDesktopResourceDir 选择桌面版“资源目录”：
-// - 优先使用 PTNEXUS_RESOURCE_DIR（便于调试/覆盖）
-// - 开发模式：如果存在 ../server/sites_data.json，则以 ../server 为资源目录
-// - 生产模式：默认使用可执行文件所在目录（安装目录）
-// - 兜底：使用用户目录（避免返回空）
+//  0. PTNEXUS_RESOURCE_DIR 显式覆盖（调试/自定义部署用）
+//  1. 内嵌资源展开目录（单文件分发的主路径，保证站点映射随 exe 版本走）
+//  2. 开发模式：如果存在 ../server/sites_data.json，则以 ../server 为资源目录
+//  3. 生产/绿色版：可执行文件所在目录
+//  4. 兜底：用户目录（避免返回空）
 func resolveDesktopResourceDir(fallback string) string {
 	if explicit := strings.TrimSpace(os.Getenv("PTNEXUS_RESOURCE_DIR")); explicit != "" {
 		return explicit
+	}
+
+	if bundled, err := MaterializeBundledResources(fallback); err == nil &&
+		fileExists(filepath.Join(bundled, "sites_data.json")) {
+		return bundled
 	}
 
 	if cwd, err := os.Getwd(); err == nil && strings.TrimSpace(cwd) != "" {

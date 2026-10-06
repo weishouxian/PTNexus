@@ -1046,12 +1046,6 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     (torrentData.value.standardized_params.tags || []).filter((tag) => isRestrictedTag(tag)),
   )
 
-  // 检查是否包含受限标签（基于当前标签）
-  const hasRestrictedTag = computed(() => {
-    const tags = torrentData.value.standardized_params.tags || []
-    return tags.some((tag) => isRestrictedTag(tag))
-  })
-
   const handleTagClose = (tagToRemove: string) => {
     const index = torrentData.value.standardized_params.tags.indexOf(tagToRemove)
     if (index > -1) {
