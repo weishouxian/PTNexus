@@ -86,7 +86,7 @@ func (d Downloader) StartBDInfoByProxy(remotePath, taskID, callbackBaseURL strin
 	bodyText := strings.TrimSpace(string(bodyBytes))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		logx.Warnf(proxyBDInfoLogModule, "提交BDInfo任务失败 task_id=%s remote_path=%s status=%d body=%s", trimmedTaskID, compactProxyBody(trimmedPath), response.StatusCode, compactProxyBody(bodyText))
-		return &ProxyAPIError{StatusCode: response.StatusCode, Message: compactProxyBody(bodyText)}
+		return newProxyHTTPError(response.StatusCode, bodyText)
 	}
 
 	resp := proxyBDInfoResponse{}
@@ -100,7 +100,7 @@ func (d Downloader) StartBDInfoByProxy(remotePath, taskID, callbackBaseURL strin
 			msg = "代理返回 success=false"
 		}
 		logx.Warnf(proxyBDInfoLogModule, "提交BDInfo任务失败 task_id=%s remote_path=%s reason=%s", trimmedTaskID, compactProxyBody(trimmedPath), compactProxyBody(msg))
-		return &ProxyAPIError{StatusCode: 500, Message: msg}
+		return newProxyResponseFailure(msg)
 	}
 	logx.Infof(proxyBDInfoLogModule, "提交BDInfo任务成功 task_id=%s remote_path=%s", trimmedTaskID, compactProxyBody(trimmedPath))
 	return nil

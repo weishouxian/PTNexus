@@ -2,12 +2,12 @@ package media
 
 import (
 	"encoding/json"
-	pathpkg "path"
 	"strings"
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	parser "github.com/pt-nexus/server/internal/service/acquire/extract"
+	"github.com/pt-nexus/server/internal/service/downloaderclient"
 )
 
 // RefreshMediainfoRepo 定义媒体刷新流程的最小仓储接口。
@@ -100,10 +100,29 @@ func RefreshMediainfoAsync(payload map[string]any, repo RefreshMediainfoRepo, de
 		return map[string]any{"success": false, "message": "缺少 save_path 参数"}, 400
 	}
 
+	// 先解析路径映射：代理请求与本地回退都要用到（原始路径给「代理与下载器同机」的场景，映射后的路径给「代理能看到宿主机路径」的场景）。
+	translatedSavePath := savePath
+	if deps.TranslateDownloaderPath != nil {
+		translatedSavePath = strings.TrimSpace(deps.TranslateDownloaderPath(downloaderID, savePath))
+	}
+	if translatedSavePath == "" {
+		translatedSavePath = savePath
+	}
+	logx.Infof(
+		logModule,
+		"路径映射完成：seed_id=%s original_save_path=%s translated_save_path=%s",
+		seedID, savePath, translatedSavePath,
+	)
+
 	// 优先尝试盒子代理远程提取 MediaInfo：适用于 downloader.use_proxy=true 且本机不挂载媒体目录的场景。
-	// 注意：此处使用原始 save_path 作为 remote_path 候选，避免被本地路径映射污染。
+	// 候选同时包含「下载器原始路径」与「路径映射后的路径」：下载器给的是容器内路径，代理能看到哪一套取决于其部署方式。
 	if deps.FetchProxyMediaInfo != nil && strings.TrimSpace(downloaderID) != "" {
-		remoteCandidates := buildRemotePathCandidates(savePath, torrentName, contentName, preferExactRemotePath)
+		remoteCandidates := downloaderclient.BuildProxyPathCandidates(
+			[]string{savePath, translatedSavePath},
+			torrentName,
+			contentName,
+			preferExactRemotePath,
+		)
 		for _, remoteCandidate := range remoteCandidates {
 			probe := deps.FetchProxyMediaInfo(downloaderID, remoteCandidate, contentName)
 			if probe.StatusCode == 0 {
@@ -177,21 +196,8 @@ func RefreshMediainfoAsync(payload map[string]any, repo RefreshMediainfoRepo, de
 		}
 	}
 
-	translatedSavePath := savePath
-	if deps.TranslateDownloaderPath != nil {
-		translatedSavePath = strings.TrimSpace(deps.TranslateDownloaderPath(downloaderID, savePath))
-	}
-	if translatedSavePath == "" {
-		translatedSavePath = savePath
-	}
-	logx.Infof(
-		logModule,
-		"路径映射完成：seed_id=%s original_save_path=%s translated_save_path=%s",
-		seedID, savePath, translatedSavePath,
-	)
-
 	if deps.ShouldSkipLocalFallback != nil && deps.ShouldSkipLocalFallback(downloaderID, savePath, translatedSavePath) {
-		message := "下载器已启用远程模式，代理未能定位媒体文件，且未配置本地路径映射，已停止本地扫描"
+		message := "下载器已启用远程模式，代理未能定位媒体文件，且本地路径不可访问，已停止本地扫描（本地路径：" + strings.TrimSpace(translatedSavePath) + "）"
 		logx.Warnf(logModule, "跳过本地媒体扫描：seed_id=%s downloader_id=%s save_path=%s translated_save_path=%s", seedID, downloaderID, savePath, translatedSavePath)
 		return map[string]any{"success": false, "message": message}, 400
 	}
@@ -268,59 +274,6 @@ func RefreshMediainfoAsync(payload map[string]any, repo RefreshMediainfoRepo, de
 			"is_bluray":      false,
 		},
 	}, 200
-}
-
-func buildRemotePathCandidates(savePath, torrentName, contentName string, preferExactPath bool) []string {
-	trimmedSavePath := strings.TrimSpace(savePath)
-	trimmedTorrentName := strings.TrimSpace(torrentName)
-	trimmedContentName := strings.TrimSpace(contentName)
-
-	candidates := make([]string, 0, 3)
-	appendCandidate := func(candidate string) {
-		normalized := normalizeProxyRemotePath(candidate)
-		if normalized == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if normalizeProxyRemotePath(existing) == normalized {
-				return
-			}
-		}
-		candidates = append(candidates, normalized)
-	}
-	if preferExactPath && trimmedSavePath != "" {
-		appendCandidate(trimmedSavePath)
-	}
-	if trimmedSavePath != "" && trimmedTorrentName != "" {
-		appendCandidate(joinProxyRemotePath(trimmedSavePath, trimmedTorrentName))
-	}
-	if trimmedSavePath != "" && trimmedContentName != "" && !strings.EqualFold(trimmedContentName, trimmedTorrentName) {
-		appendCandidate(joinProxyRemotePath(trimmedSavePath, trimmedContentName))
-	}
-	if trimmedSavePath != "" {
-		appendCandidate(trimmedSavePath)
-	}
-	return candidates
-}
-
-func joinProxyRemotePath(base, name string) string {
-	normalizedBase := normalizeProxyRemotePath(base)
-	normalizedName := strings.Trim(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"), "/")
-	if normalizedBase == "" {
-		return normalizedName
-	}
-	if normalizedName == "" {
-		return normalizedBase
-	}
-	return pathpkg.Join(normalizedBase, normalizedName)
-}
-
-func normalizeProxyRemotePath(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.ReplaceAll(trimmed, "\\", "/")
 }
 
 func persistMediainfoAndCollectUpdates(

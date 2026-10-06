@@ -2,6 +2,7 @@ package migrationflow
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -250,12 +251,35 @@ func snapshotMatchesContentPath(snapshot downloaderclient.TorrentSnapshot, path 
 	return normalizeMediaPathForCompare(snapshot.ContentPath) == normalized
 }
 
+// shouldSkipLocalMediaFallback 判断代理失败后是否应停止本地媒体扫描。
+// 参数/返回：rootConfig 为运行配置；downloaderID/savePath/translatedSavePath 为下载器与路径信息；返回 true 表示本地扫描没有意义，应直接报错。
+// 失败场景：无。
+// 副作用：会读取下载器配置，并对映射后的本地路径做一次存在性检查。
 func shouldSkipLocalMediaFallback(rootConfig map[string]any, downloaderID string, savePath string, translatedSavePath string) bool {
 	downloader, err := downloaderclient.FromConfig(rootConfig, strings.TrimSpace(downloaderID))
 	if err != nil || !downloader.UseProxy {
 		return false
 	}
-	return normalizeMediaPathForCompare(savePath) == normalizeMediaPathForCompare(translatedSavePath)
+	if normalizeMediaPathForCompare(savePath) == normalizeMediaPathForCompare(translatedSavePath) {
+		// 未配置路径映射：本地路径与下载器返回路径完全一致，说明本机不挂载媒体目录。
+		return true
+	}
+	// 配置了映射，但映射后的本地根路径在本机不存在（例如控制端与媒体不在同一台机器）：
+	// 本地候选必然全部 stat 失败，直接给出明确提示，避免抛出一长串无意义的路径错误。
+	return !localMediaRootAccessible(translatedSavePath)
+}
+
+// localMediaRootAccessible 判断本地媒体根路径在当前主机上是否存在。
+// 参数/返回：path 为待检查路径；返回 true 表示路径存在（stat 成功）。
+// 失败场景：无。
+// 副作用：无。
+func localMediaRootAccessible(path string) bool {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return false
+	}
+	_, err := os.Stat(trimmed)
+	return err == nil
 }
 
 func normalizeMediaPathForCompare(value string) string {

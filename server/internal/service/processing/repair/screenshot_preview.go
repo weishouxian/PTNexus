@@ -61,7 +61,7 @@ func InspectScreenshotSubtitles(input ScreenshotGenerateInput) (ScreenshotSubtit
 
 	downloader, decision, dErr := downloaderclient.DecideProxy(input.RootConfig, downloaderID)
 	if decision.Enabled {
-		remoteCandidates := buildRemotePathCandidatesForProxy(savePath, torrentName, contentName, preferExactRemotePath)
+		remoteCandidates := buildRemotePathCandidatesForProxy(input.RootConfig, downloaderID, savePath, torrentName, contentName, preferExactRemotePath)
 		var lastErr error
 		for _, remoteCandidate := range remoteCandidates {
 			inspection, err := downloader.InspectScreenshotByProxy(remoteCandidate, contentName)
@@ -129,7 +129,7 @@ func GenerateScreenshotPreviewCandidates(input ScreenshotGenerateInput, previewC
 	savePath, downloaderID, torrentName, contentName, preferExactRemotePath := parseScreenshotSourceParams(input.RootConfig, payload, sourceInfo, input.ContentName)
 	downloader, decision, dErr := downloaderclient.DecideProxy(input.RootConfig, downloaderID)
 	if decision.Enabled {
-		remoteCandidates := buildRemotePathCandidatesForProxy(savePath, torrentName, contentName, preferExactRemotePath)
+		remoteCandidates := buildRemotePathCandidatesForProxy(input.RootConfig, downloaderID, savePath, torrentName, contentName, preferExactRemotePath)
 		var lastErr error
 		for _, remoteCandidate := range remoteCandidates {
 			previewBundle, err := downloader.FetchScreenshotPreviewsByProxy(
@@ -173,7 +173,7 @@ func GenerateScreenshotPreviewCandidates(input ScreenshotGenerateInput, previewC
 
 	translatedSavePath := TranslateDownloaderPath(input.RootConfig, downloaderID, savePath)
 	if shouldSkipLocalScreenshotFallback(input.RootConfig, downloaderID, savePath, translatedSavePath, decision) {
-		return ScreenshotPreviewBundle{}, fmt.Errorf("下载器已启用远程模式，代理未能生成候选截图，且未配置本地路径映射，已停止本地扫描")
+		return ScreenshotPreviewBundle{}, fmt.Errorf("下载器已启用远程模式，代理未能生成候选截图，且本地路径不可访问，已停止本地扫描（本地路径：%s）", strings.TrimSpace(translatedSavePath))
 	}
 
 	targetResult, err := resolveLocalMediaTargetResult(input.RootConfig, downloaderID, savePath, torrentName, contentName, "截图预览生成")
@@ -297,7 +297,7 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	downloader, decision, dErr := downloaderclient.DecideProxy(input.RootConfig, downloaderID)
 	logx.Infof(screenshotPreviewLogModule, "截图代理判定 downloader_id=%s enabled=%t reason=%s proxy_host=%s proxy_port=%d err=%v", downloaderID, decision.Enabled, decision.Reason, downloader.Host, downloader.ProxyPort, dErr)
 	if decision.Enabled {
-		remoteCandidates := buildRemotePathCandidatesForProxy(savePath, torrentName, contentName, preferExactRemotePath)
+		remoteCandidates := buildRemotePathCandidatesForProxy(input.RootConfig, downloaderID, savePath, torrentName, contentName, preferExactRemotePath)
 		var lastErr error
 		for candidateIndex, remoteCandidate := range remoteCandidates {
 			logx.Infof(screenshotPreviewLogModule, "截图代理尝试 scene=%s candidate=%d/%d remote_path=%s", proxyScene, candidateIndex+1, len(remoteCandidates), remoteCandidate)
@@ -362,7 +362,7 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	}
 
 	if shouldSkipLocalScreenshotFallback(input.RootConfig, downloaderID, savePath, translatedSavePath, decision) {
-		return nil, fmt.Errorf("下载器已启用远程模式，代理未能生成截图，且未配置本地路径映射，已停止本地扫描")
+		return nil, fmt.Errorf("下载器已启用远程模式，代理未能生成截图，且本地路径不可访问，已停止本地扫描（本地路径：%s）", strings.TrimSpace(translatedSavePath))
 	}
 
 	fullVideoPath := translatedSavePath

@@ -106,7 +106,7 @@ func (d Downloader) FetchMediaInfoByProxy(remotePath, contentName string) (strin
 	bodyText := strings.TrimSpace(string(bodyBytes))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		logx.Warnf(proxyMediaLogModule, "请求MediaInfo失败 remote_path=%s status=%d body=%s", compactProxyBody(trimmedPath), response.StatusCode, compactProxyBody(bodyText))
-		return "", false, &ProxyAPIError{StatusCode: response.StatusCode, Message: compactProxyBody(bodyText)}
+		return "", false, newProxyHTTPError(response.StatusCode, bodyText)
 	}
 
 	resp := proxyMediaInfoResponse{}
@@ -120,7 +120,7 @@ func (d Downloader) FetchMediaInfoByProxy(remotePath, contentName string) (strin
 			msg = "代理返回 success=false"
 		}
 		logx.Warnf(proxyMediaLogModule, "请求MediaInfo失败 remote_path=%s reason=%s", compactProxyBody(trimmedPath), compactProxyBody(msg))
-		return "", false, &ProxyAPIError{StatusCode: 500, Message: msg}
+		return "", false, newProxyResponseFailure(msg)
 	}
 
 	if resp.IsBDMV {
@@ -136,7 +136,7 @@ func (d Downloader) FetchMediaInfoByProxy(remotePath, contentName string) (strin
 			msg = "代理未返回有效 mediainfo 文本"
 		}
 		logx.Warnf(proxyMediaLogModule, "MediaInfo为空 remote_path=%s reason=%s", compactProxyBody(trimmedPath), compactProxyBody(msg))
-		return "", false, &ProxyAPIError{StatusCode: 500, Message: msg}
+		return "", false, newProxyResponseFailure(msg)
 	}
 
 	logx.Infof(proxyMediaLogModule, "请求MediaInfo成功 remote_path=%s output_bytes=%d", compactProxyBody(trimmedPath), len(mediaInfo))

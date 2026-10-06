@@ -97,7 +97,7 @@ func (d Downloader) FetchScreenshotsByProxy(remotePath, contentName string, scre
 			msg = "代理未返回有效 bbcode"
 		}
 		logx.Warnf(proxyScreenshotLogModule, "截图BBCode为空 remote_path=%s reason=%s", compactProxyBody(strings.TrimSpace(remotePath)), compactProxyBody(msg))
-		return "", &ProxyAPIError{StatusCode: 500, Message: msg}
+		return "", newProxyResponseFailure(msg)
 	}
 	return bbcode, nil
 }
@@ -122,7 +122,7 @@ func (d Downloader) FetchSelectedScreenshotsByProxy(
 		if msg == "" {
 			msg = "代理未返回有效 bbcode"
 		}
-		return "", &ProxyAPIError{StatusCode: 500, Message: msg}
+		return "", newProxyResponseFailure(msg)
 	}
 	return bbcode, nil
 }
@@ -150,7 +150,7 @@ func (d Downloader) FetchRandomScreenshotsByProxy(
 		if msg == "" {
 			msg = "代理未返回有效 bbcode"
 		}
-		return "", &ProxyAPIError{StatusCode: 500, Message: msg}
+		return "", newProxyResponseFailure(msg)
 	}
 	return bbcode, nil
 }
@@ -189,7 +189,7 @@ func (d Downloader) fetchScreenshotPreviewResponse(
 		if msg == "" {
 			msg = "代理未返回可用候选截图"
 		}
-		return proxyScreenshotResponse{}, &ProxyAPIError{StatusCode: 500, Message: msg}
+		return proxyScreenshotResponse{}, newProxyResponseFailure(msg)
 	}
 	return resp, nil
 }
@@ -289,7 +289,7 @@ func (d Downloader) requestProxyScreenshots(
 	bodyText := strings.TrimSpace(string(bodyBytes))
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		logx.Warnf(proxyScreenshotLogModule, "请求截图失败 remote_path=%s status=%d body=%s", compactProxyBody(trimmedPath), response.StatusCode, compactProxyBody(bodyText))
-		return proxyScreenshotResponse{}, &ProxyAPIError{StatusCode: response.StatusCode, Message: compactProxyBody(bodyText)}
+		return proxyScreenshotResponse{}, newProxyHTTPError(response.StatusCode, bodyText)
 	}
 
 	resp := proxyScreenshotResponse{}
@@ -303,7 +303,7 @@ func (d Downloader) requestProxyScreenshots(
 			msg = "代理返回 success=false"
 		}
 		logx.Warnf(proxyScreenshotLogModule, "请求截图失败 remote_path=%s reason=%s", compactProxyBody(trimmedPath), compactProxyBody(msg))
-		return proxyScreenshotResponse{}, &ProxyAPIError{StatusCode: 500, Message: msg}
+		return proxyScreenshotResponse{}, newProxyResponseFailure(msg)
 	}
 
 	logx.Infof(
