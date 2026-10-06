@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -245,16 +246,23 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		return value
 	}
 
+	categoryID := resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionToken, hasAnimation)
+
 	textFields := map[string]string{
 		"name":       title,
 		"smallDescr": strings.TrimSpace(input.Subtitle),
 		"descr":      buildMTeamDescription(input.Description),
-		"category":   resolveMTeamCategory(cfg, categoryKey, mediumKey, resolutionToken, hasAnimation),
-		"source":     pick("来源(source)", cfg.Source, mediumRaw, cfg.Defaults.Source),
+		"category":   categoryID,
 		"standard":   pick("分辨率(standard)", cfg.Standard, resolutionRaw, cfg.Defaults.Standard),
 		"videoCodec": pick("视频编码(videoCodec)", cfg.Codec, codecRaw, cfg.Defaults.Codec),
 		"audioCodec": pick("音频编码(audioCodec)", cfg.Audio, audioRaw, cfg.Defaults.Audio),
 		"processing": pick("地区(processing)", cfg.Processing, sourceKey, cfg.Defaults.Processing),
+	}
+
+	// 来源（source）：站点前端只在「电影」大类的分类下展示该字段，影剧/动画/纪录等分类一律没有，
+	// 因此这里跟着站点前端走——非电影分类不提交，避免给站点塞语义不存在的字段。
+	if mteamCategoryIsMovie(cfg, categoryID) {
+		textFields["source"] = pick("来源(source)", cfg.Source, mediumRaw, cfg.Defaults.Source)
 	}
 
 	// 制作组（team）：一律不提交。
@@ -288,7 +296,8 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 	}
 
 	// 标签：站点前端同样以逗号分隔字符串提交（FormData 对数组会做 String() 展开）。
-	tagIds := resolveMTeamTagIDs(cfg, input.UploadData)
+	// 除映射源标签外，还按站点前端「按 mediainfo 自动补技术标签」的规则补齐（见 resolveMTeamTagIDs）。
+	tagIds, tagNotes := resolveMTeamTagIDs(cfg, input.UploadData, resolutionRaw)
 	if len(tagIds) > 0 {
 		textFields["labelsNew"] = strings.Join(tagIds, ",")
 	}
@@ -311,22 +320,30 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 		textFields["descr"] = title
 	}
 
+	// 摘要里用 - 表示「该字段本次不提交」，避免与「提交了空值」混淆。
+	sourceSummary := strings.TrimSpace(textFields["source"])
+	if sourceSummary == "" {
+		sourceSummary = "-"
+	}
+
 	logLines := []string{
 		fmt.Sprintf("--- [m-team] 开始发布到 %s ---", strings.TrimSpace(input.TargetName)),
 		fmt.Sprintf("上传地址: %s", uploadURL),
 		fmt.Sprintf("API Token: %s（来源 %s）", mteamTokenFingerprint(apiKey), token.Source),
 		fmt.Sprintf("字段摘要: name=%q category=%s source=%s standard=%s videoCodec=%s audioCodec=%s processing=%s countries=%q labelsNew=%q anonymous=%s",
-			title, textFields["category"], textFields["source"], textFields["standard"],
+			title, textFields["category"], sourceSummary, textFields["standard"],
 			textFields["videoCodec"], textFields["audioCodec"], textFields["processing"],
 			textFields["countries"], textFields["labelsNew"], textFields["anonymous"]),
 	}
-	// 源制作组被刻意忽略，单独记一行，避免事后误以为「team 没解析出来」。
+	// 源制作组被刻意忽略，单独记一行：先写清「未提交」再说明原因，
+	// 避免像历史那样被读成「提交了制作组」。
 	if ignoredTeam := strings.TrimSpace(teamKey); ignoredTeam != "" && !strings.EqualFold(ignoredTeam, "team.other") {
 		logLines = append(logLines, fmt.Sprintf(
-			"制作组: 源制作组 %q 已忽略、未提交 team 字段（站点对制作组做成员权限校验，非该组成员提交会报 code=1 無權限使用此製作組）",
+			"制作组: team 字段未提交；源制作组 %q 已忽略（站点对制作组做成员权限校验，非该组成员提交会报 code=1 無權限使用此製作組）",
 			ignoredTeam,
 		))
 	}
+	logLines = append(logLines, tagNotes...)
 	if hasAnimation {
 		appendLogLine := "分类判定：命中动漫/动画标签，已按站点规则归入动画大类"
 		if textFields["category"] == cfg.Category["anime_bluray"] {
@@ -570,6 +587,9 @@ func loadMTeamConfig() mteamConfig {
 	mergeMTeamMap(cfg.Processing, override.Processing)
 	mergeMTeamMap(cfg.Country, override.Country)
 	mergeMTeamMap(cfg.Tags, override.Tags)
+	// 标签查找键在代码里一律小写（来自 tag.HDR10 之类的标准化标签），
+	// 而 yaml 里的键沿用站点显示名（4K / HDR10 / 菁彩HDR），必须归一后才能命中。
+	normalizeMTeamTagKeys(cfg.Tags)
 	if v := strings.TrimSpace(override.Defaults.Category); v != "" {
 		cfg.Defaults.Category = v
 	}
@@ -633,6 +653,34 @@ func mergeMTeamMap(base, override map[string]string) {
 			continue
 		}
 		base[trimmedKey] = strings.TrimSpace(value)
+	}
+}
+
+// normalizeMTeamTagKeys 把标签字典的键统一为小写。
+//
+// 标签查找键来自标准化标签（tag.HDR10 → hdr10），代码里一律小写；
+// 而 yaml 里的键沿用站点显示名（"4K" / "HDR10" / "菁彩HDR"），不归一会出现大小写两份键，
+// 使 yaml 里的值永远命中不到、只剩内置默认值生效。
+// 参数/返回：tags 为就地修改的标签字典，无返回值。
+// 失败场景：空字典直接返回。
+// 副作用：会删除大写键、把其值写入对应小写键（覆盖内置默认值）。
+func normalizeMTeamTagKeys(tags map[string]string) {
+	if len(tags) == 0 {
+		return
+	}
+	overrides := make(map[string]string)
+	for key, value := range tags {
+		lower := strings.ToLower(strings.TrimSpace(key))
+		if lower == "" || lower == key {
+			continue
+		}
+		overrides[lower] = strings.TrimSpace(value)
+		delete(tags, key)
+	}
+	for key, value := range overrides {
+		if value != "" {
+			tags[key] = value
+		}
 	}
 }
 
@@ -787,32 +835,108 @@ func resolveMTeamCategory(cfg mteamConfig, category, medium, resolution string, 
 	}
 }
 
-// resolveMTeamTagIDs 把 PTNexus 标签映射到站点标签（labelsNew）；未配置的标签忽略。
-func resolveMTeamTagIDs(cfg mteamConfig, uploadData map[string]any) []string {
-	tags := resolveSiteCombinedTags(uploadData)
-	if len(tags) == 0 {
-		return nil
+// mteamCategoryIsMovie 判断站点分类 ID 是否属于「电影」大类。
+//
+// 站点前端只在电影分类下展示「来源（source）」字段，影剧/动画/纪录等分类一律没有，
+// 因此用该判断决定是否提交 source，保持与站点前端一致。
+// 参数/返回：cfg 为站点字典；categoryID 为 resolveMTeamCategory 算出的站点分类 ID；返回是否属于电影大类。
+// 失败场景：分类字典缺失或不含电影分类时返回 false。
+// 副作用：无。
+func mteamCategoryIsMovie(cfg mteamConfig, categoryID string) bool {
+	target := strings.TrimSpace(categoryID)
+	if target == "" {
+		return false
 	}
-	ids := make([]string, 0, len(tags))
-	seen := map[string]struct{}{}
+	for _, key := range []string{"movie", "movie_sd", "movie_dvd", "movie_bluray", "movie_remux"} {
+		if id := strings.TrimSpace(cfg.Category[key]); id != "" && id == target {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveMTeamTagIDs 把 PTNexus 标签映射到站点标签（labelsNew），并补齐站点前端本会自动补的技术标签。
+//
+// 站点前端提交时会同时带上 mediaInfoAnalysisResult=true，由站点按 mediainfo 自动补 4k / hdr 等技术标签；
+// 走 API 通道（x-api-key）不经过那套前端逻辑，因此这里按同样规则在本地补齐，
+// 否则种子在站点侧会缺 4K / HDR 标签，按标签筛选时搜不到。
+//
+// 参数/返回：cfg 为站点字典；uploadData 为标准化发布数据；resolution 为标准化分辨率（如 resolution.r2160p）；
+// 返回去重且有序的站点标签列表，以及需要写进发布日志的补全说明。
+// 失败场景：标签为空、或全部未命中站点字典时返回空列表。
+// 副作用：无。
+func resolveMTeamTagIDs(cfg mteamConfig, uploadData map[string]any, resolution string) ([]string, []string) {
+	tags := resolveSiteCombinedTags(uploadData)
+	keys := make([]string, 0, len(tags))
+	keySet := make(map[string]struct{}, len(tags))
 	for tag := range tags {
 		key := strings.ToLower(strings.TrimSpace(tag))
 		key = strings.TrimPrefix(key, "tag.")
 		if key == "" {
 			continue
 		}
-		id, ok := cfg.Tags[key]
-		if !ok || strings.TrimSpace(id) == "" {
+		if _, exists := keySet[key]; exists {
 			continue
 		}
-		normID := strings.TrimSpace(id)
-		if _, exists := seen[normID]; exists {
-			continue
-		}
-		seen[normID] = struct{}{}
-		ids = append(ids, normID)
+		keySet[key] = struct{}{}
+		keys = append(keys, key)
 	}
-	return ids
+	// 固定顺序，保证同一资源两次发种日志里的 labelsNew 可对比（map 遍历顺序随机会让人误以为配置变了）。
+	sort.Strings(keys)
+
+	// 站点侧用 HDRVi 表达「菁彩HDR / HDR Vivid」，而源站常把这类片源标成 HDR10 / HDR10+。
+	// 照搬会在站点上标错技术标签，因此以「菁彩HDR」为准，丢掉与之冲突的 HDR10 / HDR10+。
+	hdrVivid := false
+	for _, key := range keys {
+		if key == "菁彩hdr" || key == "hdrvivid" || key == "hdr vivid" {
+			hdrVivid = true
+			break
+		}
+	}
+
+	ids := make([]string, 0, len(keys)+2)
+	seen := make(map[string]struct{}, len(keys)+2)
+	notes := make([]string, 0, 2)
+	ensureID := func(id, note string) {
+		trimmed := strings.TrimSpace(id)
+		if trimmed == "" {
+			return
+		}
+		if _, exists := seen[trimmed]; exists {
+			return
+		}
+		seen[trimmed] = struct{}{}
+		ids = append(ids, trimmed)
+		if note != "" {
+			notes = append(notes, note)
+		}
+	}
+
+	droppedHDR10 := false
+	for _, key := range keys {
+		if hdrVivid && (key == "hdr10" || key == "hdr10+") {
+			droppedHDR10 = true
+			continue
+		}
+		if id, ok := cfg.Tags[key]; ok {
+			ensureID(id, "")
+		}
+	}
+	if droppedHDR10 {
+		notes = append(notes, `标签补全：源标签带「菁彩HDR」但同时又标了 HDR10/HDR10+，已丢弃 HDR10/HDR10+（站点侧按 HDRVi + hdr 表达）`)
+	}
+	if hdrVivid {
+		ensureID(cfg.Tags["hdr"], `标签补全：命中「菁彩HDR」，按站点 mediainfo 规则同时补 "hdr"`)
+	}
+
+	// 分辨率技术标签：站点按 mediainfo 会给 2160p / 4320p 自动补 4k / 8k，API 通道需自行补。
+	switch normalizeMTeamToken(resolution, "resolution.") {
+	case "r2160p":
+		ensureID(cfg.Tags["4k"], `标签补全：分辨率为 4K，按站点 mediainfo 规则补 "4k"`)
+	case "r4320p":
+		ensureID(cfg.Tags["8k"], `标签补全：分辨率为 8K，按站点 mediainfo 规则补 "8k"`)
+	}
+	return ids, notes
 }
 
 var (
