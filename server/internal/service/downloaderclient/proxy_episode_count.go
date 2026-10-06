@@ -77,7 +77,7 @@ func (d Downloader) FetchEpisodeCountByProxy(remotePath string) (int, int, error
 	bodyText := strings.TrimSpace(string(bodyBytes))
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		logx.Warnf(proxyEpisodeCountLogModule, "请求集数统计失败 remote_path=%s status=%d body=%s", compactProxyBody(trimmedPath), resp.StatusCode, compactProxyBody(bodyText))
-		return 0, 0, &ProxyAPIError{StatusCode: resp.StatusCode, Message: compactProxyBody(bodyText)}
+		return 0, 0, newProxyHTTPError(resp.StatusCode, bodyText)
 	}
 
 	parsed := proxyEpisodeCountResponse{}
@@ -90,12 +90,9 @@ func (d Downloader) FetchEpisodeCountByProxy(remotePath string) (int, int, error
 		if msg == "" {
 			msg = "代理返回 success=false"
 		}
-		statusCode := 500
-		if strings.Contains(msg, "路径不存在") || strings.Contains(msg, "remote_path 不能为空") {
-			statusCode = 400
-		}
 		logx.Warnf(proxyEpisodeCountLogModule, "请求集数统计失败 remote_path=%s reason=%s", compactProxyBody(trimmedPath), compactProxyBody(msg))
-		return 0, 0, &ProxyAPIError{StatusCode: statusCode, Message: msg}
+		// 代理对「路径不存在」返回 200 + success=false，需归一为 400 才能让调用方继续尝试下一个候选。
+		return 0, 0, newProxyResponseFailure(msg)
 	}
 
 	episodeCount := parsed.EpisodeCount

@@ -90,7 +90,14 @@ func (s *MigrateService) startBDInfoTask(seedID string, force bool) (string, err
 	}
 
 	// 对齐 Python：当 downloader.use_proxy=true 时，优先把 BDInfo 任务提交给盒子代理（异步），控制端通过轮询获取进度与结果。
-	remoteCandidates := buildBDInfoRemoteCandidates(launch.SeedSavePath, launch.TorrentName)
+	// 候选同时包含「下载器原始路径」与「路径映射后的路径」：下载器给的是容器内路径，代理能看到哪一套取决于其部署方式。
+	mappedSavePath := strings.TrimSpace(downloaderclient.TranslateDownloaderPath(rootConfig, downloaderID, launch.SeedSavePath))
+	remoteCandidates := downloaderclient.BuildProxyPathCandidates(
+		[]string{launch.SeedSavePath, mappedSavePath},
+		launch.TorrentName,
+		"",
+		false,
+	)
 	startErr := error(nil)
 	usedRemotePath := ""
 	for _, candidate := range remoteCandidates {
@@ -107,7 +114,6 @@ func (s *MigrateService) startBDInfoTask(seedID string, force bool) (string, err
 	}
 
 	// 远程启动失败时，仅在本机路径确实可访问时才回退本地，避免在“只挂盒子不挂载”的环境里反复 stat 失败。
-	mappedSavePath := strings.TrimSpace(downloaderclient.TranslateDownloaderPath(rootConfig, downloaderID, launch.SeedSavePath))
 	localCandidates := buildBDInfoRemoteCandidates(mappedSavePath, launch.TorrentName)
 	if hasAnyExistingLocalPath(localCandidates) {
 		logx.Warnf(bdinfoTaskLogModule, "盒子代理BDInfo启动失败，回退本地BDInfo task_id=%s seed_id=%s err=%v", taskID, trimmedSeedID, startErr)

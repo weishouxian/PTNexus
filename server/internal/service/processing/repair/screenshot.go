@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
-	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -90,7 +89,7 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 	downloader, decision, dErr := downloaderclient.DecideProxy(input.RootConfig, downloaderID)
 	logx.Infof(screenshotValidateLogModule, "截图代理判定 downloader_id=%s enabled=%t reason=%s proxy_host=%s proxy_port=%d err=%v", downloaderID, decision.Enabled, decision.Reason, downloader.Host, downloader.ProxyPort, dErr)
 	if decision.Enabled {
-		remoteCandidates := buildRemotePathCandidatesForProxy(savePath, torrentName, contentName, preferExactRemotePath)
+		remoteCandidates := buildRemotePathCandidatesForProxy(input.RootConfig, downloaderID, savePath, torrentName, contentName, preferExactRemotePath)
 		var lastErr error
 		for candidateIndex, remoteCandidate := range remoteCandidates {
 			logx.Infof(screenshotValidateLogModule, "截图代理尝试 scene=自动截图 candidate=%d/%d remote_path=%s", candidateIndex+1, len(remoteCandidates), remoteCandidate)
@@ -136,7 +135,7 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		logx.PlainInfof("路径映射: %s -> %s", savePath, translatedSavePath)
 	}
 	if shouldSkipLocalScreenshotFallback(input.RootConfig, downloaderID, savePath, translatedSavePath, decision) {
-		return nil, fmt.Errorf("下载器已启用远程模式，代理未能生成截图，且未配置本地路径映射，已停止本地扫描")
+		return nil, fmt.Errorf("下载器已启用远程模式，代理未能生成截图，且本地路径不可访问，已停止本地扫描（本地路径：%s）", strings.TrimSpace(translatedSavePath))
 	}
 
 	fullVideoPath := translatedSavePath
@@ -402,7 +401,7 @@ func generateRandomScreenshotsByProxy(input ScreenshotGenerateInput, screenshotC
 		return nil, false, nil
 	}
 
-	remoteCandidates := buildRemotePathCandidatesForProxy(savePath, torrentName, contentName, preferExactRemotePath)
+	remoteCandidates := buildRemotePathCandidatesForProxy(input.RootConfig, downloaderID, savePath, torrentName, contentName, preferExactRemotePath)
 	var lastErr error
 	for candidateIndex, remoteCandidate := range remoteCandidates {
 		logx.Infof(screenshotValidateLogModule, "随机正式截图代理尝试 candidate=%d/%d remote_path=%s count=%d", candidateIndex+1, len(remoteCandidates), remoteCandidate, screenshotCount)
@@ -530,37 +529,18 @@ func normalizeRandomScreenshotCount(value int) int {
 	return value
 }
 
-func buildRemotePathCandidatesForProxy(savePath, torrentName, contentName string, preferExactPath bool) []string {
-	trimmedSavePath := strings.TrimSpace(savePath)
-	trimmedTorrentName := strings.TrimSpace(torrentName)
-	trimmedContentName := strings.TrimSpace(contentName)
-
-	candidates := make([]string, 0, 3)
-	appendCandidate := func(candidate string) {
-		normalized := normalizeProxyRemotePath(candidate)
-		if normalized == "" {
-			return
-		}
-		for _, existing := range candidates {
-			if normalizeScreenshotPathForCompare(existing) == normalizeScreenshotPathForCompare(normalized) {
-				return
-			}
-		}
-		candidates = append(candidates, normalized)
-	}
-	if preferExactPath && trimmedSavePath != "" {
-		appendCandidate(trimmedSavePath)
-	}
-	if trimmedSavePath != "" && trimmedTorrentName != "" {
-		appendCandidate(joinProxyRemotePath(trimmedSavePath, trimmedTorrentName))
-	}
-	if trimmedSavePath != "" && trimmedContentName != "" && !strings.EqualFold(trimmedContentName, trimmedTorrentName) {
-		appendCandidate(joinProxyRemotePath(trimmedSavePath, trimmedContentName))
-	}
-	if trimmedSavePath != "" {
-		appendCandidate(trimmedSavePath)
-	}
-	return candidates
+// buildRemotePathCandidatesForProxy 生成盒子代理请求使用的路径候选列表。
+// 参数/返回：rootConfig/downloaderID 用于解析路径映射；savePath 为下载器给出的保存路径；torrentName/contentName 为候选子路径；preferExactPath=true 时优先把完整内容路径原样作为候选；返回去重后的候选列表（原始下载器路径在前，路径映射后的本地路径在后）。
+// 失败场景：无。
+// 副作用：无。
+func buildRemotePathCandidatesForProxy(rootConfig map[string]any, downloaderID, savePath, torrentName, contentName string, preferExactPath bool) []string {
+	translatedSavePath := TranslateDownloaderPath(rootConfig, downloaderID, savePath)
+	return downloaderclient.BuildProxyPathCandidates(
+		[]string{savePath, translatedSavePath},
+		torrentName,
+		contentName,
+		preferExactPath,
+	)
 }
 
 func enrichScreenshotSourceFromDownloader(rootConfig map[string]any, payload map[string]any, downloaderID, savePath, torrentName, contentName string) (string, string, bool) {
@@ -638,26 +618,6 @@ func firstNonEmptyScreenshotString(items ...string) string {
 		}
 	}
 	return ""
-}
-
-func joinProxyRemotePath(base, name string) string {
-	normalizedBase := normalizeProxyRemotePath(base)
-	normalizedName := strings.Trim(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"), "/")
-	if normalizedBase == "" {
-		return normalizedName
-	}
-	if normalizedName == "" {
-		return normalizedBase
-	}
-	return pathpkg.Join(normalizedBase, normalizedName)
-}
-
-func normalizeProxyRemotePath(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.ReplaceAll(trimmed, "\\", "/")
 }
 
 func fileSizeBytes(path string) int64 {
@@ -1089,6 +1049,10 @@ func TranslateDownloaderPath(rootConfig map[string]any, downloaderID, remotePath
 	return downloaderclient.TranslateDownloaderPath(rootConfig, downloaderID, remotePath)
 }
 
+// shouldSkipLocalScreenshotFallback 判断代理截图失败后是否应停止本地截图。
+// 参数/返回：rootConfig 为运行配置；decision 为代理判定结果；返回 true 表示本地截图没有意义，应直接报错。
+// 失败场景：无。
+// 副作用：会读取下载器配置，并对映射后的本地路径做一次存在性检查。
 func shouldSkipLocalScreenshotFallback(rootConfig map[string]any, downloaderID, savePath, translatedSavePath string, decision downloaderclient.ProxyDecision) bool {
 	if !decision.Enabled {
 		return false
@@ -1096,7 +1060,17 @@ func shouldSkipLocalScreenshotFallback(rootConfig map[string]any, downloaderID, 
 	if strings.TrimSpace(translatedSavePath) == "" {
 		translatedSavePath = TranslateDownloaderPath(rootConfig, downloaderID, savePath)
 	}
-	return normalizeScreenshotPathForCompare(savePath) == normalizeScreenshotPathForCompare(translatedSavePath)
+	if normalizeScreenshotPathForCompare(savePath) == normalizeScreenshotPathForCompare(translatedSavePath) {
+		// 未配置路径映射：本地路径与下载器返回路径完全一致，说明本机不挂载媒体目录。
+		return true
+	}
+	// 配置了映射，但映射后的本地根路径在本机不存在：本地候选必然全部 stat 失败，直接给出明确提示。
+	trimmed := strings.TrimSpace(translatedSavePath)
+	if trimmed == "" {
+		return false
+	}
+	_, err := os.Stat(trimmed)
+	return err != nil
 }
 
 func normalizeScreenshotPathForCompare(value string) string {

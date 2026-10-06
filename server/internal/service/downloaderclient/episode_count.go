@@ -3,7 +3,6 @@ package downloaderclient
 import (
 	"io/fs"
 	"os"
-	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -49,10 +48,12 @@ func CountEpisodesWithDownloaderContext(input EpisodeCountInput) EpisodeCountRes
 		contentName = torrentName
 	}
 	trimmedDownloaderID := strings.TrimSpace(input.DownloaderID)
+	translatedSavePath := TranslateDownloaderPath(input.RootConfig, trimmedDownloaderID, savePath)
 	if trimmedDownloaderID != "" {
 		downloader, decision, err := DecideProxy(input.RootConfig, trimmedDownloaderID)
 		if decision.Enabled {
-			for _, candidate := range buildProxyPathCandidates(savePath, torrentName, contentName) {
+			// 同时探测「下载器原始路径」与「路径映射后的本地路径」：盒子代理可能只能看到其中一种。
+			for _, candidate := range BuildProxyPathCandidates([]string{savePath, translatedSavePath}, torrentName, contentName, false) {
 				count, season, proxyErr := downloader.FetchEpisodeCountByProxy(candidate)
 				if proxyErr == nil {
 					return EpisodeCountResult{
@@ -78,7 +79,6 @@ func CountEpisodesWithDownloaderContext(input EpisodeCountInput) EpisodeCountRes
 		}
 	}
 
-	translatedSavePath := TranslateDownloaderPath(input.RootConfig, trimmedDownloaderID, savePath)
 	localCandidates := buildPathCandidates(translatedSavePath, torrentName, contentName)
 	count, season, resolvedPath, ok := countLocalEpisodesFromCandidates(localCandidates)
 	if !ok {
@@ -116,44 +116,6 @@ func buildPathCandidates(savePath, torrentName, contentName string) []string {
 		candidates = append(candidates, trimmedSavePath)
 	}
 	return compactStrings(candidates)
-}
-
-func buildProxyPathCandidates(savePath, torrentName, contentName string) []string {
-	trimmedSavePath := strings.TrimSpace(savePath)
-	trimmedTorrentName := strings.TrimSpace(torrentName)
-	trimmedContentName := strings.TrimSpace(contentName)
-
-	candidates := make([]string, 0, 3)
-	if trimmedSavePath != "" && trimmedTorrentName != "" {
-		candidates = append(candidates, joinProxyRemotePath(trimmedSavePath, trimmedTorrentName))
-	}
-	if trimmedSavePath != "" && trimmedContentName != "" && !strings.EqualFold(trimmedContentName, trimmedTorrentName) {
-		candidates = append(candidates, joinProxyRemotePath(trimmedSavePath, trimmedContentName))
-	}
-	if trimmedSavePath != "" {
-		candidates = append(candidates, normalizeProxyRemotePath(trimmedSavePath))
-	}
-	return compactStrings(candidates)
-}
-
-func joinProxyRemotePath(base, name string) string {
-	normalizedBase := normalizeProxyRemotePath(base)
-	normalizedName := strings.Trim(strings.ReplaceAll(strings.TrimSpace(name), "\\", "/"), "/")
-	if normalizedBase == "" {
-		return normalizedName
-	}
-	if normalizedName == "" {
-		return normalizedBase
-	}
-	return pathpkg.Join(normalizedBase, normalizedName)
-}
-
-func normalizeProxyRemotePath(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	return strings.ReplaceAll(trimmed, "\\", "/")
 }
 
 func countLocalEpisodesFromCandidates(candidates []string) (int, int, string, bool) {
