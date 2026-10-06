@@ -48,6 +48,7 @@ usage() {
   cat <<'EOF'
 Usage:
   bash scripts/package-desktop.sh package         # 默认：构建 Windows 安装包（支持增量缓存）
+  bash scripts/package-desktop.sh single          # 仅构建单文件 exe（前端 + 进程内嵌 server）
   bash scripts/package-desktop.sh frontend-install
   bash scripts/package-desktop.sh frontend-dev
   bash scripts/package-desktop.sh frontend-build
@@ -65,6 +66,35 @@ require_cmd() {
     echo "$cmd is required but not found in PATH" >&2
     exit 1
   fi
+}
+
+# sync_tree 复制目录内容到目标目录，优先 rsync（Linux/macOS），
+# 缺失时退回 cp（Windows Git Bash 通常没有 rsync）。
+sync_tree() {
+  local src="$1"
+  local dst="$2"
+  if [[ ! -d "$src" ]]; then
+    return 0
+  fi
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a "$src/" "$dst/"
+  else
+    cp -R "$src/." "$dst/"
+  fi
+}
+
+# sync_frontend_dist_tree 全量替换目标前端产物，同时保留 go:embed 占位文件。
+sync_frontend_dist_tree() {
+  local src="$1"
+  local dst="$2"
+  mkdir -p "$dst"
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete --exclude 'placeholder.txt' "$src/" "$dst/"
+    return
+  fi
+  find "$dst" -mindepth 1 -maxdepth 1 ! -name 'placeholder.txt' -exec rm -rf {} +
+  cp -R "$src/." "$dst/"
 }
 
 require_makensis() {
@@ -375,7 +405,38 @@ sync_frontend_dist() {
   echo "[desktop] syncing dist to: $TARGET_DIST"
   mkdir -p "$TARGET_DIST"
   # 保留 go:embed all:frontend/dist 的占位文件，避免未构建时目录缺失导致编译失败。
-  rsync -a --delete --exclude 'placeholder.txt' "$WEBUI_DIST/" "$TARGET_DIST/"
+  sync_frontend_dist_tree "$WEBUI_DIST" "$TARGET_DIST"
+}
+
+# sync_embedded_bundle 把站点清单与站点映射同步到 desktop 内嵌资源目录。
+# 单文件 exe 依赖该目录（go:embed）在无外挂文件时也能完整运行，构建前必须刷新。
+sync_embedded_bundle() {
+  local bundle_dir="$DESKTOP_ROOT/internal/desktopapp/bundle"
+
+  if [[ ! -f "$SERVER_ROOT/sites_data.json" ]]; then
+    echo "[desktop] warning: sites_data.json not found at $SERVER_ROOT/sites_data.json" >&2
+  else
+    mkdir -p "$bundle_dir"
+    cp "$SERVER_ROOT/sites_data.json" "$bundle_dir/sites_data.json"
+  fi
+
+  if [[ ! -d "$SERVER_ROOT/configs" ]]; then
+    echo "[desktop] warning: configs directory not found at $SERVER_ROOT/configs" >&2
+  else
+    mkdir -p "$bundle_dir/configs"
+    # 增量覆盖而非整目录删除：受限环境（批量删除保护）下更安全，正常只需清理少量残留。
+    cp -R "$SERVER_ROOT/configs/." "$bundle_dir/configs/"
+    while IFS= read -r rel; do
+      [[ -z "$rel" ]] && continue
+      if [[ ! -f "$SERVER_ROOT/configs/$rel" ]]; then
+        rm -f "$bundle_dir/configs/$rel"
+        echo "[desktop] embedded bundle: removed stale $rel"
+      fi
+    done < <(cd "$bundle_dir/configs" && find . -type f -print | sed 's|^\./||')
+  fi
+
+  printf 'synced-from: server/sites_data.json + server/configs\n' >"$bundle_dir/SOURCE.txt"
+  echo "[desktop] embedded bundle synced: $bundle_dir"
 }
 
 sync_desktop_icon() {
@@ -454,7 +515,7 @@ prepare_windows_bdinfo_sidecar() {
   fi
 
   mkdir -p "$BDINFO_OUT_DIR"
-  rsync -a "$source_dir/" "$BDINFO_OUT_DIR/"
+  sync_tree "$source_dir" "$BDINFO_OUT_DIR"
   echo "[desktop] bundled BDInfo dir: $source_dir"
 
   if [[ ! -f "$BDINFO_OUT_DIR/BDInfo.exe" ]]; then
@@ -482,7 +543,7 @@ prepare_optional_windows_tools() {
   rm -rf "$TOOLS_OUT_DIR"
   if [[ -d "$TOOLS_SRC_DIR" ]]; then
     mkdir -p "$TOOLS_OUT_DIR"
-    rsync -a "$TOOLS_SRC_DIR/" "$TOOLS_OUT_DIR/"
+    sync_tree "$TOOLS_SRC_DIR" "$TOOLS_OUT_DIR"
     echo "[desktop] bundled tools dir: $TOOLS_SRC_DIR"
   fi
 
@@ -656,6 +717,7 @@ prepare_sidecars_stage() {
     sync_static_sidecar_files
     prepare_windows_bdinfo_sidecar
     prepare_optional_windows_tools
+    sync_embedded_bundle
     write_cache "$assets_cache" "$assets_hash"
     rebuilt=1
   fi
@@ -681,6 +743,27 @@ desktop_dev() {
     cd "$DESKTOP_ROOT"
     wails dev
   )
+}
+
+# build_single_exe 构建「单文件」桌面 exe：前端产物与站点资源由 go:embed 打进 exe，
+# server 在进程内直接启动，因此不需要 wails CLI / NSIS / rsync，也不需要 server.exe。
+build_single_exe() {
+  require_cmd go
+  ensure_cache_root
+  prepare_frontend_stage
+  sync_embedded_bundle
+
+  echo "[desktop] building single-file exe (frontend + embedded server)"
+  (
+    cd "$DESKTOP_ROOT"
+    go build -tags desktop,production -ldflags="-w -s" -o "$PACKAGE_BIN_DIR/pt-nexus.exe" .
+  )
+
+  if [[ ! -f "$PACKAGE_BIN_DIR/pt-nexus.exe" ]]; then
+    echo "[desktop] error: single-file exe not found at $PACKAGE_BIN_DIR/pt-nexus.exe" >&2
+    return 1
+  fi
+  echo "[desktop] single-file exe: $PACKAGE_BIN_DIR/pt-nexus.exe"
 }
 
 prepare_package_context() {
@@ -885,6 +968,9 @@ cmd="${1:-package}"
 case "$cmd" in
   package)
     package_windows
+    ;;
+  single)
+    build_single_exe
     ;;
   frontend-install)
     frontend_install

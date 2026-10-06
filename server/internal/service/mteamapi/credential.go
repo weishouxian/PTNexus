@@ -22,6 +22,13 @@ type Credential struct {
 // tokenPattern 匹配控制台生成的存取令牌（UUID 形态）。
 var tokenPattern = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
 
+// sitePasskeyPattern 匹配站点 Passkey（32 位十六进制、无连字符）。
+//
+// 站点 Passkey 用于 tracker 与下载直链，**不是** API 存取令牌（存取令牌是 36 位 UUID）。
+// 用户按界面上的「Passkey」栏字面意思填站点 Passkey 是最常见的配置错误，
+// 若原样当令牌发出，站点只会回 code=1「key無效」，白跑一次发布且看不出原因。
+var sitePasskeyPattern = regexp.MustCompile(`^[0-9a-fA-F]{32}$`)
+
 // siteNeedles 为站点识别用的特征串（站点代码、域名、中文别名）。
 var siteNeedles = []string{"m-team", "mteam", "馒头"}
 
@@ -37,8 +44,11 @@ var (
 //   - 混杂文本中的 UUID（误粘贴 curl 命令、含多余字符时兜底）
 //   - 纯令牌：整串不含空白、分号与等号
 //
-// 明确返回空的场景：填的是网页 Cookie（形如 c_secure_uid=xxx; c_secure_pass=yyy），
-// 这种串里既没有 api key 键名也没有 UUID，必须拒绝，否则会整串当令牌发出、站点报「key無效」。
+// 明确返回空的场景：
+//   - 填的是网页 Cookie（形如 c_secure_uid=xxx; c_secure_pass=yyy），既没有 api key 键名也没有 UUID；
+//   - 填的是站点 Passkey（32 位十六进制）——它不是存取令牌。
+//
+// 这两种串若原样当令牌发出，站点只会回 code=1「key無效」，因此必须在本地拒绝。
 func ExtractToken(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -58,6 +68,10 @@ func ExtractToken(raw string) string {
 		} {
 			if strings.HasPrefix(segLower, prefix) {
 				if value := strings.Trim(strings.TrimSpace(seg[len(prefix):]), `"'`); value != "" {
+					// 键值形态里若填的是站点 Passkey，等同于填错，同样拒绝。
+					if sitePasskeyPattern.MatchString(value) {
+						return ""
+					}
 					return value
 				}
 			}
@@ -69,9 +83,14 @@ func ExtractToken(raw string) string {
 		return match
 	}
 
-	// 3) 纯令牌：不含空白、分号与等号时原样返回（令牌不一定是 UUID 形态）
+	// 3) 纯令牌：不含空白、分号与等号时原样返回（令牌不一定是 UUID 形态），
+	//    但站点 Passkey（32 位十六进制）必须排除——它是 tracker 用的密钥，不是 API 存取令牌。
 	if !strings.ContainsAny(trimmed, " \t;=&") {
-		return strings.Trim(trimmed, `"'`)
+		candidate := strings.Trim(trimmed, `"'`)
+		if sitePasskeyPattern.MatchString(candidate) {
+			return ""
+		}
+		return candidate
 	}
 
 	return ""

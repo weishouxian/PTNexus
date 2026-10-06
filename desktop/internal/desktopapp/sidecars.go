@@ -37,9 +37,30 @@ func (s *Sidecar) Stop() {
 	_, _ = s.cmd.Process.Wait()
 }
 
-// StartServerSidecar 启动 server 后端进程（监听 127.0.0.1:5275）。
-// 说明：桌面端与 server 的交互通过 Wails 绑定方法代理到该进程，避免前端直连 HTTP API。
+// StartServerSidecar 启动 server 后端。
+//
+// 优先顺序：
+//  1. 进程内嵌 server（单文件 exe 分发的主路径，不依赖 server.exe）；
+//  2. 外部 server.exe sidecar（多文件/安装包部署，或内嵌初始化失败时的回退）。
+//
+// 说明：两条路径都监听 127.0.0.1:5275，前端代理层无感知差异。
 func StartServerSidecar(env DesktopRuntimeEnv) (*Sidecar, error) {
+	var embeddedErr error
+	if embedded, err := StartEmbeddedServer(env); err == nil {
+		return embedded, nil
+	} else {
+		embeddedErr = err
+	}
+
+	sidecar, err := startExternalServerSidecar(env)
+	if err != nil {
+		return nil, fmt.Errorf("进程内 server 启动失败（%v）；回退外部 server.exe 也失败（%w）", embeddedErr, err)
+	}
+	return sidecar, nil
+}
+
+// startExternalServerSidecar 以子进程方式启动外部 server.exe。
+func startExternalServerSidecar(env DesktopRuntimeEnv) (*Sidecar, error) {
 	addr := "127.0.0.1:5275"
 	baseURL := "http://" + addr
 
@@ -56,7 +77,7 @@ func StartServerSidecar(env DesktopRuntimeEnv) (*Sidecar, error) {
 		return nil, fmt.Errorf("start server failed: %w", err)
 	}
 
-	if err := waitHTTPReady(addr, 12*time.Second); err != nil {
+	if err := waitHTTPReady(addr, 30*time.Second); err != nil {
 		_ = cmd.Process.Kill()
 		_, _ = cmd.Process.Wait()
 		return nil, fmt.Errorf("server health check failed: %w", err)

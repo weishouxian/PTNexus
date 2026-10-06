@@ -403,13 +403,25 @@
           ></el-input>
         </el-form-item>
         <el-form-item label="Passkey" prop="passkey">
-          <el-input v-model="siteForm.passkey" placeholder="站点的Passkey"></el-input>
+          <el-input
+            v-model="siteForm.passkey"
+            :placeholder="
+              siteForm.site === 'm-team' ? '控制台 → 实验室 → 存取令牌（36 位 UUID）' : '站点的Passkey'
+            "
+          ></el-input>
           <div
             v-if="siteForm.site === 'hddolby' || siteForm.site === 'pthome'"
             class="form-tip"
             style="color: #409eff; font-weight: bold"
           >
             杜比/铂金家的passkey为种子详情页复制种子链接时downhash=后的部分
+          </div>
+          <div
+            v-else-if="siteForm.site === 'm-team'"
+            class="form-tip"
+            style="color: #409eff; font-weight: bold"
+          >
+            馒头这里要填「存取令牌」而不是站点 Passkey：控制台 → 实验室 → 存取令牌，生成结果是 36 位 UUID（形如 57b1fa6c-4444-3333-2222-1b1111111111）。填成站点 Passkey（32 位）发种会报 code=1「key無效」。
           </div>
           <div
             v-else-if="siteForm.site === 'rousi'"

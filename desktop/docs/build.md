@@ -2,40 +2,64 @@
 
 ## 目标
 
-记录 `desktop` 的开发与打包流程，以及后续与 `webui` 的构建协作关系。
+记录 `desktop` 的开发、单文件打包与安装包打包流程，以及各方式的依赖差异。
 
-## 当前（第一部分）构建方式
-
-开发：
+## 一、单文件 exe（推荐，日常分发用）
 
 ```bash
-bash scripts/package-desktop.sh desktop-dev
+bash scripts/package-desktop.sh single
 ```
 
-打包：
+产物：`desktop/build/bin/pt-nexus.exe`（约 40 MB）。
+
+该命令内部完成三件事：
+
+1. `prepare_frontend_stage`：`pnpm -C webui run build` 并把产物同步到 `desktop/frontend/dist`（供 `go:embed`）；
+2. `sync_embedded_bundle`：把 `server/sites_data.json` 与 `server/configs/` 同步到 `desktop/internal/desktopapp/bundle/`（供 `go:embed`）；
+3. `go build -tags desktop,production -ldflags "-w -s"`。
+
+依赖：仅需要 `go` 与 `pnpm`。**不需要** `wails` CLI、NSIS、`rsync`。
+
+产物形态：单个 exe。首启动会自行创建 `%APPDATA%/pt-nexus`，并把内嵌站点资源展开到 `resources/`，无需任何外挂文件。
+
+> 说明：`gcc`/CGO 也不需要。sqlite 驱动是纯 Go 的 `glebarez/sqlite`。
+
+## 二、安装包（多文件，走 NSIS）
 
 ```bash
 bash scripts/package-desktop.sh
 ```
 
-增量缓存会默认启用，重复执行会按阶段跳过未变化的前端、sidecar 和安装包打包步骤。
-如需强制全量重建：
+产物：`desktop/build/bin/` 下的 `pt-nexus.exe`、`pt-nexus-<版本>-amd64-installer.exe`、`pt-nexus-<版本>-amd64-update.exe`，另加 `desktop/build/windows/sidecar/` 里的 `server.exe`、`updater.exe`、`configs/`、`bdinfo/`。
+
+依赖（三者缺一不可）：
+
+1. `wails` CLI：`go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0`
+2. NSIS：Ubuntu/WSL 用 `sudo apt install -y nsis`；Windows 装 NSIS 官方安装包
+3. `rsync`：可选，缺失时脚本自动退回 `cp`（Windows Git Bash 通常没有 rsync）
+
+## 三、开发模式
 
 ```bash
-PTNEXUS_PACKAGE_FORCE=1 bash scripts/package-desktop.sh
+bash scripts/package-desktop.sh desktop-dev
 ```
 
-## 后续（第二部分）预期构建流程
+以 `wails dev` 启动，前端热更新。需要 `wails` CLI。
 
-1. 构建 `webui` 前端产物（`dist`）。
-2. 同步产物到 `desktop` 可 embed 的目录。
-3. 复用已同步到 `desktop/frontend/dist` 与 `desktop/build/windows/sidecar` 的产物。
-4. 执行 `wails build -clean -nsis -s -skipbindings` 生成 Windows 安装包。
-5. 若 update 安装包输入未变化则跳过，否则执行单独的 NSIS update 安装包构建。
+## 增量缓存
 
-> 说明：当前阶段不改 `webui`，这里只记录后续执行路径。
+`package` 与 `single` 都会使用 `desktop/build/.package-cache` 做阶段级缓存，重复执行会跳过未变化的前端、sidecar 与安装包步骤。
 
-## 输出产物
+强制全量重建：
 
-1. 开发模式：Wails dev 运行时应用。
-2. 生产模式：`desktop/build/bin` 下可分发产物（具体以 Wails 输出为准）。
+```bash
+PTNEXUS_PACKAGE_FORCE=1 bash scripts/package-desktop.sh single
+```
+
+## 输出产物一览
+
+| 命令 | 产物 |
+|---|---|
+| `single` | `desktop/build/bin/pt-nexus.exe`（单文件，可直接分发） |
+| `package` | 单文件 exe + NSIS 安装包/更新包 + `build/windows/sidecar/` 全部运行时文件 |
+| `desktop-dev` | Wails dev 运行时 |

@@ -172,7 +172,7 @@ func PublishMTeam(input publisher.PublishInput) (publisher.PublishResult, error)
 
 	token := resolveMTeamToken(input)
 	if token.Value == "" {
-		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少 API Token：请在 webui 站点配置的 Passkey 或 Cookie 栏填写控制台生成的存取令牌（形如 57b1fa6c-4444-3333-2222-1b1111111111）。若该栏填的是网页 Cookie，令牌不会被识别")
+		return publisher.PublishResult{}, fmt.Errorf("m-team 发种缺少 API Token：请在 webui 站点配置的 Passkey 或 Cookie 栏填写控制台生成的存取令牌（形如 57b1fa6c-4444-3333-2222-1b1111111111，共 36 位 UUID）。注意：站点 Passkey（32 位十六进制）与网页 Cookie 都不是存取令牌，填了不会被识别，站点只会回 code=1「key無效」")
 	}
 	apiKey := token.Value
 
