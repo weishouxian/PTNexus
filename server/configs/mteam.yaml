@@ -19,7 +19,9 @@
 
 site_name: "M-Team"
 
-# API 与网页不同域：网页 kp.m-team.cc，接口 api.m-team.cc（带 UA 请求头，否则 302 跳 google）
+# API 与网页不同域：网页 kp.m-team.cc，接口 api.m-team.cc（带 UA 请求头，否则 302 跳 google）。
+# api.m-team.cc 与网页端在用的 api2.m-team.cc 实测是同一套后端（同 token 打 getConf/createOredit 响应一致），
+# 发种偶发的 CF 504 是站点源站超时，与本配置的域名无关，不要为此换域名。
 api_base: "https://api.m-team.cc"
 api_path: "/api/torrent/createOredit"
 
@@ -228,7 +230,11 @@ country:
 
 # 标签（labelsNew）：站点标签表来自 /api/system/getConf 的 TORRENT_LABEL_CONFIG。
 # 4k/8k/hdr/hdr10/hdr10+/hlg/DoVi/HDRVi 是技术标签（站点前端本会按 mediainfo 自动补），
-# 中字/中配/AI破解 是用户可选标签。键为 PTNexus 标签名（比较时忽略大小写与 tag. 前缀）。
+# 中字/中配/AI破解 是用户可选标签。键为 PTNexus 标签名（忽略大小写与 tag. 前缀，代码加载时会统一转小写）。
+#
+# ⚠️ 走 API 通道（x-api-key）不经过站点前端那套「按 mediainfo 自动补标签」的逻辑，
+#    因此 mteam.go 的 resolveMTeamTagIDs 会在本地按同规则补齐：分辨率 2160p → 4k、4320p → 8k、
+#    命中「菁彩HDR」→ 同时补 hdr；并在同时带「菁彩HDR」时丢弃源站误标的 HDR10/HDR10+（站点侧按 HDRVi + hdr 表达）。
 tags:
   "4K": "4k"
   "8K": "8k"

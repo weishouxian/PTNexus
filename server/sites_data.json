@@ -411,7 +411,7 @@
     "special_tracker_domain": null,
     "group": "-ADE,-Audies,-ADWeb,-ADEbook,-ADAudio",
     "description": "Audiences",
-    "migration": 2,
+    "migration": 3,
     "speed_limit": 80
   },
   {
