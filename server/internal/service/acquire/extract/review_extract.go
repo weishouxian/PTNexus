@@ -36,8 +36,11 @@ var (
 	reManyNewlines           = regexp.MustCompile(`\n{3,}`)
 	reLeadingBullets         = regexp.MustCompile(`(?m)^\s*[-*]\s+`)
 	reTitleBadgeHTML         = regexp.MustCompile(`(?is)(?:\s*<(?:b|span|font)[^>]*>.*?</(?:b|span|font)>\s*|\s*<img[^>]*>\s*)+$`)
-	reTitleBadgeText         = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|free|hot|置顶|促销|活动|推荐|通过)[^\]]*\]\s*$`)
-	reTitleBadgeWord         = regexp.MustCompile(`(?i)\s*(?:免费|free|hot|置顶|促销|活动|推荐|通过)\s*$`)
+	// 标题尾部状态徽标（[免费]/[优惠]/[Free]…）：站点常见多个连续挂载，
+	// 且渲染时偶尔会丢右括号（如「... Atmos-HDS [免费][优惠」），故右括号设为可选，
+	// 由 cleanTopTitleText 循环逐个剥离。
+	reTitleBadgeText         = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)[^\]]*\]?\s*$`)
+	reTitleBadgeWord         = regexp.MustCompile(`(?i)\s*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)\s*$`)
 	reTitleRemainingTimeText = regexp.MustCompile(`(?i)\s*(?:剩余时间|剩餘時間|remaining\s*time)\s*[:：].*$`)
 	reTitleLimitedTimeText   = regexp.MustCompile(`(?i)\s*[（(]\s*限时[^）)]*[）)]\s*$`)
 	reQuotePrefix            = regexp.MustCompile(`(?im)^\s*(?:\[?(?:引用|quote)\]?\s*[:：]?\s*)`)
