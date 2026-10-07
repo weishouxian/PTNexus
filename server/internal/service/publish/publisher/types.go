@@ -37,6 +37,11 @@ type PublishInput struct {
 	// （当前用于 dupe 查重）。命中限制时返回 *PreCheckError，上层按「预检查限制」确定性跳过。
 	// 该回调可返回附加日志，会被追加到发布过程日志中。
 	BeforeUpload func(formFields map[string]string) (detail string, err error)
+
+	// SkipDupeCheck 表示本次发布已由用户显式确认「仍要发布」，需跳过 dupe 查重。
+	// 它是单次请求级开关（不落库、不改站点设置），只影响 dupe 校验，不影响其它站点级硬性限制
+	// （如我堡禁 Remux、北洋园拒动漫），避免一处放行被误当成全面放行。
+	SkipDupeCheck bool
 }
 
 // PublishResult 定义发布结果。

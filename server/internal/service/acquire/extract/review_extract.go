@@ -14,28 +14,28 @@ import (
 )
 
 var (
-	reTopTitle               = regexp.MustCompile(`(?is)<h1[^>]*id=["']top["'][^>]*>(.*?)</h1>`)
-	rePageTitle              = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
-	reNexusPageTitleQuoted   = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*["“](.+?)["”]\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
-	reNexusPageTitlePlain    = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*(.+?)\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
-	reNexusPageTitlePrefix   = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*`)
-	reNexusPageTitleSuffix   = regexp.MustCompile(`(?is)\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
-	reSubTitleRow            = regexp.MustCompile(`(?is)(?:副标题|副標題|subtitle)\s*[:：]\s*([^\n<]{2,200})`)
-	reSubtitleByAby          = regexp.MustCompile(`(?i)\s*\|\s*aby\s+[^|]+$`)
-	reSubtitleByBy           = regexp.MustCompile(`(?i)\s*\|\s*by\s+[^|]+$`)
-	reSubtitleByA            = regexp.MustCompile(`(?i)\s*\|\s*a\s+[^|]+$`)
-	reSubtitleToolID         = regexp.MustCompile(`(?i)\s*\|\s*(?:atu|dtu|pter)\s*$`)
-	reQuoteBlock             = regexp.MustCompile(`(?is)\[quote\](.*?)\[/quote\]`)
-	rePreBlock               = regexp.MustCompile(`(?is)<pre[^>]*>(.*?)</pre>`)
-	reTagsFieldRow           = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:标签|標籤|tags?|类别与标签|類別與標籤).*?</td>\s*<td[^>]*>(.*?)</td>`)
-	reTeamFieldRow           = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:制作组|製作組|团队|團隊|team).*?</td>\s*<td[^>]*>(.*?)</td>`)
-	reTeamInline             = regexp.MustCompile(`(?is)(?:制作组|製作組|团队|團隊|team)\s*[:：]\s*([^\n<]{1,80})`)
-	reCellSpan               = regexp.MustCompile(`(?is)<span[^>]*>(.*?)</span>`)
-	reCellAnchor             = regexp.MustCompile(`(?is)<a[^>]*>(.*?)</a>`)
-	reBBCodeTag              = regexp.MustCompile(`(?is)\[(?:/?(?:img|url|quote|b|i|u|color|size)[^\]]*)\]`)
-	reManyNewlines           = regexp.MustCompile(`\n{3,}`)
-	reLeadingBullets         = regexp.MustCompile(`(?m)^\s*[-*]\s+`)
-	reTitleBadgeHTML         = regexp.MustCompile(`(?is)(?:\s*<(?:b|span|font)[^>]*>.*?</(?:b|span|font)>\s*|\s*<img[^>]*>\s*)+$`)
+	reTopTitle             = regexp.MustCompile(`(?is)<h1[^>]*id=["']top["'][^>]*>(.*?)</h1>`)
+	rePageTitle            = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
+	reNexusPageTitleQuoted = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*["“](.+?)["”]\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
+	reNexusPageTitlePlain  = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*(.+?)\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
+	reNexusPageTitlePrefix = regexp.MustCompile(`(?is)^[^:]+::\s*(?:种子详情|種子詳情|torrent\s*details?)\s*`)
+	reNexusPageTitleSuffix = regexp.MustCompile(`(?is)\s*(?:-|—|–)\s*powered\s+by\s+nexusphp.*$`)
+	reSubTitleRow          = regexp.MustCompile(`(?is)(?:副标题|副標題|subtitle)\s*[:：]\s*([^\n<]{2,200})`)
+	reSubtitleByAby        = regexp.MustCompile(`(?i)\s*\|\s*aby\s+[^|]+$`)
+	reSubtitleByBy         = regexp.MustCompile(`(?i)\s*\|\s*by\s+[^|]+$`)
+	reSubtitleByA          = regexp.MustCompile(`(?i)\s*\|\s*a\s+[^|]+$`)
+	reSubtitleToolID       = regexp.MustCompile(`(?i)\s*\|\s*(?:atu|dtu|pter)\s*$`)
+	reQuoteBlock           = regexp.MustCompile(`(?is)\[quote\](.*?)\[/quote\]`)
+	rePreBlock             = regexp.MustCompile(`(?is)<pre[^>]*>(.*?)</pre>`)
+	reTagsFieldRow         = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:标签|標籤|tags?|类别与标签|類別與標籤).*?</td>\s*<td[^>]*>(.*?)</td>`)
+	reTeamFieldRow         = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:制作组|製作組|团队|團隊|team).*?</td>\s*<td[^>]*>(.*?)</td>`)
+	reTeamInline           = regexp.MustCompile(`(?is)(?:制作组|製作組|团队|團隊|team)\s*[:：]\s*([^\n<]{1,80})`)
+	reCellSpan             = regexp.MustCompile(`(?is)<span[^>]*>(.*?)</span>`)
+	reCellAnchor           = regexp.MustCompile(`(?is)<a[^>]*>(.*?)</a>`)
+	reBBCodeTag            = regexp.MustCompile(`(?is)\[(?:/?(?:img|url|quote|b|i|u|color|size)[^\]]*)\]`)
+	reManyNewlines         = regexp.MustCompile(`\n{3,}`)
+	reLeadingBullets       = regexp.MustCompile(`(?m)^\s*[-*]\s+`)
+	reTitleBadgeHTML       = regexp.MustCompile(`(?is)(?:\s*<(?:b|span|font)[^>]*>.*?</(?:b|span|font)>\s*|\s*<img[^>]*>\s*)+$`)
 	// 标题尾部状态徽标（[免费]/[优惠]/[Free]…）：站点常见多个连续挂载，
 	// 且渲染时偶尔会丢右括号（如「... Atmos-HDS [免费][优惠」），故右括号设为可选，
 	// 由 cleanTopTitleText 循环逐个剥离。
@@ -43,17 +43,20 @@ var (
 	reTitleBadgeWord         = regexp.MustCompile(`(?i)\s*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)\s*$`)
 	reTitleRemainingTimeText = regexp.MustCompile(`(?i)\s*(?:剩余时间|剩餘時間|remaining\s*time)\s*[:：].*$`)
 	reTitleLimitedTimeText   = regexp.MustCompile(`(?i)\s*[（(]\s*限时[^）)]*[）)]\s*$`)
-	reQuotePrefix            = regexp.MustCompile(`(?im)^\s*(?:\[?(?:引用|quote)\]?\s*[:：]?\s*)`)
-	reQuoteOpen              = regexp.MustCompile(`(?is)^\s*\[quote\]\s*`)
-	reQuoteClose             = regexp.MustCompile(`(?is)\s*\[/quote\]\s*$`)
-	reBoldOpen               = regexp.MustCompile(`(?is)^\s*\[b\]\s*`)
-	reBoldClose              = regexp.MustCompile(`(?is)\s*\[/b\]\s*$`)
-	reNestedQuoteIn          = regexp.MustCompile(`(?is)\[quote\]\s*\[quote\]`)
-	reNestedQuoteOut         = regexp.MustCompile(`(?is)\[/quote\]\s*\[/quote\]`)
-	reQuoteOrImage           = regexp.MustCompile(`(?is)\[quote\].*?\[/quote\]|\[img\].*?\[/img\]`)
-	reByARDTU                = regexp.MustCompile(`(?i)\s*By ARDTU\s*`)
-	reFontSizeCSS            = regexp.MustCompile(`(?i)^\s*([0-9]+(?:\.[0-9]+)?)\s*(px|pt)\s*$`)
-	reRGBColorCSS            = regexp.MustCompile(`(?i)^\s*rgba?\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*([0-9.]+))?\s*\)\s*$`)
+	// 标题前缀中文片名：形如「焦点Focus Blu-ray 2015 …」「流浪地球 The Wandering Earth 2019 …」。
+	// 仅当中文段之后紧跟 ASCII 字母时才剥离，避免把「庆余年 2019 1080p」这类纯中文标题剥成半截。
+	reLeadingChineseTitle = regexp.MustCompile(`(?s)^([\p{Han}·・]+)[\s\x{3000}]*([A-Za-z].*)$`)
+	reQuotePrefix         = regexp.MustCompile(`(?im)^\s*(?:\[?(?:引用|quote)\]?\s*[:：]?\s*)`)
+	reQuoteOpen           = regexp.MustCompile(`(?is)^\s*\[quote\]\s*`)
+	reQuoteClose          = regexp.MustCompile(`(?is)\s*\[/quote\]\s*$`)
+	reBoldOpen            = regexp.MustCompile(`(?is)^\s*\[b\]\s*`)
+	reBoldClose           = regexp.MustCompile(`(?is)\s*\[/b\]\s*$`)
+	reNestedQuoteIn       = regexp.MustCompile(`(?is)\[quote\]\s*\[quote\]`)
+	reNestedQuoteOut      = regexp.MustCompile(`(?is)\[/quote\]\s*\[/quote\]`)
+	reQuoteOrImage        = regexp.MustCompile(`(?is)\[quote\].*?\[/quote\]|\[img\].*?\[/img\]`)
+	reByARDTU             = regexp.MustCompile(`(?i)\s*By ARDTU\s*`)
+	reFontSizeCSS         = regexp.MustCompile(`(?i)^\s*([0-9]+(?:\.[0-9]+)?)\s*(px|pt)\s*$`)
+	reRGBColorCSS         = regexp.MustCompile(`(?i)^\s*rgba?\(\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})\s*,\s*([0-9]{1,3})(?:\s*,\s*([0-9.]+))?\s*\)\s*$`)
 	// 详情页 HTML 往往会在 <br> 后面带源码换行与缩进（例如：<br>\n    ◎片名...）。
 	// x/net/html 会把这些换行当作文本节点保留，导致 HTML→BBCode 时把单个 <br> 误变成空白行（\n\n）。
 	// 这里在解析前清理 <br> 后面的源码换行，仅保留 <br> 语义本身。
@@ -1158,7 +1161,25 @@ func cleanTopTitleText(rawHTML string) string {
 		}
 		text = next
 	}
-	return strings.TrimSpace(text)
+	return stripLeadingChineseTitle(strings.TrimSpace(text))
+}
+
+// stripLeadingChineseTitle 剥离标题最前面的中文片名，返回其后的英文标题。
+// 仅当中文段后面紧跟 ASCII 字母（可含空白分隔）时才剥离；否则原样返回。
+func stripLeadingChineseTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ""
+	}
+	match := reLeadingChineseTitle.FindStringSubmatch(trimmed)
+	if len(match) < 3 {
+		return trimmed
+	}
+	rest := strings.TrimSpace(match[2])
+	if rest == "" {
+		return trimmed
+	}
+	return rest
 }
 
 func extractSubtitle(page string) string {

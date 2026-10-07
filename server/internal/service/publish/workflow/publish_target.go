@@ -44,6 +44,7 @@ func PublishTorrentToTarget(
 	sourceSiteNickname string,
 	findSiteNicknameByGroup func(releaseGroup string) (string, error),
 	rootConfig map[string]any,
+	skipDupeCheck bool,
 ) (string, string, string, bool, map[string]string, error) {
 	targetName := strings.TrimSpace(toStringAny(targetInfo["nickname"], toStringAny(targetInfo["site"], "目标站点")))
 	logLines := []string{
@@ -87,6 +88,8 @@ func PublishTorrentToTarget(
 		SourceSiteNickname:      strings.TrimSpace(sourceSiteNickname),
 		FindSiteNicknameByGroup: findSiteNicknameByGroup,
 		RootConfig:              rootConfig,
+
+		SkipDupeCheck: skipDupeCheck,
 	}
 
 	result, publishErr := publishengine.Publish(pubInput)

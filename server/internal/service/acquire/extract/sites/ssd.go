@@ -12,11 +12,13 @@ var (
 	reSSDTorrentNameSpan = regexp.MustCompile(`(?is)<span[^>]*id=["']torrent-name["'][^>]*>(.*?)</span>`)
 	reSSDTopTitle        = regexp.MustCompile(`(?is)<h1[^>]*id=["']top["'][^>]*>(.*?)</h1>`)
 	// 与 extract 包 cleanTopTitleText 保持一致：支持多个连续徽标，且容忍缺失的右括号。
-	reSSDTitleBadgeText  = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)[^\]]*\]?\s*$`)
-	reSSDTitleBadgeWord  = regexp.MustCompile(`(?i)\s*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)\s*$`)
-	reSSDAnyHTMLTag      = regexp.MustCompile(`(?is)<[^>]+>`)
-	reSSDHTMLBreakTag    = regexp.MustCompile(`(?i)<br\s*/?>`)
-	reSSDManyNewline     = regexp.MustCompile(`\n{3,}`)
+	reSSDTitleBadgeText = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)[^\]]*\]?\s*$`)
+	reSSDTitleBadgeWord = regexp.MustCompile(`(?i)\s*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)\s*$`)
+	// 前缀中文片名（与 extract 包 stripLeadingChineseTitle 同规则）：仅当中文段后紧跟 ASCII 字母时剥离。
+	reSSDLeadingChineseTitle = regexp.MustCompile(`(?s)^([\p{Han}·・]+)[\s\x{3000}]*([A-Za-z].*)$`)
+	reSSDAnyHTMLTag          = regexp.MustCompile(`(?is)<[^>]+>`)
+	reSSDHTMLBreakTag        = regexp.MustCompile(`(?i)<br\s*/?>`)
+	reSSDManyNewline         = regexp.MustCompile(`\n{3,}`)
 
 	reSSDMediaInfoCodeMainInGroup = regexp.MustCompile(`(?is)<[^>]*data-group=["'](?:mediainfo|mediainfo_toggle)["'][^>]*>.*?<div[^>]*class=["'][^"']*codemain[^"']*["'][^>]*>(.*?)</div>`)
 	reSSDMediaInfoPreInGroup      = regexp.MustCompile(`(?is)<[^>]*data-group=["'](?:mediainfo|mediainfo_toggle)["'][^>]*>.*?<pre[^>]*>(.*?)</pre>`)
@@ -161,12 +163,30 @@ func extractSSDTitle(pageHTML string) string {
 			continue
 		}
 		title := strings.TrimSpace(sanitizeSSDText(match[1], false))
-		title = trimSSDTitleBadges(title)
+		title = stripSSDLeadingChineseTitle(trimSSDTitleBadges(title))
 		if title != "" {
 			return title
 		}
 	}
-	return extractSSDTopTitle(pageHTML)
+	return stripSSDLeadingChineseTitle(extractSSDTopTitle(pageHTML))
+}
+
+// stripSSDLeadingChineseTitle 剥离标题最前面的中文片名（如「焦点Focus …」→「Focus …」）。
+// 仅当中文段后面紧跟 ASCII 字母时才剥离，纯中文标题不变。
+func stripSSDLeadingChineseTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ""
+	}
+	match := reSSDLeadingChineseTitle.FindStringSubmatch(trimmed)
+	if len(match) < 3 {
+		return trimmed
+	}
+	rest := strings.TrimSpace(match[2])
+	if rest == "" {
+		return trimmed
+	}
+	return rest
 }
 
 // trimSSDTitleBadges 循环剥离标题尾部的状态徽标（如 [免费][优惠]、[Free]），

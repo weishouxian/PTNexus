@@ -122,6 +122,11 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		}
 	}
 
+	// 用户在前端对 dupe 拦截结果点了「仍要发布」时的单次放行标记。
+	// 只跳过 dupe 查重，不影响其它站点级硬性限制。
+	skipDupeCheck := payloadBoolFlag(input.Payload, "skip_dupe_check") ||
+		payloadBoolFlag(uploadData, "skip_dupe_check")
+
 	if !skipRestrictedCheck {
 		if restricted := publishuploader.DetectRestrictedTags(uploadData); len(restricted) > 0 {
 			return map[string]any{
@@ -191,6 +196,7 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		strings.TrimSpace(input.SourceSiteNickname),
 		deps.FindSiteNicknameByGroup,
 		input.RootConfig,
+		skipDupeCheck,
 	)
 	if publishErr != nil {
 		// 站点适配器在发起上传前的硬性拒绝（如北洋园不接收动漫、我堡禁止 Remux）属于确定性失败：
@@ -513,5 +519,31 @@ func mergePreCheckMeta(payload map[string]any, err error) {
 			continue
 		}
 		payload[trimmedKey] = value
+	}
+}
+
+// payloadBoolFlag 从请求体/发布参数中读取布尔开关。
+// 参数/返回：source 为待读取的 map；key 为字段名；返回该字段是否为真。
+// 说明：兼容 bool 与常见字符串写法（前端一般传 bool，但配置类字段可能来自表单文本）。
+// 副作用：无。
+func payloadBoolFlag(source map[string]any, key string) bool {
+	if source == nil || strings.TrimSpace(key) == "" {
+		return false
+	}
+	value, ok := source[key]
+	if !ok {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		switch strings.ToLower(strings.TrimSpace(typed)) {
+		case "1", "true", "yes":
+			return true
+		}
+		return false
+	default:
+		return false
 	}
 }
