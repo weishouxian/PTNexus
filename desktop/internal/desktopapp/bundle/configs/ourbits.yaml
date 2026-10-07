@@ -1,5 +1,27 @@
 site_name: "OurBits"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（ourbits.club/torrents.php）：
+#  - search_area 为 0=标题 / 3=发布者 / 4=IMDb链接 / 5=豆瓣链接 → 豆瓣 + IMDb + 标题兜底。
+#  - ⚠️ 筛选参数是「数组名」形式：medium[]=1（24 条）与 standard[]=1（39 条）实测生效，
+#    而平铺名 medium1 / standard1 该站不生效。参数名里的 [] 由程序按 URL 规范编码为 %5B%5D，站点能正确解析。
+#  - 该站 cat 形式未能实测确认（连续请求后被限流），仍按 NexusPHP 惯例声明；
+#    即便参数名不符也只是不生效，且已加「筛出 0 条则去掉筛选重试」的兜底，不会因此漏判重复。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    douban: "5"
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium[]"
+    resolution: "standard[]"
+    video_codec: "codec[]"
+    audio_codec: "audiocodec[]"
+
 form_fields:
   category: "type"
   medium: "medium_sel"

@@ -14,6 +14,10 @@ import (
 func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 	siteCode := strings.ToLower(strings.TrimSpace(input.SiteCode))
 
+	// 发布前查重（dupe）统一挂载：站点是否参与由 configs/<site>.yaml 的 dupe_check 声明，
+	// 因此新增站点只需写配置、不必为每个站点各写一份钩子代码。
+	input = publishsites.AttachSiteDupeCheck(input)
+
 	switch siteCode {
 	case "cbg":
 		return publishsites.PublishCBG(input)

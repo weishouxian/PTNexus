@@ -1,5 +1,23 @@
 site_name: "HDHome"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（hdhome.org/torrents.php）：
+#  - search_area 仅 0=标题 / 1=简介 / 3=发布者 / 4=IMDb链接，**没有豆瓣范围** → IMDb + 标题兜底。
+#  - 筛选参数为「平铺名」：cat414=1 / medium1=1 / standard1=1 / codec1=1 / audiocodec1=1 实测均生效；
+#    数组形式 medium[]=1 该站会返回 0 条（不是忽略），故绝不能用 [] 写法。
+#  - ⚠️ 本站的 medium / 分辨率 / 视频编码 / 音频编码 映射都是 @index:N（发布时按上传页选项索引解析），
+#    而 dupe 校验发生在上传页抓取之前、拿不到真实值，因此这些维度**只声明 type**；
+#    少筛只会让候选多一点（最终判定靠制作组 + 体积容差），筛错则会把重复种子误判成「不重复」。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+
 form_fields:
   category: "type"
   source: "source_sel"

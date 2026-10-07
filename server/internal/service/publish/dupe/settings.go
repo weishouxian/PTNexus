@@ -30,6 +30,14 @@ func CheckBySite(siteCode string, query Query) (Result, string, error) {
 		return CheckAudiencesDupe(query)
 	case "luckpt":
 		return CheckLuckPTDupe(query)
+	case "hdhome":
+		return CheckHDHomeDupe(query)
+	case "pterclub":
+		return CheckPterclubDupe(query)
+	case "ourbits":
+		return CheckOurbitsDupe(query)
+	case "chdbits":
+		return CheckChdbitsDupe(query)
 	default:
 		return Result{}, "", fmt.Errorf("站点 %s 未实现 dupe 检索", strings.TrimSpace(siteCode))
 	}
@@ -104,6 +112,14 @@ func BuildSearchFilters(siteCode string, formFields map[string]string) map[strin
 		}
 		value := strings.TrimSpace(formFields[fieldName])
 		if value == "" {
+			return
+		}
+		// ⚠️ 跳过尚未解析的 select 索引占位符（如 hdhome 的 "@index:1"）。
+		// 这类值要到「抓取上传页」阶段才会由 uploader 换成真实选项值，而 dupe 校验发生在
+		// 上传页抓取之前，此刻拿到的是占位符。若把它当成维度值拼进检索参数，
+		// 会筛到错误类别（甚至 0 结果）→ 把「查不到」误判成「不重复」而漏检。
+		// 宁可不筛（候选多一些无妨，最终判定靠制作组 + 体积容差），也不能筛错。
+		if strings.HasPrefix(value, "@index:") {
 			return
 		}
 		name := strings.TrimSpace(template)
@@ -264,4 +280,72 @@ func parseIntText(raw string) int64 {
 		return 0
 	}
 	return parsed
+}
+
+// DupeSearchAreas 返回站点配置的检索范围表（键：douban / imdb / title）。
+// 参数/返回：siteCode 为站点标识；返回范围取值表（可能为空）。
+// 说明：兼容旧的单一 SearchAreaValue——旧配置只有一个范围时按「IMDb」处理，
+// 因为人人站与幸运站的历史配置都是 IMDb / 豆瓣共用一个范围值。
+// 副作用：无。
+func DupeSearchAreas(siteCode string) map[string]string {
+	siteCfg, err := publishmapping.LoadSitePublishConfig(siteCode)
+	if err != nil || siteCfg == nil || !siteCfg.DupeCheck.Enabled {
+		return nil
+	}
+	if len(siteCfg.DupeCheck.SearchAreas) > 0 {
+		return siteCfg.DupeCheck.SearchAreas
+	}
+	if legacy := strings.TrimSpace(siteCfg.DupeCheck.SearchAreaValue); legacy != "" {
+		return map[string]string{"imdb": legacy, "douban": legacy}
+	}
+	return nil
+}
+
+// buildNexusPHPSearchPlans 按站点配置组装 NexusPHP 站点检索计划。
+//
+// 顺序与理由：
+//  1. 豆瓣 ID 检索（站点声明了 douban 范围且有豆瓣 ID 时）——精确度最高；
+//  2. IMDb 检索（站点声明了 imdb 范围且有 IMDb ID 时）；
+//  3. 标题检索兜底（站点声明了 title 范围时）——上面的 ID 都缺失或都未命中时使用。
+//
+// 之所以「未命中就继续下一段」而不是只查一段：各站对 ID 的收录范围不同，
+// 多查一段只是多一次请求，漏查则可能把重复种子放行。
+//
+// 参数/返回：siteCode 为站点标识；query 为检索输入；返回检索计划（可能为空，表示无可检索关键字）。
+// 副作用：加载站点配置（有缓存）。
+func buildNexusPHPSearchPlans(siteCode string, query Query) []searchPlan {
+	areas := DupeSearchAreas(siteCode)
+	plans := make([]searchPlan, 0, 3)
+
+	if area := strings.TrimSpace(areas["douban"]); area != "" {
+		if id := ExtractDoubanID(query.DoubanID); id != "" {
+			plans = append(plans, searchPlan{
+				Label:      "豆瓣 ID 检索",
+				Search:     id,
+				SearchArea: area,
+				Filters:    query.Filters,
+			})
+		}
+	}
+	if area := strings.TrimSpace(areas["imdb"]); area != "" {
+		if id := ExtractIMDbID(query.IMDbID); id != "" {
+			plans = append(plans, searchPlan{
+				Label:      "IMDb ID 检索",
+				Search:     id,
+				SearchArea: area,
+				Filters:    query.Filters,
+			})
+		}
+	}
+	if area := strings.TrimSpace(areas["title"]); area != "" {
+		if keyword := DupeTitleSearchKeyword(query.Title); keyword != "" {
+			plans = append(plans, searchPlan{
+				Label:      "标题检索兜底",
+				Search:     keyword,
+				SearchArea: area,
+				Filters:    query.Filters,
+			})
+		}
+	}
+	return plans
 }

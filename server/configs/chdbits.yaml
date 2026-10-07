@@ -1,5 +1,25 @@
 site_name: "CHDBits"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（ptchdbits.co/torrents.php）：
+#  - search_area 为 0=标题 / 1=简介 / 3=发布者 / 4=Imdb链接 → **没有豆瓣范围** → IMDb + 标题兜底。
+#  - 筛选参数为「平铺名」：medium1=1（17 条）、standard1=1（72 条）、audiocodec7=1（68 条）实测生效；
+#    数组形式 medium[]=1 该站同样会返回 0 条，故不能用 [] 写法。
+#  - codec5=1 实测未改变结果（可能该站不按编码筛选，或样本恰好全为 HEVC），声明但无副作用。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium{value}"
+    resolution: "standard{value}"
+    video_codec: "codec{value}"
+    audio_codec: "audiocodec{value}"
+
 # 彩虹岛 (CHDBits, ptchdbits.co) 发种映射配置
 # 抓取来源: https://ptchdbits.co/upload.php  (2026-09-21 登录态实测)
 # 表单: action=takeupload.php  method=post  enctype=multipart/form-data

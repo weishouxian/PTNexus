@@ -11,6 +11,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	"github.com/pt-nexus/server/internal/platform/netproxy"
+	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
 )
 
 // 共用检索骨架的默认参数。
@@ -28,6 +29,10 @@ type searchPlan struct {
 	Search string
 	// SearchArea 为站点搜索范围枚举（人人站 2；幸运站 4=IMDb / 0=标题）。
 	SearchArea string
+	// SearchAreaParam 为搜索范围参数名，来自站点 YAML dupe_check.search_area_param（默认 search_area）。
+	SearchAreaParam string
+	// SearchPath 为搜索页路径，来自站点 YAML dupe_check.search_path（默认 torrents.php）。
+	SearchPath string
 	// Filters 为站点筛选参数。
 	Filters map[string]string
 }
@@ -43,15 +48,20 @@ type checkOutcome struct {
 }
 
 // runSearchPlans 按计划依次执行检索并汇总判定。
-// 参数/返回：query 为检索输入；plans 为检索计划；fetch 负责抓取与解析；logModule 为日志模块名。
-// 返回命中结论、过程日志与错误。
+// 参数/返回：siteCode 为站点标识（用于读取检索端点配置）；query 为检索输入；plans 为检索计划；
+// fetch 负责抓取与解析；logModule 为日志模块名。返回命中结论、过程日志与错误。
 // 失败场景：任一段检索失败即整体失败（返回 error，调用方按「可重试」处理）——
 // 检索失败绝不能当成「无重复」放行，否则会漏过真正的 dupe。
 // 副作用：向目标站点发起 GET 请求。
-func runSearchPlans(query Query, plans []searchPlan, fetch siteFetcher, logModule string) checkOutcome {
+func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch siteFetcher, logModule string) checkOutcome {
 	detailLines := make([]string, 0, 6)
 	appendDetail := func(format string, args ...any) {
 		detailLines = append(detailLines, fmt.Sprintf(format, args...))
+	}
+
+	// 用站点配置补全搜索页路径与范围参数名（未配置时用 NexusPHP 默认值）。
+	for idx := range plans {
+		plans[idx] = applySiteSearchEndpoint(siteCode, plans[idx])
 	}
 
 	if query.TorrentSizeBytes <= 0 {
@@ -70,7 +80,7 @@ func runSearchPlans(query Query, plans []searchPlan, fetch siteFetcher, logModul
 		if search == "" {
 			continue
 		}
-		searchURL := buildSearchURL(trimmedBase, search, plan.SearchArea, plan.Filters)
+		searchURL := buildSearchURL(trimmedBase, plan, search, plan.Filters)
 		if searchURL == "" {
 			continue
 		}
@@ -86,7 +96,24 @@ func runSearchPlans(query Query, plans []searchPlan, fetch siteFetcher, logModul
 			appendDetail("dupe 检索失败: %v", err)
 			return checkOutcome{Detail: strings.Join(detailLines, "\n"), Err: err}
 		}
-		appendDetail("dupe 检索命中候选 %d 条", len(candidates))
+
+		// ⚠️ 筛选参数一旦与站点实际不符，部分站点会返回 0 条（而不是忽略该参数）。
+		// 若就此判定「无重复」，会把「筛错了」当成「查不到」而放行真正的重复。
+		// 因此带筛选却 0 候选时，去掉筛选再查一次；命中则以无筛选那一次为准。
+		if len(candidates) == 0 && len(plan.Filters) > 0 {
+			retryURL := buildSearchURL(trimmedBase, plan, search, nil)
+			appendDetail("dupe 带筛选检索为 0 条，去掉筛选重试: %s", retryURL)
+			retryCandidates, retryErr := fetch(query, retryURL)
+			if retryErr != nil {
+				appendDetail("dupe 去掉筛选重试失败: %v", retryErr)
+				return checkOutcome{Detail: strings.Join(detailLines, "\n"), Err: retryErr}
+			}
+			appendDetail("dupe 去掉筛选后命中候选 %d 条", len(retryCandidates))
+			candidates = retryCandidates
+			searchURL = retryURL
+		} else {
+			appendDetail("dupe 检索命中候选 %d 条", len(candidates))
+		}
 
 		for idx := range candidates {
 			candidate := candidates[idx]
@@ -117,19 +144,28 @@ func runSearchPlans(query Query, plans []searchPlan, fetch siteFetcher, logModul
 	return checkOutcome{Detail: strings.Join(detailLines, "\n")}
 }
 
-// buildSearchURL 拼接 NexusPHP 风格搜索 URL。
-// 参数/返回：baseURL 为站点根地址；search 为关键字；searchArea 为搜索范围；filters 为筛选参数。
-// 返回完整 URL；参数不足时返回空串。
+// buildSearchURL 按站点配置拼接 NexusPHP 风格搜索 URL。
+// 参数/返回：baseURL 为站点根地址；plan 提供搜索页路径与范围参数名；search 为关键字；
+// filters 为筛选参数（传 nil 表示不带筛选）。返回完整 URL；参数不足时返回空串。
 // 副作用：无。
-func buildSearchURL(baseURL string, search string, searchArea string, filters map[string]string) string {
+func buildSearchURL(baseURL string, plan searchPlan, search string, filters map[string]string) string {
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	trimmedSearch := strings.TrimSpace(search)
 	if trimmedBase == "" || trimmedSearch == "" {
 		return ""
 	}
+	searchPath := strings.Trim(strings.TrimSpace(plan.SearchPath), "/")
+	if searchPath == "" {
+		searchPath = defaultDupeSearchPath
+	}
+	areaParam := strings.TrimSpace(plan.SearchAreaParam)
+	if areaParam == "" {
+		areaParam = defaultDupeSearchAreaParam
+	}
+
 	values := map[string]string{
 		"search":         trimmedSearch,
-		"search_area":    strings.TrimSpace(searchArea),
+		areaParam:        strings.TrimSpace(plan.SearchArea),
 		"search_mode":    "0",
 		"incldead":       "0",
 		"spstate":        "0",
@@ -144,7 +180,33 @@ func buildSearchURL(baseURL string, search string, searchArea string, filters ma
 		}
 		values[trimmedKey] = trimmedValue
 	}
-	return appendQuery(trimmedBase+"/torrents.php", values)
+	return appendQuery(trimmedBase+"/"+searchPath, values)
+}
+
+// 各 NexusPHP 站点的默认搜索页路径与搜索范围参数名（站点 YAML 未声明时使用）。
+const (
+	defaultDupeSearchPath      = "torrents.php"
+	defaultDupeSearchAreaParam = "search_area"
+)
+
+// applySiteSearchEndpoint 用站点 YAML 的 dupe_check 配置补全检索端点信息。
+// 参数/返回：siteCode 为站点标识；plan 为待补全的检索计划；返回补全后的计划。
+// 说明：已接入站点都用 torrents.php + search_area，默认值即正确值；
+// 这里读配置是为了让 YAML 里声明的 search_path / search_area_param 真正生效，
+// 避免出现「配了却不读」的死配置。
+// 副作用：加载站点配置（有缓存）。
+func applySiteSearchEndpoint(siteCode string, plan searchPlan) searchPlan {
+	siteCfg, err := publishmapping.LoadSitePublishConfig(siteCode)
+	if err != nil || siteCfg == nil {
+		return plan
+	}
+	if path := strings.TrimSpace(siteCfg.DupeCheck.SearchPath); path != "" {
+		plan.SearchPath = path
+	}
+	if param := strings.TrimSpace(siteCfg.DupeCheck.SearchAreaParam); param != "" {
+		plan.SearchAreaParam = param
+	}
+	return plan
 }
 
 // httpGetText 发起一次搜索页 GET 请求并返回正文。

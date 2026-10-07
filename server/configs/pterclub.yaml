@@ -1,5 +1,24 @@
 site_name: "PTerClub"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（pterclub.net/torrents.php）：
+#  - search_area 为 0=标题 / 2=主标题 / 3=发布者 / 4=IMDb链接 / 5=Douban ID → 豆瓣 + IMDb + 标题兜底。
+#  - 搜索结果会混入游戏等非影视资源（detailsgame.php），解析已兼容，dupe 判定仍按制作组 + 体积。
+#  - 筛选参数为「平铺名」，且本站 medium 映射到上传表单的 source_sel，故检索参数是 source{值}：
+#    cat401=1 与 source1=1 实测生效（cat401 把 15 条游戏全部过滤掉）。
+#  - 本站没有分辨率 / 视频编码 / 音频编码映射，故这三项不参与检索。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    douban: "5"
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+    medium: "source{value}"
+
 form_fields:
   medium: "source_sel"
   source: "team_sel"
