@@ -68,6 +68,10 @@ func FinalizeFetchedSeed(input FinalizeFetchedSeedInput) (FinalizeFetchedSeedRes
 		if inferredAudio := strings.TrimSpace(titleOnly["audio_codec"]); inferredAudio != "" {
 			draft.AudioCodec = inferredAudio
 		}
+		// 媒体文本缺失不代表没有物理证据：抓取期往往还没跑出 BDInfo（正是因为它缺失才要去跑），
+		// 但种子文件列表里的 .iso/BDMV 结构此时已经拿到。此处单独按文件列表纠偏媒介，
+		// 否则媒介会停在标题声明的 medium.remux，标签也会跟着留下失效的 tag.Remux。
+		mediumBefore, mediumAfter, titleBefore, titleAfter = draft.CorrectMediumByDiscStructureOnly()
 	}
 
 	// 在抓取修复更新正文后，用简介中的“产地/制片国家/地区”再修正一次 source，避免修复前推断锁死。
