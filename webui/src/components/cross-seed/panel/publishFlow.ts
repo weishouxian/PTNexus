@@ -99,6 +99,8 @@ export type PublishFlowApi = {
   hasValidUrlsInRow: (row: PublishDisplayResult[]) => boolean
   openAllSitesInRow: (row: PublishDisplayResult[]) => void
   getValidUrlsCount: (row: PublishDisplayResult[]) => number
+  forceRepublishSite: (siteName: string) => Promise<void>
+  forceRepublishingSite: Ref<string>
 }
 
 export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
@@ -203,6 +205,98 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     const results = Object.values(publishResultsBySite.value)
     publishProgress.value.current = results.length
     downloaderProgress.value.current = results.filter((r) => r?.auto_add_result?.success).length
+  }
+
+  // 正在强制执行「仍要发布」的站点名，用于按钮 loading（空串表示没有进行中的强制发布）。
+  const forceRepublishingSite = ref('')
+
+  // 对被 dupe 拦截的站点执行一次「仍要发布」：二次确认后带 skip_dupe_check 重新发布该站。
+  // 标记只作用于本次请求，不会改动站点设置里的 dupe 开关。
+  const forceRepublishSite = async (siteName: string) => {
+    const currentTorrent = torrent.value
+    if (!currentTorrent) {
+      ElNotification({
+        title: '参数错误',
+        message: '当前种子为空，请刷新后重试',
+        type: 'error',
+        duration: 0,
+        showClose: true,
+      })
+      return
+    }
+
+    try {
+      await ElMessageBox.confirm(
+        `站点「${siteName}」已判定为重复（同制作组且体积接近）。强制发布会再次上传，站点上可能出现重复种子，请确认。`,
+        '仍要发布',
+        {
+          confirmButtonText: '仍要发布',
+          cancelButtonText: '取消',
+          type: 'warning',
+        },
+      )
+    } catch {
+      return
+    }
+
+    forceRepublishingSite.value = siteName
+    try {
+      const response = await axios.post('/api/migrate/publish', {
+        task_id: taskId.value,
+        upload_data: {
+          ...torrentData.value,
+          save_path: currentTorrent.save_path,
+        },
+        targetSite: siteName,
+        sourceSite: sourceSite.value,
+        downloaderId: currentTorrent.downloaderId,
+        auto_add_to_downloader: true,
+        auto_add_existing_to_downloader: autoAddExistingToDownloader.value,
+        auto_update_existing_torrent: autoUpdateExistingTorrent.value,
+        publish_scene: publishScene,
+        // 后端据此跳过该站的 dupe 查重（单次生效）。
+        skip_dupe_check: true,
+      })
+
+      publishResultsBySite.value[siteName] = normalizePublishResult(siteName, response.data)
+      rebuildFinalResultsList()
+      rebuildProgress()
+
+      if (response.data?.success) {
+        ElNotification({
+          title: '强制发布成功',
+          message: `${siteName} 已跳过查重并发布成功。`,
+          type: 'success',
+          duration: 0,
+          showClose: true,
+        })
+      } else {
+        ElNotification({
+          title: '强制发布未成功',
+          message: getCleanMessage(response.data?.logs || '发布失败，请查看日志。'),
+          type: 'warning',
+          duration: 0,
+          showClose: true,
+        })
+      }
+    } catch (error: unknown) {
+      const message = axios.isAxiosError(error)
+        ? String(
+            (error.response?.data as { message?: string; logs?: string } | undefined)?.message ||
+              (error.response?.data as { message?: string; logs?: string } | undefined)?.logs ||
+              error.message,
+          )
+        : '请求失败，请检查网络或后端服务。'
+      ElNotification({
+        title: '强制发布失败',
+        message,
+        type: 'error',
+        duration: 0,
+        showClose: true,
+      })
+    } finally {
+      forceRepublishingSite.value = ''
+    }
   }
 
   const isBatchPublishing = ref(false)
@@ -1722,5 +1816,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     hasValidUrlsInRow,
     openAllSitesInRow,
     getValidUrlsCount,
+    forceRepublishSite,
+    forceRepublishingSite,
   }
 }

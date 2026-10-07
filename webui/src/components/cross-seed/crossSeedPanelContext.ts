@@ -260,6 +260,10 @@ export interface CrossSeedPanelContext {
   hasValidUrlsInRow: (row: PublishDisplayResult[]) => boolean
   openAllSitesInRow: (row: PublishDisplayResult[]) => void
   getValidUrlsCount: (row: PublishDisplayResult[]) => number
+  /** 对 dupe 拦截的站点强制再发布一次（二次确认后跳过查重）。 */
+  forceRepublishSite: (siteName: string) => Promise<void>
+  /** 正在强制发布的站点名，用于按钮 loading。 */
+  forceRepublishingSite: Ref<string>
 
   // Footer
   showCompleteButton: ComputedRef<boolean>

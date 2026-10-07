@@ -131,6 +131,15 @@
                   重复种子
                 </el-link>
               </div>
+              <el-button
+                type="danger"
+                size="small"
+                plain
+                :loading="forceRepublishingSite === result.siteName"
+                @click="forceRepublishSite(result.siteName)"
+              >
+                仍要发布
+              </el-button>
             </div>
 
             <!-- 下载器添加状态（dupe 拦截时改由上方区块展示，避免被误读成「下载器添加失败」） -->
@@ -215,6 +224,8 @@ const {
   hasValidUrlsInRow,
   openAllSitesInRow,
   getValidUrlsCount,
+  forceRepublishSite,
+  forceRepublishingSite,
 } = useCrossSeedPanelContext()
 </script>
 

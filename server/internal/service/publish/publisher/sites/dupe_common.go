@@ -36,6 +36,14 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 		return detail, nil
 	}
 
+	// 用户已在前端对该站点的 dupe 拦截点了「仍要发布」：跳过查重，但要留可见痕迹，
+	// 避免事后看不出这次是「确认过重复、仍强制发布」。
+	if input.SkipDupeCheck {
+		detail := "dupe 校验：已按你的确认跳过查重，强制发布（本次命中重复也会继续上传）"
+		logx.Warnf(logModule, "site=%s 用户确认强制发布，跳过 dupe 校验", strings.TrimSpace(input.SiteCode))
+		return detail, nil
+	}
+
 	torrentSize, err := resolveTorrentTotalSize(input)
 	if err != nil {
 		detail := fmt.Sprintf("dupe 校验未执行：%v", err)
