@@ -41,6 +41,71 @@ func ExtractVideoSizeFromTorrentFile(torrentPath string) (int64, string, error) 
 	return extractVideoSizeFromTorrentBytes(content)
 }
 
+// ExtractTorrentTotalSizeFromFile 解析 torrent 文件并返回载荷总体积（字节）。
+// 参数/返回：torrentPath 为 torrent 文件路径；返回全部文件的体积之和与错误。
+// 失败场景：文件读取失败、torrent 结构非法时返回错误。
+// 副作用：读取磁盘文件。
+//
+// 用途：dupe 校验需要与站点展示的「种子大小」比较，而站点展示的是载荷总体积
+// （不是视频文件体积），因此不能复用 ExtractVideoSizeFromTorrentFile。
+func ExtractTorrentTotalSizeFromFile(torrentPath string) (int64, error) {
+	trimmed := strings.TrimSpace(torrentPath)
+	if trimmed == "" {
+		return 0, errors.New("torrent 路径为空")
+	}
+	content, err := os.ReadFile(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("读取 torrent 文件失败: %w", err)
+	}
+	total, err := extractTorrentTotalSize(content)
+	if err != nil {
+		return 0, err
+	}
+	if total <= 0 {
+		return 0, errors.New("torrent 未包含文件体积信息")
+	}
+	return total, nil
+}
+
+// extractTorrentTotalSize 解析 torrent 字节流，返回 info.length 或 info.files 各项 length 之和。
+func extractTorrentTotalSize(content []byte) (int64, error) {
+	if len(content) == 0 {
+		return 0, errors.New("torrent 内容为空")
+	}
+	p := &bdecodeParser{data: content}
+	if err := p.expect('d'); err != nil {
+		return 0, err
+	}
+
+	var infoValue any
+	for p.idx < len(p.data) && p.data[p.idx] != 'e' {
+		keyBytes, err := p.parseBytes()
+		if err != nil {
+			return 0, err
+		}
+		if string(keyBytes) == "info" {
+			value, parseErr := p.parseValue()
+			if parseErr != nil {
+				return 0, parseErr
+			}
+			infoValue = value
+			continue
+		}
+		if _, err := p.parseValue(); err != nil {
+			return 0, err
+		}
+	}
+	if err := p.expect('e'); err != nil {
+		return 0, err
+	}
+
+	infoMap, ok := infoValue.(map[string]any)
+	if !ok {
+		return 0, errors.New("torrent info 结构异常")
+	}
+	return calculateTorrentSize(infoMap), nil
+}
+
 func extractVideoSizeFromTorrentBytes(content []byte) (int64, string, error) {
 	if len(content) == 0 {
 		return 0, "", errors.New("torrent 内容为空")

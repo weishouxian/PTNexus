@@ -311,6 +311,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				seed_speed_limit INT NOT NULL DEFAULT 5,
 				can_publish TINYINT(1) NOT NULL DEFAULT 1,
 				forbidden_transfer_sites LONGTEXT,
+				dupe_check_enabled TINYINT(1) NOT NULL DEFAULT 0,
+				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
 				sort_order INT NOT NULL DEFAULT 0,
 				PRIMARY KEY (id)
 			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
@@ -541,6 +543,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				seed_speed_limit INTEGER NOT NULL DEFAULT 5,
 				can_publish INTEGER NOT NULL DEFAULT 1,
 				forbidden_transfer_sites TEXT,
+				dupe_check_enabled INTEGER NOT NULL DEFAULT 0,
+				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
 				sort_order INTEGER NOT NULL DEFAULT 0
 			)`,
 			`CREATE TABLE IF NOT EXISTS app_settings (
@@ -768,6 +772,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				seed_speed_limit INTEGER NOT NULL DEFAULT 5,
 				can_publish INTEGER NOT NULL DEFAULT 1,
 				forbidden_transfer_sites TEXT,
+				dupe_check_enabled INTEGER NOT NULL DEFAULT 0,
+				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
 				sort_order INTEGER NOT NULL DEFAULT 0
 			)`,
 			`CREATE TABLE IF NOT EXISTS app_settings (
@@ -1025,6 +1031,8 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "seed_speed_limit", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 5", "mysql": "INT NOT NULL DEFAULT 5", "postgresql": "INTEGER NOT NULL DEFAULT 5"}},
 			{name: "can_publish", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 1", "mysql": "TINYINT(1) NOT NULL DEFAULT 1", "postgresql": "INTEGER NOT NULL DEFAULT 1"}},
 			{name: "forbidden_transfer_sites", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
+			{name: "dupe_check_enabled", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "TINYINT(1) NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
+			{name: "dupe_size_tolerance_bytes", definition: map[string]string{"sqlite": "BIGINT NOT NULL DEFAULT 1073741824", "mysql": "BIGINT NOT NULL DEFAULT 1073741824", "postgresql": "BIGINT NOT NULL DEFAULT 1073741824"}},
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 		},
 		"app_settings": {

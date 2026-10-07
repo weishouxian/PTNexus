@@ -127,6 +127,12 @@ export type PublishDisplayResult = {
   is_existing_torrent?: boolean
   pre_check?: boolean
   limit_reached?: boolean
+  /** 本次发布被 dupe 查重拦截（后端 PreCheckError.Meta 回传）。 */
+  dupe_blocked?: boolean
+  /** 命中 dupe 时所用的站点检索地址，供「查重地址」跳转。 */
+  dupe_search_url?: string
+  /** 命中的重复种子详情页地址，供「重复种子」跳转。 */
+  dupe_torrent_url?: string
   auto_add_result?: AutoAddResult | null
   auto_edit_result?: { success?: boolean } | null
   downloaderStatus?: { success: boolean; message?: string; downloaderName?: string } | null

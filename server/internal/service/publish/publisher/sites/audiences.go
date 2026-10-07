@@ -17,7 +17,7 @@ type audiencesPublisher struct {
 	publicSiteDefaults
 }
 
-// PublishAudiences 执行人人站点发布流程（豆瓣 ID 提取、MediaInfo 内嵌、冗余字段清理）。
+// PublishAudiences 执行人人站点发布流程（豆瓣 ID 提取、MediaInfo 内嵌、冗余字段清理、dupe 校验）。
 func PublishAudiences(input publisher.PublishInput) (publisher.PublishResult, error) {
 	return publishWithPublicSite(input, audiencesPublisher{})
 }

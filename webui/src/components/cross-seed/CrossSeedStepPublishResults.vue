@@ -108,8 +108,33 @@
               <el-tag type="warning" size="small">添加失败</el-tag>
             </div>
 
-            <!-- 下载器添加状态 -->
-            <div class="downloader-status" v-if="result.downloaderStatus">
+            <!-- dupe 查重拦截：给出「查重地址」与「重复种子」两个可点击入口 -->
+            <div v-if="result.dupe_blocked" class="dupe-blocked">
+              <el-tag type="danger" size="small">dupe 发布失败</el-tag>
+              <div class="dupe-links">
+                <el-link
+                  v-if="result.dupe_search_url"
+                  type="primary"
+                  :href="result.dupe_search_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  查重地址
+                </el-link>
+                <el-link
+                  v-if="result.dupe_torrent_url"
+                  type="danger"
+                  :href="result.dupe_torrent_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  重复种子
+                </el-link>
+              </div>
+            </div>
+
+            <!-- 下载器添加状态（dupe 拦截时改由上方区块展示，避免被误读成「下载器添加失败」） -->
+            <div class="downloader-status" v-else-if="result.downloaderStatus">
               <div class="status-icon">
                 <el-icon v-if="result.downloaderStatus.success" color="#67C23A" :size="16">
                   <CircleCheckFilled />

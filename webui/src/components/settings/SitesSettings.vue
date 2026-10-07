@@ -163,6 +163,28 @@
           </template>
         </el-table-column>
         <el-table-column
+          prop="dupe_check_enabled"
+          label="Dupe 校验"
+          width="100"
+          align="center"
+        >
+          <template #default="scope">
+            <span
+              v-if="!DUPE_CHECK_SUPPORTED_SITES.includes(String(scope.row.site || '').toLowerCase())"
+              style="color: var(--el-text-color-placeholder)"
+              >-</span
+            >
+            <el-tooltip
+              v-else-if="scope.row.dupe_check_enabled"
+              :content="`体积容差 ${formatDupeTolerance(scope.row.dupe_size_tolerance_bytes)}`"
+              placement="top"
+            >
+              <el-tag type="warning" size="small">已开 {{ formatDupeTolerance(scope.row.dupe_size_tolerance_bytes) }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else type="info" size="small">关</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column
           prop="site"
           label="站点标识"
           width="100"
@@ -384,6 +406,30 @@
           <el-switch v-model="siteForm.can_publish" />
           <div class="form-tip">关闭后，该站点在发种选择时将置灰不可选择。</div>
         </el-form-item>
+        <el-form-item v-if="isDupeCheckVisible" label="Dupe 校验" prop="dupe_check_enabled">
+          <el-switch v-model="siteForm.dupe_check_enabled" />
+          <div class="form-tip">
+            开启后，发布前会用 {{ dupeSearchIdLabel }} 加类型、媒介、分辨率、音视频编码到站点检索；
+            若已存在「制作组相同且体积差在 {{ formatDupeTolerance(siteForm.dupe_size_tolerance_bytes) }} 以内」的种子，则判定为重复并拒绝发布。默认关闭。
+          </div>
+        </el-form-item>
+        <el-form-item
+          v-if="isDupeCheckVisible && siteForm.dupe_check_enabled"
+          label="体积容差"
+          prop="dupe_size_tolerance_bytes"
+        >
+          <el-input-number
+            v-model="siteForm.dupe_size_tolerance_bytes_gib"
+            :min="0"
+            :max="100"
+            :step="0.5"
+            :precision="1"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            单位 GiB（1 GiB = 1024³ 字节）。默认 1 GiB；设为 0 表示要求体积完全一致才算重复。
+          </div>
+        </el-form-item>
         <el-form-item label="排序序号" prop="sort_order">
           <el-input-number
             v-model="siteForm.sort_order"
@@ -506,6 +552,8 @@ type SiteConfig = {
   has_cookie?: boolean
   has_passkey?: boolean
   can_publish?: boolean | number
+  dupe_check_enabled?: boolean | number
+  dupe_size_tolerance_bytes?: number | null
   [key: string]: unknown
 }
 
@@ -550,6 +598,28 @@ type SiteForm = {
   seed_speed_limit: number
   can_publish: boolean
   sort_order: number
+  dupe_check_enabled: boolean
+  /** 体积容差（字节），后端存储口径 */
+  dupe_size_tolerance_bytes: number
+  /** 体积容差（GiB），仅用于输入框展示与双向换算 */
+  dupe_size_tolerance_bytes_gib: number
+}
+
+// 已实现 dupe 检索能力的站点（configs/<site>.yaml 里有 dupe_check.enabled），只有这些站点显示开关。
+// 判定能力以站点 YAML 为准；这里只负责入口显隐，后端在站点未声明能力时会跳过校验并写日志说明。
+const DUPE_CHECK_SUPPORTED_SITES = ['audiences', 'luckpt']
+
+// 体积容差换算：1 GiB = 1024³ 字节（与后端 DefaultDupeSizeToleranceBytes 一致）。
+const BYTES_PER_GIB = 1024 * 1024 * 1024
+const DEFAULT_DUPE_TOLERANCE_BYTES = BYTES_PER_GIB
+
+const gibToBytes = (gib: number): number =>
+  Math.max(0, Math.round((Number.isFinite(gib) ? gib : 0) * BYTES_PER_GIB))
+
+const bytesToGib = (bytes: number): number => {
+  const value = Number(bytes)
+  if (!Number.isFinite(value) || value < 0) return 1
+  return Math.round((value / BYTES_PER_GIB) * 10) / 10
 }
 
 // --- 状态管理 ---
@@ -601,6 +671,9 @@ const siteForm = ref<SiteForm>({
   seed_speed_limit: 5,
   can_publish: true,
   sort_order: 0,
+  dupe_check_enabled: false,
+  dupe_size_tolerance_bytes: DEFAULT_DUPE_TOLERANCE_BYTES,
+  dupe_size_tolerance_bytes_gib: 1,
 })
 
 const API_BASE_URL = '/api'
@@ -627,6 +700,26 @@ const transferSiteOptions = computed(() =>
     (site) => String(site.site || '') !== String(siteForm.value.site || ''),
   ),
 )
+
+// 仅对已实现 dupe 能力的站点显示开关（人人、幸运）。
+const isDupeCheckVisible = computed(() =>
+  DUPE_CHECK_SUPPORTED_SITES.includes(String(siteForm.value.site || '').toLowerCase()),
+)
+
+// 检索所用的外部 ID 描述：幸运站搜索只支持 IMDb（无豆瓣/TMDb 范围），故按站点区分文案。
+const dupeSearchIdLabel = computed(() =>
+  String(siteForm.value.site || '').toLowerCase() === 'luckpt'
+    ? 'IMDb ID（缺失时按标题检索）'
+    : '豆瓣 / IMDb ID',
+)
+
+// 供表单提示文案使用的容差展示。
+const formatDupeTolerance = (bytes: number | null | undefined): string => {
+  const value = Number(bytes)
+  if (!Number.isFinite(value) || value < 0) return '1 GiB'
+  if (value === 0) return '0 字节'
+  return `${bytesToGib(value)} GiB`
+}
 
 const getSiteRole = (site: SiteConfig): 'none' | 'both' | 'source' | 'target' => {
   const status = getSiteStatus(site)
@@ -985,6 +1078,16 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
     typeof site.seed_speed_limit === 'number' ? site.seed_speed_limit : Number(site.seed_speed_limit) || 5,
   can_publish: site.can_publish == null ? true : Boolean(site.can_publish),
   sort_order: typeof site.sort_order === 'number' ? site.sort_order : Number(site.sort_order) || 0,
+  dupe_check_enabled: Boolean(Number(site.dupe_check_enabled) || 0),
+  dupe_size_tolerance_bytes:
+    typeof site.dupe_size_tolerance_bytes === 'number' && site.dupe_size_tolerance_bytes > 0
+      ? site.dupe_size_tolerance_bytes
+      : DEFAULT_DUPE_TOLERANCE_BYTES,
+  dupe_size_tolerance_bytes_gib: bytesToGib(
+    typeof site.dupe_size_tolerance_bytes === 'number' && site.dupe_size_tolerance_bytes > 0
+      ? site.dupe_size_tolerance_bytes
+      : DEFAULT_DUPE_TOLERANCE_BYTES,
+  ),
 })
 
 // [新增] 合并后的保存与同步功能
@@ -1066,6 +1169,8 @@ const handleSave = async () => {
       cookie: siteForm.value.cookie ? siteForm.value.cookie.trim() : '',
       ratio_threshold: siteForm.value.ratio_threshold || 3.0,
       seed_speed_limit: siteForm.value.seed_speed_limit || 5,
+      // 输入框以 GiB 展示，提交前换算回后端存储口径（字节）。
+      dupe_size_tolerance_bytes: gibToBytes(siteForm.value.dupe_size_tolerance_bytes_gib),
     }
 
     const response = await axios.post(`${API_BASE_URL}/sites/update`, siteData)
