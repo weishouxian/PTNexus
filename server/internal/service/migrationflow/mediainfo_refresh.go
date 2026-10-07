@@ -88,6 +88,8 @@ func (s *MigrateService) refreshMediainfoAsync(payload map[string]any) (map[stri
 				if processingpersist.BoolFromAny(row["is_reviewed"]) {
 					logx.Infof(mediainfoRefreshLogModule, "标题组件回写跳过：seed_id=%s is_reviewed=true", seedID)
 				} else {
+					// 本回调只在媒体文本为 MediaInfo 时触发：碟结构（BDMV/ISO）会走
+					// RefreshMediainfoAsync 的蓝光分支转 BDInfo 任务，不会进到这里，故传 false。
 					processingpersist.RewriteSeedTitleComponentsByMediaInfo(
 						mediainfoRefreshLogModule,
 						s.repo,
@@ -97,6 +99,7 @@ func (s *MigrateService) refreshMediainfoAsync(payload map[string]any) (map[stri
 						now,
 						row,
 						mediainfo,
+						false,
 					)
 				}
 

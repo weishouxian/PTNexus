@@ -19,7 +19,8 @@ type SeedParameterUpdater interface {
 }
 
 // RewriteSeedTitleComponentsByMediaInfo 使用媒体文本重建标题组件并回写数据库（仅调用方允许时执行）。
-// 参数/返回：row 为 seed_parameters 当前行；repo 为写库接口；返回是否执行了更新与是否命中媒体格式。
+// 参数/返回：row 为 seed_parameters 当前行；repo 为写库接口；mediaInfoText 为本次刷新得到的媒体文本；
+// discStructure 表示调用方已物理确认种子本体是碟结构（ISO/BDMV）；返回是否执行了更新与是否命中媒体格式。
 // 失败场景：标题为空、媒体格式未命中、序列化失败或写库失败时返回 false。
 // 副作用：可能写入 seed_parameters.title_components 与 seed_parameters.medium。
 func RewriteSeedTitleComponentsByMediaInfo(
@@ -31,6 +32,7 @@ func RewriteSeedTitleComponentsByMediaInfo(
 	now time.Time,
 	row map[string]any,
 	mediaInfoText string,
+	discStructure bool,
 ) (bool, bool, bool) {
 	if repo == nil || row == nil {
 		return false, false, false
@@ -96,6 +98,22 @@ func RewriteSeedTitleComponentsByMediaInfo(
 	mediumBefore := strings.TrimSpace(toStringSimple(row["medium"]))
 	mediumBefore = processingtitle.PreferExplicitTitleMedium(mediumBefore, title, mediaInfoText)
 	mediumAfter := processingmedia.NormalizeMediumByMediaType(mediumBefore, result.IsMediainfo, result.IsBDInfo)
+
+	// 碟结构纠偏：本体已被物理确认是 ISO/BDMV 原盘（刷新链路由「对本体成功跑出 BDInfo」确认）。
+	// NormalizeMediumByMediaType 的 isBDInfo 分支刻意不覆盖 medium.remux（防「源站详情页贴源盘 BDInfo」的误判），
+	// 而此处拿到的是本体自身的物理证据，允许越过该保守保留，把 medium.remux 收敛回原盘档。
+	if discStructure && result.IsBDInfo {
+		resolution := discStructureResolutionForRow(row, title, mediaInfoText, description)
+		if converged := processingmedia.ConvergeMediumByConfirmedDiscStructure(mediumAfter, resolution); converged != mediumAfter {
+			logx.Infof(
+				logModule,
+				"媒介碟结构纠偏：seed_id=%s_%s_%s medium_before=%s medium_after=%s resolution=%s",
+				hash, torrentID, siteName, mediumAfter, converged, resolution,
+			)
+			mediumAfter = converged
+		}
+	}
+
 	if strings.TrimSpace(mediumAfter) != "" && strings.TrimSpace(mediumAfter) != mediumBefore {
 		logx.Infof(
 			logModule,
@@ -134,4 +152,25 @@ func toStringSimple(value any) string {
 	default:
 		return ""
 	}
+}
+
+// discStructureResolutionForRow 取用于碟规格判定（bluray / uhd_bluray）的标准分辨率键。
+// 参数/返回：row 为 seed_parameters 当前行；title/mediaText/description 用于兜底推断；返回 resolution.xxx 标准键或空串。
+// 失败场景：行内值不是标准键且推断不出结果时返回空串（调用方据此放弃收敛，不做误判）。
+// 副作用：无。
+func discStructureResolutionForRow(row map[string]any, title, mediaText, description string) string {
+	if row != nil {
+		if current := strings.TrimSpace(toStringSimple(row["resolution"])); strings.HasPrefix(current, "resolution.") {
+			return current
+		}
+	}
+	inferred := parser.InferStandardizedValues(title, mediaText, description)
+	if inferred == nil {
+		return ""
+	}
+	resolution := strings.TrimSpace(toStringSimple(inferred["resolution"]))
+	if strings.HasPrefix(resolution, "resolution.") {
+		return resolution
+	}
+	return ""
 }

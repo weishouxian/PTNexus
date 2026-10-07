@@ -38,7 +38,9 @@ type RunBDInfoTaskDeps struct {
 	SetTaskCompleted        func(currentFile string, mediaInfo string, completedAt time.Time, elapsed string)
 	TranslateDownloaderPath func(downloaderID string, savePath string) string
 
-	RewriteTitleComponents func(hash, torrentID, siteName string, mediaInfo string)
+	// discStructure：本次提取是否真的走了 BDInfo（= 本体已确认为蓝光碟结构）。
+	// ResolveAndExtractForBDInfo 在未命中蓝光目录时会回退 MediaInfo，那种情况下本体不是碟结构，不能纠偏媒介。
+	RewriteTitleComponents func(hash, torrentID, siteName string, mediaInfo string, discStructure bool)
 	RecomputeTags          func(hash, torrentID, siteName, savePath, torrentName, reason string)
 	ComposeSeedID          func(hash, torrentID, siteName string) string
 }
@@ -181,7 +183,7 @@ func RunBDInfoTask(input RunBDInfoTaskInput, deps RunBDInfoTaskDeps) {
 	} else if boolFromAny(row["is_reviewed"]) {
 		logx.Infof(logModule, "标题组件回写跳过 task_id=%s seed_id=%s is_reviewed=true", strings.TrimSpace(input.TaskID), seedID)
 	} else if deps.RewriteTitleComponents != nil {
-		deps.RewriteTitleComponents(input.Hash, input.TorrentID, input.SiteName, mediaInfo)
+		deps.RewriteTitleComponents(input.Hash, input.TorrentID, input.SiteName, mediaInfo, extractResult.UsedBDInfo)
 	}
 	logx.Infof(logModule, "任务执行完成 task_id=%s seed_id=%s final_status=completed output_bytes=%d", strings.TrimSpace(input.TaskID), seedID, len(mediaInfo))
 
