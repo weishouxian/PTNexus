@@ -138,3 +138,34 @@ func firstUploadDataString(uploadData map[string]any, keys []string) string {
 	}
 	return ""
 }
+
+// AttachSiteDupeCheck 在站点声明了 dupe 能力、且调用方尚未提供校验钩子时，挂上通用 dupe 校验钩子。
+//
+// 参数/返回：input 为发布输入；返回可能带上 BeforeUpload 的发布输入。
+// 用途：并非每个站点都有专属发布器（如彩虹岛走通用 public 发布器），
+// 这些站点没有地方实现 publicSiteBeforeUpload 接口，由本函数在分发前统一挂载。
+// 已自带钩子的站点（人人/幸运/家园/猫站/我堡）不受影响——它们会在
+// publishWithPublicSite 内用自己的实现覆盖，且此处只有在 BeforeUpload 为空时才介入。
+// 副作用：无（仅修改入参副本）。
+func AttachSiteDupeCheck(input publisher.PublishInput) publisher.PublishInput {
+	if input.BeforeUpload != nil {
+		return input
+	}
+	siteCode := strings.TrimSpace(input.SiteCode)
+	if !publishdupe.SiteSupportsDupe(siteCode) {
+		return input
+	}
+	logModule := publishdupe.LogModuleForSite(siteCode)
+	if logModule == "" {
+		logModule = defaultDupeLogModule
+	}
+	// 复制一份再闭包，避免闭包内引用被赋值的 input 自身。
+	captured := input
+	input.BeforeUpload = func(formFields map[string]string) (string, error) {
+		return runSiteDupeCheck(logModule, captured, formFields)
+	}
+	return input
+}
+
+// defaultDupeLogModule 为未在 dupe 包登记日志模块名时的兜底。
+const defaultDupeLogModule = "发布-dupe校验"

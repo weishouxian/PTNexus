@@ -48,7 +48,7 @@ func CheckAudiencesDupe(query Query) (Result, string, error) {
 		SearchArea: audiencesDupeSearchArea,
 		Filters:    query.Filters,
 	}}
-	outcome := runSearchPlans(query, plans, fetchAudiencesDupeCandidates, audiencesDupeLogModule)
+	outcome := runSearchPlans("audiences", query, plans, fetchAudiencesDupeCandidates, audiencesDupeLogModule)
 	if outcome.Detail != "" {
 		logx.Infof(audiencesDupeLogModule, "site=audiences\n%s", outcome.Detail)
 	}

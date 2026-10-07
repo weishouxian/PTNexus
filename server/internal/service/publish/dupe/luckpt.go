@@ -57,7 +57,7 @@ func CheckLuckPTDupe(query Query) (Result, string, error) {
 		})
 	}
 	// 标题兜底：IMDb 缺失时用；IMDb 存在但没命中时也追加（不同范围可能收录不同条目）。
-	if title := luckptSearchKeywordFromTitle(query.Title); title != "" {
+	if title := DupeTitleSearchKeyword(query.Title); title != "" {
 		plans = append(plans, searchPlan{
 			Label:      "标题检索",
 			Search:     title,
@@ -66,20 +66,20 @@ func CheckLuckPTDupe(query Query) (Result, string, error) {
 		})
 	}
 
-	outcome := runSearchPlans(query, plans, fetchLuckPTDupeCandidates, luckptDupeLogModule)
+	outcome := runSearchPlans("luckpt", query, plans, fetchLuckPTDupeCandidates, luckptDupeLogModule)
 	if outcome.Detail != "" {
 		logx.Infof(luckptDupeLogModule, "site=luckpt\n%s", outcome.Detail)
 	}
 	return outcome.Result, outcome.Detail, outcome.Err
 }
 
-// luckptSearchKeywordFromTitle 从主标题提取检索关键字。
+// DupeTitleSearchKeyword 从主标题提取检索关键字（各站共用）。
 // 参数/返回：title 为待发布种子主标题；返回检索关键字，取不到时返回空串。
 // 说明：幸运站标题检索是子串匹配，整条标题过长且含大量标点噪声。这里截取「年份之前」的片名主体：
 // 支持 `Dune 2021 ...`（空格分隔）与 `Dune.Part.Two.2024...`（点号分隔）两种常见形态，
 // 命中面更收敛、减少无关候选。
 // 副作用：无。
-func luckptSearchKeywordFromTitle(title string) string {
+func DupeTitleSearchKeyword(title string) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
 		return ""

@@ -607,7 +607,25 @@ type SiteForm = {
 
 // 已实现 dupe 检索能力的站点（configs/<site>.yaml 里有 dupe_check.enabled），只有这些站点显示开关。
 // 判定能力以站点 YAML 为准；这里只负责入口显隐，后端在站点未声明能力时会跳过校验并写日志说明。
-const DUPE_CHECK_SUPPORTED_SITES = ['audiences', 'luckpt']
+const DUPE_CHECK_SUPPORTED_SITES = [
+  'audiences',
+  'luckpt',
+  'hdhome',
+  'pterclub',
+  'ourbits',
+  'chdbits',
+]
+
+// 检索所用的外部 ID 描述：各站 search_area 支持的范围不同（有的站没有豆瓣/IMDb 范围），故按站点区分文案。
+// 值与该站 configs/<site>.yaml 的 dupe_check.search_areas 保持一致，避免提示与实际行为不符。
+const DUPE_SEARCH_ID_LABELS: Record<string, string> = {
+  luckpt: 'IMDb ID（缺失时按标题检索）',
+  hdhome: 'IMDb ID（缺失时按标题检索）',
+  chdbits: 'IMDb ID（缺失时按标题检索）',
+  pterclub: '豆瓣 / IMDb ID（缺失时按标题检索）',
+  ourbits: '豆瓣 / IMDb ID（缺失时按标题检索）',
+  audiences: '豆瓣 / IMDb ID',
+}
 
 // 体积容差换算：1 GiB = 1024³ 字节（与后端 DefaultDupeSizeToleranceBytes 一致）。
 const BYTES_PER_GIB = 1024 * 1024 * 1024
@@ -706,11 +724,10 @@ const isDupeCheckVisible = computed(() =>
   DUPE_CHECK_SUPPORTED_SITES.includes(String(siteForm.value.site || '').toLowerCase()),
 )
 
-// 检索所用的外部 ID 描述：幸运站搜索只支持 IMDb（无豆瓣/TMDb 范围），故按站点区分文案。
-const dupeSearchIdLabel = computed(() =>
-  String(siteForm.value.site || '').toLowerCase() === 'luckpt'
-    ? 'IMDb ID（缺失时按标题检索）'
-    : '豆瓣 / IMDb ID',
+// 检索所用的外部 ID 描述：按站点区分，未登记时用通用文案。
+const dupeSearchIdLabel = computed(
+  () =>
+    DUPE_SEARCH_ID_LABELS[String(siteForm.value.site || '').toLowerCase()] ?? '豆瓣 / IMDb ID',
 )
 
 // 供表单提示文案使用的容差展示。

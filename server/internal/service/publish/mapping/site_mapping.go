@@ -50,8 +50,13 @@ type SiteDupeCheckConfig struct {
 	SearchPath string
 	// SearchAreaParam 为搜索范围参数名（多数 NexusPHP 站点为 search_area）。
 	SearchAreaParam string
-	// SearchAreaValue 为搜索范围取值。
+	// SearchAreaValue 为搜索范围取值（单一值，供只支持一种检索方式的站点使用）。
 	SearchAreaValue string
+	// SearchAreas 按检索类型给出各自的搜索范围取值，键为 douban / imdb / title。
+	// 站点实测差异很大：人人 search_area=2 豆瓣与 IMDb 都命中；幸运只有 0/1/3/4（无豆瓣范围）；
+	// 猫站与我堡有豆瓣范围（5），家园与彩虹岛没有。因此把「哪种检索可用」交给配置声明。
+	// 非空时优先于 SearchAreaValue。
+	SearchAreas map[string]string
 	// ParamTemplates 定义各维度的搜索参数名模板，支持 {value} 占位符。
 	// 例如 medium: "medium{value}" 会把站点取值 12 渲染为 medium12=1。
 	ParamTemplates map[string]string
@@ -177,6 +182,7 @@ func mapDupeCheckConfig(value any) SiteDupeCheckConfig {
 		SearchPath:      strings.TrimSpace(toStringAny(item["search_path"])),
 		SearchAreaParam: strings.TrimSpace(toStringAny(item["search_area_param"])),
 		SearchAreaValue: strings.TrimSpace(toStringAny(item["search_area_value"])),
+		SearchAreas:     mapStringMap(item["search_areas"]),
 		ParamTemplates:  templates,
 	}
 }

@@ -41,12 +41,6 @@ func (publicSiteDefaults) BuildExtraFormFields(input publisher.PublishInput) (ma
 func (publicSiteDefaults) AdjustFormFields(input publisher.PublishInput, formFields map[string]string) {
 }
 
-// publicSitePublisher 定义公共表单站点可覆写的发布前钩子。
-type publicSiteBeforeUpload interface {
-	// BeforeUpload 在表单字段就绪、尚未上传前执行站点级校验（如 dupe 查重）。
-	BeforeUpload(input publisher.PublishInput, formFields map[string]string) (string, error)
-}
-
 // 按站点覆写步骤执行公共表单发布流程。
 // 参数/返回：input 为统一发布输入；site 提供站点差异步骤；返回公共发布结果。
 // 失败场景：站点额外字段构造失败、发布前校验未通过或公共上传失败时返回 error。
@@ -74,13 +68,6 @@ func publishWithPublicSite(input publisher.PublishInput, site publicSitePublishe
 			prevAdjust(formFields)
 		}
 		site.AdjustFormFields(input, formFields)
-	}
-
-	// 站点若实现了发布前校验（如 dupe 查重），在上传前接入。
-	if hook, ok := site.(publicSiteBeforeUpload); ok {
-		next.BeforeUpload = func(formFields map[string]string) (string, error) {
-			return hook.BeforeUpload(input, formFields)
-		}
 	}
 
 	result, publishErr := publisher.PublishPublic(next)
