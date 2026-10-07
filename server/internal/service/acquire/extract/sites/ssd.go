@@ -11,8 +11,9 @@ import (
 var (
 	reSSDTorrentNameSpan = regexp.MustCompile(`(?is)<span[^>]*id=["']torrent-name["'][^>]*>(.*?)</span>`)
 	reSSDTopTitle        = regexp.MustCompile(`(?is)<h1[^>]*id=["']top["'][^>]*>(.*?)</h1>`)
-	reSSDTitleBadgeText  = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|free|hot|置顶|促销|活动|推荐|通过)[^\]]*\]\s*$`)
-	reSSDTitleBadgeWord  = regexp.MustCompile(`(?i)\s*(?:免费|free|hot|置顶|促销|活动|推荐|通过)\s*$`)
+	// 与 extract 包 cleanTopTitleText 保持一致：支持多个连续徽标，且容忍缺失的右括号。
+	reSSDTitleBadgeText  = regexp.MustCompile(`(?i)\s*\[[^\]]*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)[^\]]*\]?\s*$`)
+	reSSDTitleBadgeWord  = regexp.MustCompile(`(?i)\s*(?:免费|优惠|折扣|促销|活动|限时|置顶|热门|推荐|通过|hot|free)\s*$`)
 	reSSDAnyHTMLTag      = regexp.MustCompile(`(?is)<[^>]+>`)
 	reSSDHTMLBreakTag    = regexp.MustCompile(`(?i)<br\s*/?>`)
 	reSSDManyNewline     = regexp.MustCompile(`\n{3,}`)
@@ -160,13 +161,25 @@ func extractSSDTitle(pageHTML string) string {
 			continue
 		}
 		title := strings.TrimSpace(sanitizeSSDText(match[1], false))
-		title = strings.TrimSpace(reSSDTitleBadgeText.ReplaceAllString(title, ""))
-		title = strings.TrimSpace(reSSDTitleBadgeWord.ReplaceAllString(title, ""))
+		title = trimSSDTitleBadges(title)
 		if title != "" {
 			return title
 		}
 	}
 	return extractSSDTopTitle(pageHTML)
+}
+
+// trimSSDTitleBadges 循环剥离标题尾部的状态徽标（如 [免费][优惠]、[Free]），
+// 直到不再变化，兼容连续多个徽标与缺失右括号的情况。
+func trimSSDTitleBadges(title string) string {
+	for {
+		next := strings.TrimSpace(reSSDTitleBadgeText.ReplaceAllString(title, ""))
+		next = strings.TrimSpace(reSSDTitleBadgeWord.ReplaceAllString(next, ""))
+		if next == title {
+			return title
+		}
+		title = next
+	}
 }
 
 func normalizeSSDDotSeparatedTitle(title string) string {
