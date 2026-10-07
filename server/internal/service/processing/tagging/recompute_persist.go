@@ -81,6 +81,7 @@ func RecomputeAndPersistTagsIfNeeded(input RecomputeAndPersistInput) {
 		toStringAny(row["statement"], ""),
 		toStringAny(row["body"], ""),
 		toStringAny(row["mediainfo"], ""),
+		toStringAny(row["medium"], ""),
 		titleComponents,
 		savePath,
 		torrentNameForPath,

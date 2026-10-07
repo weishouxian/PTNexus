@@ -9,7 +9,7 @@ type RunBDInfoTaskWithStateDeps struct {
 	State     *BDInfoState
 
 	TranslateDownloaderPath func(downloaderID string, savePath string) string
-	RewriteTitleComponents  func(hash, torrentID, siteName string, mediaInfo string)
+	RewriteTitleComponents  func(hash, torrentID, siteName string, mediaInfo string, discStructure bool)
 	RecomputeTags           func(hash, torrentID, siteName, savePath, torrentName, reason string)
 	ComposeSeedID           func(hash, torrentID, siteName string) string
 }

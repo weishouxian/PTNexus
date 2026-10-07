@@ -75,7 +75,7 @@ func RunTask(input RunTaskInput, deps RunTaskDeps) {
 			TranslateDownloaderPath: func(downloaderID string, savePath string) string {
 				return strings.TrimSpace(downloaderclient.TranslateDownloaderPath(rootConfig, downloaderID, savePath))
 			},
-			RewriteTitleComponents: func(taskHash, taskTorrentID, taskSiteName string, mediaInfo string) {
+			RewriteTitleComponents: func(taskHash, taskTorrentID, taskSiteName string, mediaInfo string, discStructure bool) {
 				row, rowErr := deps.Repo.GetSeedParameterByKey(taskHash, taskTorrentID, taskSiteName)
 				if rowErr != nil {
 					logx.Warnf(logModule, "标题组件回写跳过 task_id=%s seed_id=%s err=%v", input.TaskID, composeSeedID(taskHash, taskTorrentID, taskSiteName), rowErr)
@@ -90,6 +90,7 @@ func RunTask(input RunTaskInput, deps RunTaskDeps) {
 					nowFn(),
 					row,
 					mediaInfo,
+					discStructure,
 				)
 			},
 			RecomputeTags: deps.RecomputeTags,

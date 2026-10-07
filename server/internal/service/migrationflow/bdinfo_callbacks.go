@@ -51,6 +51,9 @@ func (s *MigrateService) BDInfoCompleteCallback(payload map[string]any) (map[str
 		return result, status
 	}
 
+	// 走到这里说明盒子代理的 BDInfo 任务已成功完成并产出了内容：BDInfo 只能对碟结构运行，
+	// 因此本体可认定为原盘（discStructure=true）。回写函数内部还会要求文本确实是 BDInfo 报告
+	// （ValidateMediaInfoFormat 判定 IsBDInfo），所以代理侧即使回退成 MediaInfo 文本也不会触发纠偏。
 	processingpersist.RewriteSeedTitleComponentsByMediaInfo(
 		bdinfoTaskLogModule,
 		s.repo,
@@ -60,6 +63,7 @@ func (s *MigrateService) BDInfoCompleteCallback(payload map[string]any) (map[str
 		time.Now(),
 		row,
 		mediaInfo,
+		true,
 	)
 	s.recomputeAndPersistTags(hash, torrentID, siteName, strings.TrimSpace(processingshared.ToString(row["save_path"], "")), strings.TrimSpace(processingshared.ToString(row["name"], "")), "BDInfo完成")
 	logx.Infof(bdinfoTaskLogModule, "BDInfo后处理完成 task_id=%s seed_id=%s", taskID, seedID)

@@ -273,6 +273,18 @@ func NormalizeMediumByMediaType(currentMedium string, isMediainfo bool, isBDInfo
 	return medium
 }
 
+// ShouldDropRemuxTag 判断标准媒介是否已明确不是 Remux —— 是则对应的 Remux 标签已失效，须从标签里剔除。
+// 背景：标题写 “…BluRay.Remux…” 但本体是 ISO/BDMV 原盘的转种很常见，媒介被碟结构纠偏收敛为
+// medium.bluray 后，标题侧推断出的 Remux 标签就成了矛盾项，发到站点会同时勾上原盘与 Remux。
+// 媒介为空（信息缺失）时返回 false，保住标题侧推断出的 Remux 标签，避免信息丢失。
+func ShouldDropRemuxTag(medium string) bool {
+	trimmed := strings.TrimSpace(medium)
+	if trimmed == "" {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(trimmed), "remux")
+}
+
 var reBlurayToken = regexp.MustCompile(`(?i)blu-?ray`)
 
 // NormalizeBlurayTokenByMediaType 对齐 Python：MediaInfo -> BluRay，BDInfo -> Blu-ray。

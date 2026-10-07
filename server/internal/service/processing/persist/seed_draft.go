@@ -153,6 +153,12 @@ func (d *SeedDraft) ApplyRepairResult(result processingrepair.ParallelFetchRepai
 	d.TMDbLink = strings.TrimSpace(result.TMDbLink)
 }
 
+// mediumDiscStructureLogModule 按种子碟结构纠偏媒介的日志模块名。
+const mediumDiscStructureLogModule = "抓取-媒介纠偏"
+
+// discDIYTagLogModule 按碟指纹补 DIY 标签、按标准媒介剔除失效标签的日志模块名。
+const discDIYTagLogModule = "抓取-标签纠偏"
+
 // CorrectMediumAndTitleByMediaType 在识别 MediaInfo/BDInfo 后，对媒介键与标题 BluRay 标记纠偏。
 func (d *SeedDraft) CorrectMediumAndTitleByMediaType(isMediainfo, isBDInfo bool) (string, string, string, string) {
 	if d == nil {
@@ -163,9 +169,34 @@ func (d *SeedDraft) CorrectMediumAndTitleByMediaType(isMediainfo, isBDInfo bool)
 
 	d.Medium = processingtitle.PreferExplicitTitleMedium(d.Medium, d.Title, d.Mediainfo)
 	d.Medium = processingmedia.NormalizeMediumByMediaType(d.Medium, isMediainfo, isBDInfo)
+
+	// 种子文件列表证实本体是 ISO/BDMV 碟结构时，媒介以物理形态为准收敛回原盘档。
+	// 标题侧只看得到 “BluRay.Remux” 这类声明，判不出实际发的是原盘镜像。
+	if refined := processingmedia.OverrideMediumByDiscStructure(d.Medium, d.discStructureResolution(), d.TorrentFileNames); refined != d.Medium {
+		logx.Infof(mediumDiscStructureLogModule, "按种子碟结构纠偏媒介 torrent_id=%s before=%s after=%s files=%d",
+			d.TorrentID, strings.TrimSpace(d.Medium), refined, len(d.TorrentFileNames))
+		d.Medium = refined
+	}
+
 	d.Title = processingmedia.NormalizeBlurayTokenByMediaType(d.Title, isMediainfo, isBDInfo)
 
 	return mediumBefore, strings.TrimSpace(d.Medium), titleBefore, strings.TrimSpace(d.Title)
+}
+
+// discStructureResolution 返回用于碟规格判定的标准分辨率键。
+// 优先取草稿字段（站点详情页分辨率），缺失时按标题+媒体文本兜底推断，避免只因素材字段空缺而放弃纠偏。
+func (d *SeedDraft) discStructureResolution() string {
+	if d == nil {
+		return ""
+	}
+	if resolution := strings.TrimSpace(d.Resolution); resolution != "" {
+		return resolution
+	}
+	inferred := parser.InferStandardizedValues(strings.TrimSpace(d.Title), strings.TrimSpace(d.Mediainfo), "")
+	if inferred == nil {
+		return ""
+	}
+	return strings.TrimSpace(inferred["resolution"])
 }
 
 // BuildTitleComponents 基于标题与媒体文本生成标题组件，并在必要时用标题组件覆盖视频编码字段。
@@ -241,6 +272,13 @@ func (d *SeedDraft) CompleteAndMapTags(siteIdentifier string, formatIsBDInfo boo
 	rawTagCandidates = append(rawTagCandidates, processingtagging.ExtractTagsFromDescriptionScore(descriptionForTags)...)
 	rawTagCandidates = append(rawTagCandidates, processingtagging.ExtractRawTagsFromMediaText(d.Mediainfo, formatIsBDInfo)...)
 
+	// 本体已落到原盘档且 BDInfo 碟指纹提示 DIY 时补 DIY 原始标签，
+	// 交由 MapTagsToStandard 按站点过滤（站点没配 tag.DIY 映射时自然被丢弃）。
+	if shouldAddDIY, reason := processingtagging.ShouldAddDiscDIYRawTag(d.Medium, d.Mediainfo, torrentNameForPath); shouldAddDIY {
+		rawTagCandidates = append(rawTagCandidates, "DIY")
+		logx.Infof(discDIYTagLogModule, "按碟指纹补 DIY 标签 torrent_id=%s 依据=%s", strings.TrimSpace(d.TorrentID), reason)
+	}
+
 	completion := processingtagging.CheckCompletionStatusWithDownloaderContext(
 		d.Title,
 		d.Subtitle,
@@ -287,6 +325,12 @@ func (d *SeedDraft) CompleteAndMapTags(siteIdentifier string, formatIsBDInfo boo
 	}
 
 	mappedTags, unmappedTags := processingtagging.MapTagsToStandard(rawTagCandidates, siteIdentifier)
+	// 媒介已被碟结构纠偏收敛为原盘时，剔除随之失效的 Remux 标签（标签是从标题组件推的，不会自动跟随）。
+	if reconciled := processingtagging.ReconcileMediumTagsWithStandardMedium(mappedTags, d.Medium); len(reconciled) != len(mappedTags) {
+		logx.Infof(discDIYTagLogModule, "按标准媒介剔除失效标签 torrent_id=%s medium=%s before=%d after=%d",
+			strings.TrimSpace(d.TorrentID), strings.TrimSpace(d.Medium), len(mappedTags), len(reconciled))
+		mappedTags = reconciled
+	}
 	d.Tags = mappedTags
 	return unmappedTags
 }
