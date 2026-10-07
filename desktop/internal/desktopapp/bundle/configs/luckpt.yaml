@@ -3,6 +3,26 @@
 
 site_name: "Luckpt"
 
+# dupe 校验（发布前查重）配置。
+# 仅当站点设置里开启「dupe 校验」时才执行；未开启时本节完全不生效。
+# 站点差异（实测自 torrents.php 搜索页与筛选链接）：
+#  - 该站 search_area 只有 0=标题 / 1=简介 / 3=发布者 / 4=IMDb链接，
+#    **没有豆瓣与 TMDb 范围** → 检索走「IMDb 优先 + 标题兜底」两段，见 dupe/luckpt.go。
+#  - 筛选参数沿用 NexusPHP 惯例：cat{值} / medium{值} / standard{值} / codec{值} / audiocodec{值}，
+#    取值直接复用下方 mappings 换算出的站点值（如 movie→cat401、uhd_bluray→medium10、r2160p→standard6）。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  # 该站按 IMDb 检索的范围值（标题兜底的范围值在代码里按站点差异处理，不走此配置）。
+  search_area_value: "4"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium{value}"
+    resolution: "standard{value}"
+    video_codec: "codec{value}"
+    audio_codec: "audiocodec{value}"
+
 # 表单字段定义 - 定义站点上传表单中各字段的标识符
 form_fields:
   medium: "medium_sel[4]"

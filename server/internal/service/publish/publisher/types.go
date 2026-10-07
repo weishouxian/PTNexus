@@ -32,6 +32,11 @@ type PublishInput struct {
 	// AdjustFormFields 用于在 Public 表单发布中对最终表单字段做站点级修正（例如 HDFans 的标签/媒介细分覆盖）。
 	// 注意：该回调会在基础字段 + 映射字段 + ExtraFormFields 合并完成后执行。
 	AdjustFormFields func(formFields map[string]string)
+
+	// BeforeUpload 用于在「表单字段全部就绪、但尚未向站点发起上传」之间插入站点级校验
+	// （当前用于 dupe 查重）。命中限制时返回 *PreCheckError，上层按「预检查限制」确定性跳过。
+	// 该回调可返回附加日志，会被追加到发布过程日志中。
+	BeforeUpload func(formFields map[string]string) (detail string, err error)
 }
 
 // PublishResult 定义发布结果。

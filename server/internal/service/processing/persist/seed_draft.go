@@ -171,6 +171,7 @@ func (d *SeedDraft) CorrectMediumAndTitleByMediaType(isMediainfo, isBDInfo bool)
 	d.Medium = processingmedia.NormalizeMediumByMediaType(d.Medium, isMediainfo, isBDInfo)
 	d.applyDiscStructureOverride("")
 	d.Title = processingmedia.NormalizeBlurayTokenByMediaType(d.Title, isMediainfo, isBDInfo)
+	d.dropRemuxTitleTokenIfMediumNotRemux()
 
 	return mediumBefore, strings.TrimSpace(d.Medium), titleBefore, strings.TrimSpace(d.Title)
 }
@@ -190,7 +191,36 @@ func (d *SeedDraft) CorrectMediumByDiscStructureOnly() (string, string, string, 
 	mediumBefore := strings.TrimSpace(d.Medium)
 	titleBefore := strings.TrimSpace(d.Title)
 	d.applyDiscStructureOverride(" （无媒体文本）")
+	d.dropRemuxTitleTokenIfMediumNotRemux()
 	return mediumBefore, strings.TrimSpace(d.Medium), titleBefore, strings.TrimSpace(d.Title)
+}
+
+// dropRemuxTitleTokenIfMediumNotRemux 在标准媒介已明确不是 Remux 时，摘除标题里的 Remux 媒介标记。
+// 参数/返回：无；原地修改 d.Title。
+// 失败场景：媒介为空（信息缺失）、媒介仍属 Remux 档、标题未命中 Remux 时不做任何修改。
+// 副作用：可能修改 d.Title，并写一条纠偏日志。
+//
+// 背景：标题组件「媒介」由标题文本推导（extractMediumPythonish），媒介被碟结构纠偏收敛为
+// medium.bluray 之后，若标题仍写 “…Blu-ray Remux…”，面板上「媒介」会一直显示 “Blu-ray Remux”，
+// 用户只能手工改成 “Blu-ray”；发种标题也会带上与本体矛盾的 Remux 声明。
+func (d *SeedDraft) dropRemuxTitleTokenIfMediumNotRemux() {
+	if d == nil {
+		return
+	}
+	if !processingmedia.ShouldDropRemuxTag(d.Medium) {
+		return
+	}
+	before := strings.TrimSpace(d.Title)
+	if before == "" {
+		return
+	}
+	after := processingmedia.StripRemuxMediumToken(before)
+	if after == "" || after == before {
+		return
+	}
+	logx.Infof(mediumDiscStructureLogModule, "按标准媒介摘除标题 Remux 标记 torrent_id=%s medium=%s before=%q after=%q",
+		d.TorrentID, strings.TrimSpace(d.Medium), before, after)
+	d.Title = after
 }
 
 // applyDiscStructureOverride 在种子文件列表证实本体是 ISO/BDMV 碟结构时，把媒介收敛回原盘档。

@@ -94,6 +94,19 @@ func PublishPublic(input PublishInput) (PublishResult, error) {
 		logLines = append(logLines, trimmed)
 	}
 	buildDetail := func() string { return strings.Join(logLines, "\n") }
+
+	// 站点级发布前校验（如 dupe 查重）：此时表单字段已全部就绪，可以拿到站点映射后的取值，
+	// 但尚未向站点发起任何上传请求，因此返回 *PreCheckError 属于「确定性拒绝」。
+	if input.BeforeUpload != nil {
+		detail, checkErr := input.BeforeUpload(formFields)
+		if strings.TrimSpace(detail) != "" {
+			appendLog(detail)
+		}
+		if checkErr != nil {
+			return PublishResult{UploadFormFields: formFields, AttemptDetailLog: buildDetail()}, checkErr
+		}
+	}
+
 	appendLog(buildPublishFieldSummary(siteCode, siteCfg, formFields))
 
 	if dumpPath, dumpErr := publishuploader.DumpUploadParametersToTmp(

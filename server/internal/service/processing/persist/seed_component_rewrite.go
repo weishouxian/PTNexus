@@ -45,7 +45,49 @@ func RewriteSeedTitleComponentsByMediaInfo(
 	if title == "" {
 		title = strings.TrimSpace(toStringSimple(row["name"]))
 	}
-	result := processingtitle.BuildTitleComponentsForStorage(title, mediaInfoText, processingtitle.BuildSimpleTitleComponentsWithMediaInfo)
+
+	// 媒体文本类型先判一次：它同时决定「标题 Blu-ray 写法」与「媒介纠偏」是否成立。
+	isMediainfo, isBDInfo, formatReason := processingmedia.ValidateMediaInfoFormat(strings.TrimSpace(mediaInfoText))
+	if !(isMediainfo || isBDInfo) {
+		logx.Warnf(logModule, "标题组件回写跳过：seed_id=%s_%s_%s 媒体格式未命中 reason=%s", hash, torrentID, siteName, formatReason)
+		return false, false, false
+	}
+
+	// 年份与产地同口径以简介为准：媒体文本刷新会按标题重建组件，若不回填会把简介年份退回标题年份。
+	description := strings.TrimSpace(strings.Join([]string{toStringSimple(row["statement"]), toStringSimple(row["body"])}, "\n"))
+
+	// 媒介必须先算：标题组件「媒介」由标题文本推导，标题里的 Remux 声明是否仍有效取决于标准媒介。
+	mediumBefore := strings.TrimSpace(toStringSimple(row["medium"]))
+	mediumBefore = processingtitle.PreferExplicitTitleMedium(mediumBefore, title, mediaInfoText)
+	mediumAfter := processingmedia.NormalizeMediumByMediaType(mediumBefore, isMediainfo, isBDInfo)
+
+	// 碟结构纠偏：本体已被物理确认是 ISO/BDMV 原盘（刷新链路由「对本体成功跑出 BDInfo」确认）。
+	// NormalizeMediumByMediaType 的 isBDInfo 分支刻意不覆盖 medium.remux（防「源站详情页贴源盘 BDInfo」的误判），
+	// 而此处拿到的是本体自身的物理证据，允许越过该保守保留，把 medium.remux 收敛回原盘档。
+	if discStructure && isBDInfo {
+		resolution := discStructureResolutionForRow(row, title, mediaInfoText, description)
+		if converged := processingmedia.ConvergeMediumByConfirmedDiscStructure(mediumAfter, resolution); converged != mediumAfter {
+			logx.Infof(
+				logModule,
+				"媒介碟结构纠偏：seed_id=%s_%s_%s medium_before=%s medium_after=%s resolution=%s",
+				hash, torrentID, siteName, mediumAfter, converged, resolution,
+			)
+			mediumAfter = converged
+		}
+	}
+
+	// 媒介已明确不是 Remux（碟结构收敛为原盘、或被判为 encode 等）时，标题里的 Remux 媒介标记已失效：
+	// 必须先把标题摘干净再造组件，否则面板「媒介」会停在 “Blu-ray Remux”，与标准 medium 矛盾。
+	finalTitle := title
+	if processingmedia.ShouldDropRemuxTag(mediumAfter) {
+		if stripped := processingmedia.StripRemuxMediumToken(title); stripped != "" && stripped != title {
+			logx.Infof(logModule, "标题 Remux 标记摘除：seed_id=%s_%s_%s medium=%s before=%q after=%q",
+				hash, torrentID, siteName, mediumAfter, title, stripped)
+			finalTitle = stripped
+		}
+	}
+
+	result := processingtitle.BuildTitleComponentsForStorage(finalTitle, mediaInfoText, processingtitle.BuildSimpleTitleComponentsWithMediaInfo)
 	if !(result.IsMediainfo || result.IsBDInfo) {
 		logx.Warnf(logModule, "标题组件回写跳过：seed_id=%s_%s_%s 媒体格式未命中 reason=%s", hash, torrentID, siteName, result.Reason)
 		return false, false, false
@@ -55,8 +97,6 @@ func RewriteSeedTitleComponentsByMediaInfo(
 		return false, true, false
 	}
 
-	// 年份与产地同口径以简介为准：媒体文本刷新会按标题重建组件，若不回填会把简介年份退回标题年份。
-	description := strings.TrimSpace(strings.Join([]string{toStringSimple(row["statement"]), toStringSimple(row["body"])}, "\n"))
 	if year := strings.TrimSpace(parser.InferYearFromDescription(description)); year != "" {
 		if before := titleComponentValue(result.Components, "年份"); before != year {
 			result.Components = processingtitle.OverrideTitleComponentValue(result.Components, "年份", year)
@@ -70,11 +110,17 @@ func RewriteSeedTitleComponentsByMediaInfo(
 		return false, true, false
 	}
 
+	nowText := now.Format("2006-01-02 15:04:05")
 	logx.Infof(logModule, "标题组件回写开始：seed_id=%s_%s_%s is_mediainfo=%t is_bdinfo=%t reason=%s", hash, torrentID, siteName, result.IsMediainfo, result.IsBDInfo, result.Reason)
-	writeErr := repo.UpdateSeedParameterByKey(hash, torrentID, siteName, map[string]any{
+	titleUpdates := map[string]any{
 		"title_components": string(encoded),
-		"updated_at":       now.Format("2006-01-02 15:04:05"),
-	})
+		"updated_at":       nowText,
+	}
+	// 标题被摘除 Remux 后必须一起回写：面板「原始/待解析标题」与发种标题都取自 title 字段。
+	if finalTitle != title && finalTitle != "" {
+		titleUpdates["title"] = finalTitle
+	}
+	writeErr := repo.UpdateSeedParameterByKey(hash, torrentID, siteName, titleUpdates)
 	if writeErr != nil {
 		logx.Warnf(logModule, "标题组件回写失败：seed_id=%s_%s_%s err=%v", hash, torrentID, siteName, writeErr)
 		return false, true, false
@@ -95,25 +141,6 @@ func RewriteSeedTitleComponentsByMediaInfo(
 		break
 	}
 
-	mediumBefore := strings.TrimSpace(toStringSimple(row["medium"]))
-	mediumBefore = processingtitle.PreferExplicitTitleMedium(mediumBefore, title, mediaInfoText)
-	mediumAfter := processingmedia.NormalizeMediumByMediaType(mediumBefore, result.IsMediainfo, result.IsBDInfo)
-
-	// 碟结构纠偏：本体已被物理确认是 ISO/BDMV 原盘（刷新链路由「对本体成功跑出 BDInfo」确认）。
-	// NormalizeMediumByMediaType 的 isBDInfo 分支刻意不覆盖 medium.remux（防「源站详情页贴源盘 BDInfo」的误判），
-	// 而此处拿到的是本体自身的物理证据，允许越过该保守保留，把 medium.remux 收敛回原盘档。
-	if discStructure && result.IsBDInfo {
-		resolution := discStructureResolutionForRow(row, title, mediaInfoText, description)
-		if converged := processingmedia.ConvergeMediumByConfirmedDiscStructure(mediumAfter, resolution); converged != mediumAfter {
-			logx.Infof(
-				logModule,
-				"媒介碟结构纠偏：seed_id=%s_%s_%s medium_before=%s medium_after=%s resolution=%s",
-				hash, torrentID, siteName, mediumAfter, converged, resolution,
-			)
-			mediumAfter = converged
-		}
-	}
-
 	if strings.TrimSpace(mediumAfter) != "" && strings.TrimSpace(mediumAfter) != mediumBefore {
 		logx.Infof(
 			logModule,
@@ -123,16 +150,11 @@ func RewriteSeedTitleComponentsByMediaInfo(
 			siteName,
 			mediumBefore,
 			mediumAfter,
-			func() string {
-				if result.IsMediainfo {
-					return "MediaInfo"
-				}
-				return "BDInfo"
-			}(),
+			mediaType,
 		)
 		mediumErr := repo.UpdateSeedParameterByKey(hash, torrentID, siteName, map[string]any{
 			"medium":     mediumAfter,
-			"updated_at": now.Format("2006-01-02 15:04:05"),
+			"updated_at": nowText,
 		})
 		if mediumErr != nil {
 			logx.Warnf(logModule, "媒介标准键纠偏失败：seed_id=%s_%s_%s err=%v", hash, torrentID, siteName, mediumErr)

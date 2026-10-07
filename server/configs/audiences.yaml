@@ -1,5 +1,22 @@
 site_name: "Audiences"
 
+# dupe 校验（发布前查重）配置。
+# 仅当站点设置里开启「dupe 校验」时才执行；未开启时本节完全不生效。
+# param_templates 把「维度」映射为搜索页参数名模板，{value} 会替换为 mappings 换算出的站点取值。
+# 例如 medium 维度的站点取值 12 → medium12=1；video_codec 的取值 6 → codec[]=6。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  # 实测该范围取值对豆瓣数字 ID 与 tt 开头的 IMDb ID 都能命中同一批结果。
+  search_area_value: "2"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium{value}"
+    resolution: "standard{value}"
+    video_codec: "codec[]"
+    audio_codec: "audiocodec[]"
+
 # Audiences (人人) 上传页关键字段（upload.php）
 form_fields:
   category: "type"

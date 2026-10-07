@@ -140,20 +140,37 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		strings.TrimSpace(input.FallbackDownloaderID),
 		strings.TrimSpace(input.DefaultDownloaderID),
 	)
-	buildPreCheckFailure := func(reason string) (map[string]any, int) {
+	buildPreCheckFailure := func(reason string, detail ...string) (map[string]any, int) {
 		trimmedReason := strings.TrimSpace(reason)
 		if trimmedReason == "" {
 			trimmedReason = "已触发限制"
 		}
 		message := fmt.Sprintf("🚫 发布前预检查触发限制: %s", trimmedReason)
-		return map[string]any{
+		// 把站点级校验的判定过程（如 dupe 检索 URL、候选数）附在消息后，
+		// 这样「为什么被拦」在发布日志里就能直接看到，不必去翻服务端日志。
+		for _, item := range detail {
+			trimmedDetail := strings.TrimSpace(item)
+			if trimmedDetail != "" {
+				message += "\n" + trimmedDetail
+			}
+		}
+		payload := map[string]any{
 			"success":       false,
 			"logs":          message,
 			"message":       message,
 			"limit_reached": true,
 			"pre_check":     true,
 			"url":           nil,
-		}, 200
+		}
+		return payload, 200
+	}
+
+	// 站点级校验可回传结构化信息（如 dupe 的查重地址与重复种子详情页），
+	// 直接并进响应体，前端据此渲染富提示而不是只显示一段纯文本。
+	buildPreCheckFailureWithMeta := func(err error, reason string, detail ...string) (map[string]any, int) {
+		payload, status := buildPreCheckFailure(reason, detail...)
+		mergePreCheckMeta(payload, err)
+		return payload, status
 	}
 	if resolvedDownloaderID == "" {
 		return buildPreCheckFailure("缺少有效 downloaderId，已停止发布")
@@ -179,9 +196,9 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		// 站点适配器在发起上传前的硬性拒绝（如北洋园不接收动漫、我堡禁止 Remux）属于确定性失败：
 		// 站点上不会新增种子，且同样的参数重试必然同样失败，因此按「预检查限制」上报，
 		// 让队列与定时发种调度器把它改判为「跳过」并立即处理下一个种子。
-		if reason, isPreCheck := publishpublisher.AsPreCheckError(publishErr); isPreCheck {
+		if reason, detail, isPreCheck := publishpublisher.AsPreCheckErrorWithDetail(publishErr); isPreCheck {
 			logx.Infof("发布-预检查限制", "站点级发布前校验拦截 target=%s reason=%s", targetNickname, reason)
-			return buildPreCheckFailure(reason)
+			return buildPreCheckFailureWithMeta(publishErr, reason, detail)
 		}
 		failureLogs := strings.TrimSpace(logs)
 		if failureLogs == "" {
@@ -474,5 +491,27 @@ func boolFromAny(value any) bool {
 		return lower == "1" || lower == "true" || lower == "yes"
 	default:
 		return false
+	}
+}
+
+// mergePreCheckMeta 把站点级发布前校验的结构化附加信息并进响应体。
+// 参数/返回：payload 为待返回给前端的响应体；err 为站点适配器返回的错误。
+// 说明：仅在错误链中存在 *PreCheckError 且其 Meta 非空时写入；
+// 其余情况保持响应体不变，不影响既有站点的拦截行为。
+// 副作用：就地修改 payload。
+func mergePreCheckMeta(payload map[string]any, err error) {
+	if payload == nil || err == nil {
+		return
+	}
+	preCheck, ok := publishpublisher.PreCheckErrorFrom(err)
+	if !ok || len(preCheck.Meta) == 0 {
+		return
+	}
+	for key, value := range preCheck.Meta {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		payload[trimmedKey] = value
 	}
 }

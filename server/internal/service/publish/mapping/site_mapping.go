@@ -33,6 +33,28 @@ type SitePublishConfig struct {
 	// TypeByTag 定义"标签决定分类"规则：命中标准标签时，分类字段固定用对应标准类型值。
 	// 用于站点硬性要求（如 AGSV 带"动画"标签的种子必须选"动漫"分类）。
 	TypeByTag map[string]string
+	// DupeCheck 定义 dupe 校验的站点参数：检索维度到搜索参数的命名规则。
+	// 为空表示该站点未实现 dupe 校验（即使站点开了开关也不会执行）。
+	DupeCheck SiteDupeCheckConfig
+}
+
+// SiteDupeCheckConfig 描述站点 dupe 检索所需的参数命名规则。
+//
+// 搜索页的筛选参数名与上传表单字段名通常不同（例如上传用 medium_sel，搜索用 medium12），
+// 且维度取值已是站点值（由 mappings 换算而来），因此这里只声明「维度 → 参数名模板」的映射，
+// 取值直接复用 mappings 的结果，避免在两处各配一份站点取值。
+type SiteDupeCheckConfig struct {
+	// Enabled 标记该站点是否实现 dupe 校验。
+	Enabled bool
+	// SearchPath 为站点搜索页路径（相对 base_url），如 torrents.php。
+	SearchPath string
+	// SearchAreaParam 为搜索范围参数名（多数 NexusPHP 站点为 search_area）。
+	SearchAreaParam string
+	// SearchAreaValue 为搜索范围取值。
+	SearchAreaValue string
+	// ParamTemplates 定义各维度的搜索参数名模板，支持 {value} 占位符。
+	// 例如 medium: "medium{value}" 会把站点取值 12 渲染为 medium12=1。
+	ParamTemplates map[string]string
 }
 
 // SiteAnonymousConfig 表示站点匿名发布字段配置。
@@ -96,6 +118,7 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		CheckboxTags:       mapStringMap(raw["checkbox_tags"]),
 		CheckboxTagValue:   strings.TrimSpace(toStringAny(raw["checkbox_tag_value"])),
 		TypeByTag:          mapStringMap(raw["type_by_tag"]),
+		DupeCheck:          mapDupeCheckConfig(raw["dupe_check"]),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil
@@ -130,6 +153,31 @@ func mapAnonymousConfig(value any) SiteAnonymousConfig {
 		EnabledValue:     strings.TrimSpace(toStringAny(item["enabled_value"])),
 		DisabledValue:    strings.TrimSpace(toStringAny(item["disabled_value"])),
 		OmitWhenDisabled: toBoolAny(item["omit_when_disabled"]),
+	}
+}
+
+// mapDupeCheckConfig 解析站点 dupe 校验配置。
+// 参数/返回：value 为 YAML 中的 dupe_check 节点；返回解析后的配置（缺省时 Enabled 为 false）。
+// 副作用：无。
+func mapDupeCheckConfig(value any) SiteDupeCheckConfig {
+	item, ok := value.(map[string]any)
+	if !ok {
+		if direct, ok := value.(map[string]interface{}); ok {
+			item = direct
+		} else {
+			return SiteDupeCheckConfig{}
+		}
+	}
+	templates := mapStringMap(item["param_templates"])
+	if !toBoolAny(item["enabled"]) || len(templates) == 0 {
+		return SiteDupeCheckConfig{}
+	}
+	return SiteDupeCheckConfig{
+		Enabled:         true,
+		SearchPath:      strings.TrimSpace(toStringAny(item["search_path"])),
+		SearchAreaParam: strings.TrimSpace(toStringAny(item["search_area_param"])),
+		SearchAreaValue: strings.TrimSpace(toStringAny(item["search_area_value"])),
+		ParamTemplates:  templates,
 	}
 }
 

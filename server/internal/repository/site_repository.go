@@ -75,7 +75,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	groupColumn := r.store.GroupColumn()
 	selectFields := fmt.Sprintf(`
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
-		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites, s.sort_order,
+		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
+		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.sort_order,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -130,6 +131,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	for _, s := range sites {
 		s["can_publish"] = toIntWithDefault(s["can_publish"], 1) != 0
 		s["forbidden_transfer_sites"] = siteStringListFromAny(s["forbidden_transfer_sites"])
+		s["dupe_check_enabled"] = toIntWithDefault(s["dupe_check_enabled"], 0) != 0
+		s["dupe_size_tolerance_bytes"] = toInt64WithDefault(s["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
 	}
 	return sites, nil
 }
@@ -148,6 +151,14 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	seedSpeedLimit := toIntWithDefault(data["seed_speed_limit"], 5)
 	canPublish := toIntWithDefault(data["can_publish"], 1)
 	forbiddenTransferSites := encodeSiteStringList(data["forbidden_transfer_sites"])
+	dupeCheckEnabled := 0
+	if toIntWithDefault(data["dupe_check_enabled"], 0) != 0 {
+		dupeCheckEnabled = 1
+	}
+	dupeSizeTolerance := toInt64WithDefault(data["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
+	if dupeSizeTolerance < 0 {
+		dupeSizeTolerance = DefaultDupeSizeToleranceBytes
+	}
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
 
 	groupColumn := r.store.GroupColumn()
@@ -165,6 +176,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			seed_speed_limit = ?,
 			can_publish = ?,
 			forbidden_transfer_sites = ?,
+			dupe_check_enabled = ?,
+			dupe_size_tolerance_bytes = ?,
 			sort_order = ?
 		WHERE id = ?
 	`, groupColumn)
@@ -183,13 +196,31 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		seedSpeedLimit,
 		canPublish,
 		forbiddenTransferSites,
+		dupeCheckEnabled,
+		dupeSizeTolerance,
 		sortOrder,
 		siteID,
 	)
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	// 不能用 RowsAffected 判断站点是否存在：MySQL 在「提交值与库内完全相同」时返回 0 行
+	// （默认只统计真正改变的行，CLIENT_FOUND_ROWS 未开），
+	// 于是「打开弹窗不改任何配置直接保存」会被误判成站点不存在并报 404。
+	// 但也不能一律当成功——那样真的传错 id 也会被吞掉。
+	// 因此显式回查一次主键，让「站点不存在」仍然能被上层如实报出。
+	return r.siteExists(siteID)
+}
+
+// siteExists 判断站点主键是否存在。
+// 参数/返回：siteID 为 sites.id；返回是否存在与错误。
+// 副作用：无。
+func (r *SiteRepository) siteExists(siteID int64) (bool, error) {
+	var count int64
+	if err := r.store.DB.Table("sites").Where("id = ?", siteID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *SiteRepository) DeleteSite(siteID int64) (bool, error) {
@@ -205,7 +236,13 @@ func (r *SiteRepository) UpdateSiteCookie(nickname, cookie string) (bool, error)
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	// 同 UpdateSiteDetails：Cookie 与库内相同时 RowsAffected 为 0，不能据此判定站点不存在
+	//（否则重复同步同一份 Cookie 会被误报为「未找到站点」）；但仍需回查以保留存在性校验。
+	var count int64
+	if err := r.store.DB.Table("sites").Where("nickname = ?", nickname).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // UpdateSiteCookieBySite 根据站点标识更新 Cookie。
@@ -213,11 +250,17 @@ func (r *SiteRepository) UpdateSiteCookie(nickname, cookie string) (bool, error)
 // 失败场景：数据库执行失败时返回错误。
 // 副作用：写入 sites 表的 cookie 字段。
 func (r *SiteRepository) UpdateSiteCookieBySite(siteCode, cookie string) (bool, error) {
-	result := r.store.DB.Exec("UPDATE sites SET cookie = ? WHERE site = ?", strings.TrimSpace(cookie), strings.TrimSpace(siteCode))
+	trimmedSite := strings.TrimSpace(siteCode)
+	result := r.store.DB.Exec("UPDATE sites SET cookie = ? WHERE site = ?", strings.TrimSpace(cookie), trimmedSite)
 	if result.Error != nil {
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	// 同 UpdateSiteDetails：值未变化时 RowsAffected 为 0，改用回查判断存在性。
+	var count int64
+	if err := r.store.DB.Table("sites").Where("site = ?", trimmedSite).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
@@ -225,7 +268,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := sqlDB.Query("SELECT nickname, site, cookie, passkey, migration, can_publish, forbidden_transfer_sites, sort_order FROM sites ORDER BY sort_order, nickname")
+	rows, err := sqlDB.Query("SELECT nickname, site, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, sort_order FROM sites ORDER BY sort_order, nickname")
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +291,11 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 			"is_target":                migration == 2 || migration == 3,
 			"can_publish":              toIntWithDefault(row["can_publish"], 1) != 0,
 			"forbidden_transfer_sites": siteStringListFromAny(row["forbidden_transfer_sites"]),
+			"dupe_check_enabled":       toIntWithDefault(row["dupe_check_enabled"], 0) != 0,
+			"dupe_size_tolerance_bytes": toInt64WithDefault(
+				row["dupe_size_tolerance_bytes"],
+				DefaultDupeSizeToleranceBytes,
+			),
 		})
 	}
 	return result, nil

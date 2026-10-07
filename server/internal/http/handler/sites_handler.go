@@ -55,8 +55,14 @@ func (h *SitesHandler) UpdateSite(c *gin.Context) {
 		return
 	}
 	updated, err := h.repo.UpdateSiteDetails(payload)
-	if err != nil || !updated {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": fmt.Sprintf("未找到站点ID '%v' 或更新失败。", rawID)})
+	if err != nil {
+		// 数据库/参数错误要如实回报，不能与「站点不存在」混成同一条提示，
+		// 否则真实原因（如列缺失、SQL 语法错误）会被这条 404 文案掩盖。
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("更新站点信息失败: %v", err)})
+		return
+	}
+	if !updated {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": fmt.Sprintf("未找到站点ID '%v'。", rawID)})
 		return
 	}
 	nickname := pythonLikeString(payload["nickname"])
