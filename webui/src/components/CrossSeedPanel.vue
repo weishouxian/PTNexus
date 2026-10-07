@@ -1702,6 +1702,12 @@ const formatCorrectedStandardParams = (keys: Array<keyof InferredStandardizedPar
   return uniqueKeys.map((key) => standardParamLabels[key]).join('、')
 }
 
+// isRemuxTagValue 判断标签值是否为 Remux（兼容标准键 tag.Remux 与 allow-create 输入的裸文案）。
+const isRemuxTagValue = (value: string): boolean => {
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'tag.remux' || normalized === 'remux'
+}
+
 const applySeedUpdates = (seedUpdates: unknown): Array<keyof InferredStandardizedParams> => {
   if (!seedUpdates || typeof seedUpdates !== 'object') return []
   const updates = seedUpdates as SeedUpdates
@@ -1713,17 +1719,26 @@ const applySeedUpdates = (seedUpdates: unknown): Array<keyof InferredStandardize
 
   const standardized = updates.standardized_params
   if (standardized && typeof standardized === 'object') {
+    let freshMedium = ''
     if (typeof standardized.medium === 'string' && standardized.medium.trim() !== '') {
-      torrentData.value.standardized_params.medium = standardized.medium.trim()
+      freshMedium = standardized.medium.trim()
+      torrentData.value.standardized_params.medium = freshMedium
     }
 
     // tags 合并 + 去重（尽量不覆盖用户本地手工调整）
     const returnedTags = Array.isArray(standardized.tags) ? standardized.tags : []
     if (returnedTags.length > 0) {
       const currentTags = torrentData.value.standardized_params.tags
-      const merged = [...new Set([...currentTags, ...returnedTags])]
+      let merged = [...new Set([...currentTags, ...returnedTags])]
         .map((t) => (typeof t === 'string' ? t.trim() : ''))
         .filter((t) => t !== '')
+
+      // 并集只增不减，但媒介类标签会随标准媒介失效：后端已把 medium 纠偏成非 Remux 档
+      // （标题写 Remux、本体其实是 ISO/BDMV 原盘）时，面板上残留的 Remux 标签必须同步剔除。
+      // 口径与后端 ShouldDropRemuxTag 一致；medium 为空时保留，避免信息缺失导致误删。
+      if (freshMedium !== '' && !freshMedium.toLowerCase().includes('remux')) {
+        merged = merged.filter((t) => !isRemuxTagValue(t))
+      }
       torrentData.value.standardized_params.tags = merged
     }
 

@@ -169,18 +169,48 @@ func (d *SeedDraft) CorrectMediumAndTitleByMediaType(isMediainfo, isBDInfo bool)
 
 	d.Medium = processingtitle.PreferExplicitTitleMedium(d.Medium, d.Title, d.Mediainfo)
 	d.Medium = processingmedia.NormalizeMediumByMediaType(d.Medium, isMediainfo, isBDInfo)
-
-	// 种子文件列表证实本体是 ISO/BDMV 碟结构时，媒介以物理形态为准收敛回原盘档。
-	// 标题侧只看得到 “BluRay.Remux” 这类声明，判不出实际发的是原盘镜像。
-	if refined := processingmedia.OverrideMediumByDiscStructure(d.Medium, d.discStructureResolution(), d.TorrentFileNames); refined != d.Medium {
-		logx.Infof(mediumDiscStructureLogModule, "按种子碟结构纠偏媒介 torrent_id=%s before=%s after=%s files=%d",
-			d.TorrentID, strings.TrimSpace(d.Medium), refined, len(d.TorrentFileNames))
-		d.Medium = refined
-	}
-
+	d.applyDiscStructureOverride("")
 	d.Title = processingmedia.NormalizeBlurayTokenByMediaType(d.Title, isMediainfo, isBDInfo)
 
 	return mediumBefore, strings.TrimSpace(d.Medium), titleBefore, strings.TrimSpace(d.Title)
+}
+
+// CorrectMediumByDiscStructureOnly 仅按「种子文件列表」这一物理证据纠偏媒介，不依赖媒体文本。
+// 参数/返回：返回纠偏前的媒介与标题、纠偏后的媒介与标题。
+// 失败场景：草稿为空或未命中碟结构时返回原值。
+// 副作用：可能修改 d.Medium。
+//
+// 背景：抓取期媒体文本通常还不存在——正是因为它缺失才会去跑 BDInfo/MediaInfo。
+// 若把碟结构纠偏挂在「媒体文本合法」之后，最常见的时序下文件列表里的 .iso 证据会被整条跳过，
+// 媒介停在标题声明的 medium.remux，标签也随之留下失效的 tag.Remux。
+func (d *SeedDraft) CorrectMediumByDiscStructureOnly() (string, string, string, string) {
+	if d == nil {
+		return "", "", "", ""
+	}
+	mediumBefore := strings.TrimSpace(d.Medium)
+	titleBefore := strings.TrimSpace(d.Title)
+	d.applyDiscStructureOverride(" （无媒体文本）")
+	return mediumBefore, strings.TrimSpace(d.Medium), titleBefore, strings.TrimSpace(d.Title)
+}
+
+// applyDiscStructureOverride 在种子文件列表证实本体是 ISO/BDMV 碟结构时，把媒介收敛回原盘档。
+// 参数/返回：logSuffix 追加到日志文案尾部，用于区分纠偏来自哪条链路；无返回值。
+// 失败场景：未命中碟结构、DVD 系媒介、分辨率缺失或 SD 档时保持原值。
+// 副作用：可能修改 d.Medium，并写一条纠偏日志。
+//
+// 标题侧只看得到 “BluRay.Remux” 这类声明，判不出实际发的是原盘镜像；
+// 文件列表是物理事实，优先于标题声明，且只做「非原盘档 → 原盘档」的单向收敛。
+func (d *SeedDraft) applyDiscStructureOverride(logSuffix string) {
+	if d == nil {
+		return
+	}
+	refined := processingmedia.OverrideMediumByDiscStructure(d.Medium, d.discStructureResolution(), d.TorrentFileNames)
+	if refined == d.Medium {
+		return
+	}
+	logx.Infof(mediumDiscStructureLogModule, "按种子碟结构纠偏媒介%s torrent_id=%s before=%s after=%s files=%d",
+		logSuffix, d.TorrentID, strings.TrimSpace(d.Medium), refined, len(d.TorrentFileNames))
+	d.Medium = refined
 }
 
 // discStructureResolution 返回用于碟规格判定的标准分辨率键。
