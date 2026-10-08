@@ -77,8 +77,9 @@ func toIntWithDefault(value any, fallback int) int {
 	return int(parsed)
 }
 
-// DefaultDupeSizeToleranceBytes 是 dupe 校验的默认体积容差（1 GiB）。
-// 站点未显式配置 dupe_size_tolerance_bytes 时使用该值。
+// DefaultDupeSizeToleranceBytes 是 dupe 校验的默认体积容差（字节）。
+// 对应站点管理页展示的「体积容差 1024 MB」（1 MB = 1024² 字节，即 1 GiB）。
+// 站点未显式配置 dupe_size_tolerance_bytes 时使用该值；0 为合法配置（要求体积完全一致）。
 const DefaultDupeSizeToleranceBytes int64 = 1073741824
 
 func toInt64WithDefault(value any, fallback int64) int64 {

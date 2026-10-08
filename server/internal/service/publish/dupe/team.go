@@ -94,8 +94,9 @@ func DescribeDupeMatch(query Query, candidate Candidate, baseURL string) string 
 		orDash(query.IMDbID),
 		orDash(query.TMDbID),
 		detail,
-		FormatSize(sizeDistance(query.TorrentSizeBytes, candidate.SizeBytes)),
-		FormatSize(query.SizeToleranceBytes),
+		// 体积差与容差统一按 MB 展示，与站点管理页的「体积容差（MB）」口径一致，便于直接对照。
+		FormatSizeMB(sizeDistance(query.TorrentSizeBytes, candidate.SizeBytes)),
+		FormatSizeMB(query.SizeToleranceBytes),
 	)
 }
 
