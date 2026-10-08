@@ -1,6 +1,7 @@
 package dupe
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
@@ -13,11 +14,13 @@ import (
 type SiteSettings struct {
 	// Enabled 为站点是否开启 dupe 校验。
 	Enabled bool
-	// SizeToleranceBytes 为体积容差（字节），<= 0 时回退到默认 1 GiB。
+	// SizeToleranceBytes 为体积容差（字节）。站点管理页以 MB 录入与展示
+	// （1 MB = 1024² 字节），存库仍按字节；<= 0 且未配置时回退到默认 1024 MB。
+	// 注意 0 是合法值，表示要求体积完全一致。
 	SizeToleranceBytes int64
 }
 
-// DefaultSizeToleranceBytes 为未配置容差时的默认值（1 GiB）。
+// DefaultSizeToleranceBytes 为未配置容差时的默认值（1024 MB = 1 GiB）。
 const DefaultSizeToleranceBytes int64 = 1073741824
 
 // CheckBySite 按站点标识分发到对应的 dupe 检索实现。
@@ -52,12 +55,36 @@ func ResolveSiteSettings(targetInfo map[string]any) SiteSettings {
 		return settings
 	}
 	settings.Enabled = toBool(targetInfo["dupe_check_enabled"])
-	tolerance := toInt64(targetInfo["dupe_size_tolerance_bytes"])
-	if tolerance <= 0 {
-		tolerance = DefaultSizeToleranceBytes
-	}
-	settings.SizeToleranceBytes = tolerance
+	settings.SizeToleranceBytes = resolveSizeTolerance(targetInfo["dupe_size_tolerance_bytes"])
 	return settings
+}
+
+// resolveSizeTolerance 解析站点配置的体积容差（字节）。
+// 参数/返回：raw 为 sites 表字段的原始值；返回容差字节数。
+// 说明：站点管理页以 MB 录入并允许填 0（表示要求体积完全一致），所以 0 是合法配置；
+// 只有「字段缺失 / NULL / 空串 / 无法解析 / 为负」才回退默认 1024 MB。
+// ⚠️ 必须先区分「缺失」与「0」：toInt64 对 nil 返回 0，若直接按 <= 0 回退，
+// 用户显式配置的 0 会被静默改写成 1024 MB，界面提示与实际行为不符。
+// 副作用：无。
+func resolveSizeTolerance(raw any) int64 {
+	if raw == nil {
+		return DefaultSizeToleranceBytes
+	}
+	switch typed := raw.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return DefaultSizeToleranceBytes
+		}
+	case []byte:
+		if len(bytes.TrimSpace(typed)) == 0 {
+			return DefaultSizeToleranceBytes
+		}
+	}
+	parsed := toInt64(raw)
+	if parsed < 0 {
+		return DefaultSizeToleranceBytes
+	}
+	return parsed
 }
 
 // SiteSupportsDupe 判断站点 YAML 是否声明了 dupe 校验能力。

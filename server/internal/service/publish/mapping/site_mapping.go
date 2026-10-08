@@ -48,6 +48,11 @@ type SiteDupeCheckConfig struct {
 	Enabled bool
 	// SearchPath 为站点搜索页路径（相对 base_url），如 torrents.php。
 	SearchPath string
+	// UploadPath 为站点上传页路径（相对 base_url），如 upload.php。
+	// 仅当站点某些维度的映射写作 @index:N（按上传页下拉框选项索引取值）时才需要：
+	// dupe 校验发生在上传页被解析之前，此刻只有索引占位符，需抓上传页才能换算成真实选项值。
+	// 实测 hdhome 的 medium/分辨率/视频编码/音频编码 都是这种写法。
+	UploadPath string
 	// SearchAreaParam 为搜索范围参数名（多数 NexusPHP 站点为 search_area）。
 	SearchAreaParam string
 	// SearchAreaValue 为搜索范围取值（单一值，供只支持一种检索方式的站点使用）。
@@ -180,6 +185,7 @@ func mapDupeCheckConfig(value any) SiteDupeCheckConfig {
 	return SiteDupeCheckConfig{
 		Enabled:         true,
 		SearchPath:      strings.TrimSpace(toStringAny(item["search_path"])),
+		UploadPath:      strings.TrimSpace(toStringAny(item["upload_path"])),
 		SearchAreaParam: strings.TrimSpace(toStringAny(item["search_area_param"])),
 		SearchAreaValue: strings.TrimSpace(toStringAny(item["search_area_value"])),
 		SearchAreas:     mapStringMap(item["search_areas"]),

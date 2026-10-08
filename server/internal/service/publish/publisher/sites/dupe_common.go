@@ -57,13 +57,26 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 		DoubanID:           doubanLinkFromUploadData(input.UploadData, input.DoubanLink),
 		IMDbID:             input.IMDbLink,
 		TMDbID:             tmdbLinkFromUploadData(input.UploadData),
-		Filters:            publishdupe.BuildSearchFilters(input.SiteCode, formFields),
 		Title:              strings.TrimSpace(input.Title),
 		TorrentSizeBytes:   torrentSize,
 		SizeToleranceBytes: settings.SizeToleranceBytes,
 	}
 
+	// 筛选参数：部分站点（如家园）的维度映射是「上传页选项索引」，需先换算成真实选项值，
+	// 这样媒介 / 编码 / 分辨率等维度才能参与检索（换算失败的维度会被跳过，不影响判定正确性）。
+	filters, filterDetail := publishdupe.PrepareSearchFilters(input.SiteCode, query, formFields)
+	query.Filters = filters
+	preDetail := strings.TrimSpace(filterDetail)
+
 	result, detail, checkErr := publishdupe.CheckBySite(input.SiteCode, query)
+	// 把筛选换算说明并进过程日志，便于在「发布进度 → 日志」里看清到底带了哪些筛选。
+	if preDetail != "" {
+		if detail == "" {
+			detail = preDetail
+		} else {
+			detail = preDetail + "\n" + detail
+		}
+	}
 	if detail != "" {
 		logx.Infof(logModule, "site=%s\n%s", strings.TrimSpace(input.SiteCode), detail)
 	}
