@@ -1,7 +1,6 @@
 package dupe
 
 import (
-	"fmt"
 	"html"
 	"regexp"
 	"strconv"
@@ -31,8 +30,6 @@ var (
 	audiencesDupeSpacePattern         = regexp.MustCompile(`\s+`)
 	audiencesDupeAmpPattern           = regexp.MustCompile(`&amp;`)
 	audiencesDupeNBSPPattern          = regexp.MustCompile("\u00a0")
-	// audiencesDupeResultTablePattern 为正常结果页的结构标记（结果表头）。
-	audiencesDupeResultTablePattern = regexp.MustCompile(`(?i)id="torrenttable`)
 )
 
 // CheckAudiencesDupe 在人人站检索 dupe 候选，并按「制作组相同 + 体积差在容差内」判定。
@@ -104,16 +101,10 @@ func fetchAudiencesDupeCandidates(query Query, searchURL string) ([]Candidate, e
 	if err != nil {
 		return nil, err
 	}
-	if rejectErr := rejectUnexpectedPage(body, `id="torrenttable`, nil); rejectErr != nil {
-		return nil, rejectErr
+	if pageErr := ensureSearchResultPage(body, []string{`id="torrenttable`}); pageErr != nil {
+		return nil, pageErr
 	}
-	candidates := parseAudiencesCandidates(body)
-	// 结构兜底：正常结果页（无论有无命中）都会渲染结果表头；
-	// 若既无结果行也无结果表，说明拿到的是非预期页面，按失败处理而不是「无重复」。
-	if len(candidates) == 0 && !audiencesDupeResultTablePattern.MatchString(body) {
-		return nil, fmt.Errorf("dupe 检索返回的页面不含结果列表，无法确认是否重复（可能是站点返回了非预期页面）")
-	}
-	return candidates, nil
+	return parseAudiencesCandidates(body), nil
 }
 
 // parseAudiencesCandidates 从搜索页 HTML 解析候选列表。

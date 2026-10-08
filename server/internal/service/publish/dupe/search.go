@@ -244,12 +244,31 @@ func httpGetText(query Query, searchURL string) (string, error) {
 	return string(body), nil
 }
 
-// rejectUnexpectedPage 拦截「非预期页面」，避免把异常页面当成「无重复」。
-// 参数/返回：body 为响应正文；marker 为该站正常结果页必须包含的标记（正则）。
-// 失败场景：命中登录页、人机验证页或缺少结果表时返回错误。
+// dupeSearchFormMarkers 用于识别「站点正常处理的搜索结果页」。
+// 实测依据（hdhome）：0 结果时页面**不含**结果表（class="torrents"），
+// 但仍完整渲染搜索结果页框架（含搜索表单）；而 Cookie 失效时页面是登录页（含 name="username"、无搜索表单）。
+// 因此「有搜索表单」是区分「真的没有重复」与「登录/限流导致查不到」的关键特征。
+var dupeSearchFormMarkers = []string{
+	`name="search"`,
+	`name="search_area"`,
+	`id="searchinput"`,
+}
+
+// ensureSearchResultPage 校验响应确实是站点正常处理的搜索结果页。
+//
+// 参数/返回：body 为响应正文；resultTableMarkers 为该站结果表的结构标记（任一命中即视为有结果表）。
+// 返回错误表示「无法确认是否重复」，调用方必须走重试而不是放行。
+//
+// 判定顺序与语义：
+//  1. 登录页 → 错误（Cookie 失效，查不到不等于不重复）；
+//  2. 限流/人机验证页 → 错误（同上）；
+//  3. 含结果表标记 → 正常（有候选，交给解析）；
+//  4. 含搜索表单标记 → 正常（站点处理了搜索但 0 条结果，即「没有重复」）；
+//  5. 以上都不是 → 错误（非预期页面）。
+//
 // 副作用：无。
-func rejectUnexpectedPage(body string, resultTableMarker string, loginMarkers []string) error {
-	if looksLikeLoginPage(body, loginMarkers) {
+func ensureSearchResultPage(body string, resultTableMarkers []string) error {
+	if looksLikeLoginPage(body, nil) {
 		return fmt.Errorf("dupe 检索被重定向到登录页，请检查目标站点 Cookie 是否有效")
 	}
 	// 站点限流常以 HTTP 200 返回提示页（无任何结果行）。这种页面必须当失败处理：
@@ -257,10 +276,19 @@ func rejectUnexpectedPage(body string, resultTableMarker string, loginMarkers []
 	if looksLikeVerificationError(body) {
 		return fmt.Errorf("dupe 检索被站点限流（HTTP 200 但返回人机验证/访问限制提示页），无法确认是否重复；请降低发种频率或稍后重试")
 	}
-	if resultTableMarker != "" && !strings.Contains(body, resultTableMarker) {
-		return fmt.Errorf("dupe 检索返回的页面不含结果列表，无法确认是否重复（可能是站点返回了非预期页面）")
+	for _, marker := range resultTableMarkers {
+		if trimmed := strings.TrimSpace(marker); trimmed != "" && strings.Contains(body, trimmed) {
+			return nil
+		}
 	}
-	return nil
+	// 没有结果表不等于异常：站点在 0 条结果时本就不渲染结果表。
+	// 只要页面还是搜索结果页（带搜索表单），就说明请求被正常处理，结论是「没有重复」。
+	for _, marker := range dupeSearchFormMarkers {
+		if strings.Contains(body, marker) {
+			return nil
+		}
+	}
+	return fmt.Errorf("dupe 检索返回的页面既无结果列表也无搜索表单，无法确认是否重复（可能是站点返回了非预期页面）")
 }
 
 // defaultDupeUserAgent 为检索请求的默认 UA，与浏览器一致，避免被判定为异常客户端。

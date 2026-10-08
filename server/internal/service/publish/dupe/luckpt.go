@@ -1,7 +1,6 @@
 package dupe
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -127,15 +126,10 @@ func fetchLuckPTDupeCandidates(query Query, searchURL string) ([]Candidate, erro
 	if err != nil {
 		return nil, err
 	}
-	// 幸运站结果表容器是 <table class="torrents">；缺少它说明拿到的不是结果页。
-	if rejectErr := rejectUnexpectedPage(body, `<table class="torrents"`, nil); rejectErr != nil {
-		return nil, rejectErr
+	if pageErr := ensureSearchResultPage(body, []string{`<table class="torrents"`}); pageErr != nil {
+		return nil, pageErr
 	}
-	candidates := parseLuckPTCandidates(body)
-	if len(candidates) == 0 && !strings.Contains(body, `data-label="标题"`) {
-		return nil, fmt.Errorf("dupe 检索返回的页面不含结果列表，无法确认是否重复（可能是站点返回了非预期页面）")
-	}
-	return candidates, nil
+	return parseLuckPTCandidates(body), nil
 }
 
 // parseLuckPTCandidates 从搜索页 HTML 解析候选列表。

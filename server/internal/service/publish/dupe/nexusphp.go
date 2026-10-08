@@ -1,7 +1,6 @@
 package dupe
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -223,14 +222,12 @@ func fetchNexusPHPCandidates(query Query, searchURL string) ([]Candidate, error)
 	if err != nil {
 		return nil, err
 	}
-	if rejectErr := rejectUnexpectedPage(body, nexusPHPResultMarker, nil); rejectErr != nil {
-		return nil, rejectErr
+	// 结果表标记只用于「有结果」的判定：0 条结果时站点本就不渲染结果表。
+	// 页面是否被正常处理由 ensureSearchResultPage 统一把关，避免把 0 结果误判成异常页面。
+	if pageErr := ensureSearchResultPage(body, []string{nexusPHPResultMarker}); pageErr != nil {
+		return nil, pageErr
 	}
-	candidates := parseNexusPHPCandidates(body)
-	if len(candidates) == 0 && !strings.Contains(body, nexusPHPResultMarker) {
-		return nil, fmt.Errorf("dupe 检索返回的页面不含结果列表，无法确认是否重复（可能是站点返回了非预期页面）")
-	}
-	return candidates, nil
+	return parseNexusPHPCandidates(body), nil
 }
 
 // checkNexusPHPSiteDupe 为「标准 NexusPHP 结果页」站点的通用 dupe 校验实现。
