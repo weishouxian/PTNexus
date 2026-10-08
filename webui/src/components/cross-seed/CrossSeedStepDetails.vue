@@ -300,6 +300,10 @@
                     </div>
                   </template>
                   <el-input type="textarea" v-model="torrentData.intro.poster" :rows="2" />
+                  <div v-if="posterErrorMessage" class="poster-fetch-error">
+                    <el-icon class="poster-fetch-error__icon"><WarningFilled /></el-icon>
+                    <span class="poster-fetch-error__text">{{ posterErrorMessage }}</span>
+                  </div>
                 </el-form-item>
               </div>
               <div class="right-panel">
@@ -572,7 +576,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Close, Monitor, Refresh } from '@element-plus/icons-vue'
+import { Close, Monitor, Refresh, WarningFilled } from '@element-plus/icons-vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
 import MediaInfoSummaryCard from './MediaInfoSummaryCard.vue'
 
@@ -594,6 +598,7 @@ const {
   handleTagClose,
   refreshPosters,
   isRefreshingPosters,
+  posterErrorMessage,
   posterImages,
   getProxyImageUrl,
   handleImageErrorWithProxy,

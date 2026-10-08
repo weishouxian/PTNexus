@@ -708,6 +708,10 @@ onMounted(() => {
 
 // 监听活动步骤的变化
 watch(activeStep, (newStep, oldStep) => {
+  if (newStep !== 0) {
+    //离开核对详情页时清掉上一次的失败提示，避免下次进入还挂着旧原因
+    posterErrorMessage.value = ''
+  }
   if (oldStep === 0) {
     cleanupDetailsTabsDrag()
   }
@@ -767,6 +771,8 @@ const screenshotPreviewCache = ref<Record<string, ScreenshotPreviewCacheEntry>>(
 const isRefreshingIntro = ref(false)
 const isRefreshingMediainfo = ref(false)
 const isRefreshingPosters = ref(false)
+// 海报获取失败原因，直接展示在「海报链接」表单项下方。
+const posterErrorMessage = ref('')
 const isHandlingScreenshotError = ref(false) // 防止重复处理截图错误
 const screenshotValid = ref(true) // 跟踪截图是否有效
 const screenshotMediaValidateTimeoutMs = 600000
@@ -2242,6 +2248,7 @@ onUnmounted(() => {
 
 const refreshPosters = async () => {
   if (!torrentData.value.original_main_title) {
+    posterErrorMessage.value = '标题为空，无法重新获取海报。'
     ElNotification.warning('标题为空，无法重新获取海报。')
     return
   }
@@ -2256,6 +2263,7 @@ const refreshPosters = async () => {
   }
 
   isRefreshingPosters.value = true
+  posterErrorMessage.value = ''
   ElNotification.info({
     title: '正在重新获取',
     message: '正在重新生成海报...',
@@ -2301,6 +2309,7 @@ const refreshPosters = async () => {
         message: '已成功生成并加载了新的海报。',
       })
     } else {
+      posterErrorMessage.value = response.data.error || '无法从后端获取新的海报，请查看后台日志。'
       ElNotification.error({
         title: '重新获取失败',
         message: response.data.error || '无法从后端获取新的海报，请查看后台日志。',
@@ -2316,6 +2325,7 @@ const refreshPosters = async () => {
       : error instanceof Error
         ? error.message || '未能重新获取海报，请查看后台日志。'
         : '未能重新获取海报，请查看后台日志。'
+    posterErrorMessage.value = errorMsg
     ElNotification.error({
       title: '操作失败',
       message: errorMsg,
@@ -2441,6 +2451,7 @@ const handleImageError = async (url: string, type: 'poster' | 'screenshot', inde
       ) {
         return
       } else if (type === 'poster' && response.data.posters) {
+        posterErrorMessage.value = ''
         torrentData.value.intro.poster = response.data.posters
         ElNotification.success({
           title: '海报已更新',
@@ -2451,6 +2462,9 @@ const handleImageError = async (url: string, type: 'poster' | 'screenshot', inde
       // 如果更新截图失败，保持screenshotValid为false
       if (type === 'screenshot') {
         screenshotValid.value = false
+      } else {
+        posterErrorMessage.value =
+          response.data.error || `无法从后端获取新的${type === 'poster' ? '海报' : '截图'}。`
       }
       ElNotification.error({
         title: '更新失败',
@@ -2464,6 +2478,9 @@ const handleImageError = async (url: string, type: 'poster' | 'screenshot', inde
       type === 'screenshot'
         ? getScreenshotValidateErrorMessage(error, defaultMessage)
         : extractApiErrorMessage(error, defaultMessage)
+    if (type === 'poster') {
+      posterErrorMessage.value = errorMsg
+    }
     console.error('发送失效图片信息请求时发生错误:', error)
     ElNotification.error({
       title: '操作失败',
@@ -2765,6 +2782,7 @@ provide(crossSeedPanelContextKey, {
   handleTagClose,
   refreshPosters,
   isRefreshingPosters,
+  posterErrorMessage,
   posterImages,
   getProxyImageUrl,
   handleImageErrorWithProxy,
