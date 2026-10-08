@@ -313,6 +313,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				forbidden_transfer_sites LONGTEXT,
 				dupe_check_enabled TINYINT(1) NOT NULL DEFAULT 0,
 				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
+				dupe_rules LONGTEXT,
 				sort_order INT NOT NULL DEFAULT 0,
 				PRIMARY KEY (id)
 			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
@@ -545,6 +546,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				forbidden_transfer_sites TEXT,
 				dupe_check_enabled INTEGER NOT NULL DEFAULT 0,
 				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
+				dupe_rules TEXT,
 				sort_order INTEGER NOT NULL DEFAULT 0
 			)`,
 			`CREATE TABLE IF NOT EXISTS app_settings (
@@ -774,6 +776,7 @@ func (m *SchemaManager) createTableSQLs() []string {
 				forbidden_transfer_sites TEXT,
 				dupe_check_enabled INTEGER NOT NULL DEFAULT 0,
 				dupe_size_tolerance_bytes BIGINT NOT NULL DEFAULT 1073741824,
+				dupe_rules TEXT,
 				sort_order INTEGER NOT NULL DEFAULT 0
 			)`,
 			`CREATE TABLE IF NOT EXISTS app_settings (
@@ -1033,6 +1036,8 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "forbidden_transfer_sites", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
 			{name: "dupe_check_enabled", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "TINYINT(1) NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 			{name: "dupe_size_tolerance_bytes", definition: map[string]string{"sqlite": "BIGINT NOT NULL DEFAULT 1073741824", "mysql": "BIGINT NOT NULL DEFAULT 1073741824", "postgresql": "BIGINT NOT NULL DEFAULT 1073741824"}},
+			// dupe_rules 为「标准媒介键 → 判定维度集合」的 JSON 对象，站点设置里按媒介配置。
+			{name: "dupe_rules", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 		},
 		"app_settings": {

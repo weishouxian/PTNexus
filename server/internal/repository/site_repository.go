@@ -76,7 +76,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	selectFields := fmt.Sprintf(`
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
 		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
-		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.sort_order,
+		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.sort_order,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -133,6 +133,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		s["forbidden_transfer_sites"] = siteStringListFromAny(s["forbidden_transfer_sites"])
 		s["dupe_check_enabled"] = toIntWithDefault(s["dupe_check_enabled"], 0) != 0
 		s["dupe_size_tolerance_bytes"] = toInt64WithDefault(s["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
+		// 前端直接把规则表当对象用，这里统一解析成「媒介 → 判定维度」结构。
+		s["dupe_rules"] = siteDupeRulesFromAny(s["dupe_rules"])
 	}
 	return sites, nil
 }
@@ -159,6 +161,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	if dupeSizeTolerance < 0 {
 		dupeSizeTolerance = DefaultDupeSizeToleranceBytes
 	}
+	// 规则表按 JSON 文本入库；未配置时写空串（读回解析为空表，等价于「该站点没有媒介规则」）。
+	dupeRules := encodeSiteDupeRules(data["dupe_rules"])
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
 
 	groupColumn := r.store.GroupColumn()
@@ -178,6 +182,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			forbidden_transfer_sites = ?,
 			dupe_check_enabled = ?,
 			dupe_size_tolerance_bytes = ?,
+			dupe_rules = ?,
 			sort_order = ?
 		WHERE id = ?
 	`, groupColumn)
@@ -198,6 +203,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		forbiddenTransferSites,
 		dupeCheckEnabled,
 		dupeSizeTolerance,
+		dupeRules,
 		sortOrder,
 		siteID,
 	)

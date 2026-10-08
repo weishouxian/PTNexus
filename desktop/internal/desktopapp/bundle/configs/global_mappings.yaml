@@ -882,12 +882,17 @@ global_standard_keys:
     "已刮削": "tag.已刮削"
     "三级": "tag.三级"
     "VCB-Studio": "tag.vcb_studio"
-    "官组": "tag.官组"
+    "官组": null
     "官字": "tag.官字"
     "柠檬爱原盘": "tag.untouch"
     "转载": "tag.转载"
     "Criterion": "tag.Criterion"
     "default": null
+
+  # 标准标签黑名单：命中的 tag.* 一律丢弃（映射阶段过滤，直通的标准标签同样过滤）。
+  # 用于「源站标签体系里存在、但 PTNexus 不准备维护」的标准标签。
+  excluded_tags:
+    - "tag.官组"
 
 # 默认 title_components 配置
 # 大部分站点都使用这个标准配置，只有个别站点需要覆盖特定字段

@@ -223,6 +223,39 @@ func (d *SeedDraft) dropRemuxTitleTokenIfMediumNotRemux() {
 	d.Title = after
 }
 
+// audioTitleAlignLogModule 按标准音频编码替换标题音频标记的日志模块名。
+const audioTitleAlignLogModule = "抓取-音频纠偏"
+
+// alignTitleAudioCodecWithStandard 在标准音频编码与标题音频 token 矛盾时替换标题里的音频标记。
+// 参数/返回：无；原地修改 d.Title。
+// 失败场景：标准键缺失/非法、标题未命中音频 token、或与标准键同家族时不做任何修改。
+// 副作用：可能修改 d.Title，并写一条纠偏日志。
+//
+// 背景：标题组件「音频编码」由标题文本推导（extractAudioFromTitle）。标准 audio_codec 改以
+// MediaInfo 第一条音轨为准后，标题声明（如 DDP2.0）可能与首音轨（AAC）矛盾——面板「音频编码」
+// 会停留在标题声明上，发种标题也会带着与标准键矛盾的编码。须在 BuildTitleComponents 之前调用，
+// 组件随标题重建自动跟随。
+func (d *SeedDraft) alignTitleAudioCodecWithStandard() {
+	if d == nil {
+		return
+	}
+	standard := strings.TrimSpace(d.AudioCodec)
+	if !strings.HasPrefix(standard, "audio.") {
+		return
+	}
+	before := strings.TrimSpace(d.Title)
+	if before == "" {
+		return
+	}
+	after := processingmedia.ReplaceTitleAudioCodecToken(before, standard)
+	if after == "" || after == before {
+		return
+	}
+	logx.Infof(audioTitleAlignLogModule, "按标准音频编码替换标题音频标记 torrent_id=%s audio_codec=%s before=%q after=%q",
+		d.TorrentID, standard, before, after)
+	d.Title = after
+}
+
 // applyDiscStructureOverride 在种子文件列表证实本体是 ISO/BDMV 碟结构时，把媒介收敛回原盘档。
 // 参数/返回：logSuffix 追加到日志文案尾部，用于区分纠偏来自哪条链路；无返回值。
 // 失败场景：未命中碟结构、DVD 系媒介、分辨率缺失或 SD 档时保持原值。

@@ -25,6 +25,8 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 	subtitle := strings.TrimSpace(toStringAny(sourceInfo["subtitle"], ""))
 	// PTGen 节点启停与优先级来自 cross_seed 配置，未配置时使用内置默认值。
 	ptgenNodes := PTGenNodeSettingsFromRootConfig(rootConfig)
+	// poster 分支用于承载图床转存失败等非致命警告（成功但回退原始链接）。
+	posterWarning := ""
 
 	switch mediaType {
 	case "screenshot_preview":
@@ -116,15 +118,19 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		if errMsg != "" {
 			return map[string]any{"success": false, "error": errMsg}, 400
 		}
-		result.Poster = NormalizePosterBBCodeWithConfig(result.Poster, rootConfig)
-		return map[string]any{
+		result.Poster, posterWarning = NormalizePosterBBCodeWithConfigDetailed(result.Poster, rootConfig)
+		resp := map[string]any{
 			"success":               true,
 			"posters":               result.Poster,
 			"source_links":          BuildSourceLinks(result.IMDb, result.Douban, result.TMDb),
 			"extracted_imdb_link":   result.IMDb,
 			"extracted_douban_link": result.Douban,
 			"extracted_tmdb_link":   result.TMDb,
-		}, 200
+		}
+		if posterWarning != "" {
+			resp["poster_warning"] = posterWarning
+		}
+		return resp, 200
 
 	case "intro":
 		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken, ptgenNodes)

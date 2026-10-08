@@ -2,8 +2,9 @@ package dupe
 
 // Query 描述一次 dupe 检索所需的全部输入。
 //
-// 检索维度（类型 / 媒介 / 分辨率 / 音频编码 / 视频编码）由站点搜索 URL 参数承担，
-// 制作组与体积则由调用方提供、用于对返回结果做二次判定。
+// 判定维度由站点设置里「该媒介的规则」决定（见 rules.go）：
+//   - 媒介 / 分辨率 / 视频编码 / 音频编码由 Filters 承担（站点用自己的元数据筛掉不一致的条目）；
+//   - 文件大小与制作组由 MatchSize / MatchTeam 声明，对返回的候选逐条比对。
 type Query struct {
 	// BaseURL / Cookie / UserAgent 为站点检索所需的会话信息。
 	BaseURL   string
@@ -28,6 +29,13 @@ type Query struct {
 
 	// SizeToleranceBytes 为体积容差（字节）。小于 0 时视为 0，即要求体积完全一致。
 	SizeToleranceBytes int64
+
+	// MatchSize 表示本次判定需要比对体积（规则勾选了「文件大小」）。
+	MatchSize bool
+	// MatchTeam 表示本次判定需要比对制作组（规则勾选了「制作组」）。
+	MatchTeam bool
+	// Dimensions 为本次生效的判定维度，仅用于日志说明与命中说明的生成。
+	Dimensions []string
 }
 
 // Candidate 是从站点搜索结果中解析出的一条候选种子。

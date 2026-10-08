@@ -176,10 +176,15 @@
             >
             <el-tooltip
               v-else-if="scope.row.dupe_check_enabled"
-              :content="`体积容差 ${formatDupeTolerance(scope.row.dupe_size_tolerance_bytes)}`"
+              :content="dupeRuleSummary(scope.row)"
               placement="top"
             >
-              <el-tag type="warning" size="small">已开 {{ formatDupeTolerance(scope.row.dupe_size_tolerance_bytes) }}</el-tag>
+              <el-tag
+                :type="dupeTagType(scope.row)"
+                size="small"
+              >
+                {{ dupeTagText(scope.row) }}
+              </el-tag>
             </el-tooltip>
             <el-tag v-else type="info" size="small">关</el-tag>
           </template>
@@ -431,6 +436,110 @@
             单位 MB。默认 {{ DEFAULT_DUPE_TOLERANCE_MB }} MB；设为 0 表示要求体积完全一致才算重复。
           </div>
         </el-form-item>
+        <el-form-item
+          v-if="isDupeCheckVisible && siteForm.dupe_check_enabled"
+          label="查重规则"
+        >
+          <div class="dupe-rules">
+            <div class="form-tip">
+              按媒介分别设置判定维度：<strong>只对下面添加过的媒介做查重</strong>，未添加的媒介走兜底规则（未开启兜底则跳过）。
+              规则已按媒介区分，因此「<strong>媒介</strong>」恒为判定维度（已锁定、不可取消）；
+              勾选「分辨率 / 视频编码 / 音频编码」会作为站点检索条件，勾选「文件大小 / 制作组」由本系统逐条比对。
+            </div>
+            <el-table
+              :data="dupeRuleRows"
+              size="small"
+              class="dupe-rules-table"
+              empty-text="尚未添加媒介 —— 该站点不会执行 dupe 校验"
+            >
+              <el-table-column label="媒介" min-width="110">
+                <template #default="{ row }">
+                  <div class="dupe-rule-medium">{{ dupeMediumLabel(row.medium) }}</div>
+                  <div class="dupe-rule-key">{{ row.medium }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="判定维度" min-width="250">
+                <template #default="{ row }">
+                  <el-checkbox-group v-model="row.dimensions" size="small">
+                    <el-checkbox
+                      v-for="dim in dupeOptions?.dimensions || []"
+                      :key="dim.value"
+                      :value="dim.value"
+                      :disabled="!dim.supported || dim.value === DUPE_LOCKED_DIMENSION"
+                    >
+                      {{ dim.label }}
+                    </el-checkbox>
+                  </el-checkbox-group>
+                </template>
+              </el-table-column>
+              <el-table-column label="" width="60" align="right">
+                <template #default="{ row }">
+                  <el-button link type="danger" @click="removeDupeRule(row)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="dupe-rule-actions">
+              <el-select
+                v-model="pendingDupeMedium"
+                filterable
+                clearable
+                size="small"
+                placeholder="选择要添加的媒介"
+                :loading="isDupeOptionsLoading"
+                class="dupe-medium-select"
+              >
+                <el-option-group v-for="group in dupeMediumGroups" :key="group.value" :label="group.label">
+                  <el-option
+                    v-for="item in group.items"
+                    :key="item.medium"
+                    :label="item.label"
+                    :value="item.medium"
+                  />
+                </el-option-group>
+              </el-select>
+              <el-button size="small" type="primary" :disabled="!pendingDupeMedium" @click="addDupeRule">
+                添加媒介
+              </el-button>
+              <el-button
+                size="small"
+                :disabled="!(dupeOptions?.mediums?.length ?? 0)"
+                @click="addAllDupeMediums"
+              >
+                添加全部媒介
+              </el-button>
+            </div>
+            <div v-if="unsupportedRuleDimensions.length" class="form-tip dupe-rule-warning">
+              ⚠️ 该站点没有声明「{{ unsupportedRuleDimensions.join('、') }}」的检索参数，这几项勾选后不会生效（已置灰）。
+            </div>
+            <div v-else-if="dupeOptions && !dupeOptions.mediums.length" class="form-tip dupe-rule-warning">
+              ⚠️ 没读到该站点的媒介清单，无法在此添加规则（请检查站点 YAML 的 mappings.medium）。
+            </div>
+            <div class="dupe-fallback">
+              <div class="dupe-fallback-head">
+                <el-switch v-model="dupeFallbackEnabled" size="small" />
+                <span class="dupe-fallback-title">兜底规则</span>
+                <span class="dupe-fallback-desc">
+                  开启后，未在上面单独添加的媒介（含媒介无法识别时）都按这条规则查重；关闭则这些媒介直接跳过、不校验。
+                </span>
+              </div>
+              <el-checkbox-group
+                v-if="dupeFallbackEnabled"
+                v-model="dupeFallbackDimensions"
+                size="small"
+                class="dupe-fallback-dims"
+              >
+                <el-checkbox
+                  v-for="dim in dupeOptions?.dimensions || []"
+                  :key="dim.value"
+                  :value="dim.value"
+                  :disabled="!dim.supported"
+                >
+                  {{ dim.label }}
+                </el-checkbox>
+              </el-checkbox-group>
+            </div>
+          </div>
+        </el-form-item>
         <el-form-item label="排序序号" prop="sort_order">
           <el-input-number
             v-model="siteForm.sort_order"
@@ -555,6 +664,7 @@ type SiteConfig = {
   can_publish?: boolean | number
   dupe_check_enabled?: boolean | number
   dupe_size_tolerance_bytes?: number | null
+  dupe_rules?: Record<string, string[]> | null
   [key: string]: unknown
 }
 
@@ -604,6 +714,39 @@ type SiteForm = {
   dupe_size_tolerance_bytes: number
   /** 体积容差（MB），仅用于输入框展示与双向换算 */
   dupe_size_tolerance_mb: number
+  /** 按媒介的查重规则：标准媒介键 → 判定维度集合（未列出的媒介不执行 dupe 校验） */
+  dupe_rules: Record<string, string[]>
+}
+
+/** dupe 判定维度选项（由 /api/sites/dupe_options 返回） */
+type DupeDimensionOption = {
+  value: string
+  label: string
+  /** 该维度依赖站点检索筛选；站点未声明时 supported 为 false，界面需置灰 */
+  needs_site_filter: boolean
+  supported: boolean
+}
+
+/** dupe 规则可选的媒介（由 /api/sites/dupe_options 返回） */
+type DupeMediumOption = {
+  medium: string
+  label: string
+  /** 站点上传表单里的取值，用于把同义媒介分组展示 */
+  site_value: string
+}
+
+type DupeOptions = {
+  enabled: boolean
+  mediums: DupeMediumOption[]
+  dimensions: DupeDimensionOption[]
+  /** 兜底规则在规则表里的保留键（由后端下发，前端不硬编码） */
+  fallback_medium: string
+}
+
+/** 规则编辑器的行结构（提交前转换成 dupe_rules 对象） */
+type DupeRuleRow = {
+  medium: string
+  dimensions: string[]
 }
 
 // 已实现 dupe 检索能力的站点（configs/<site>.yaml 里有 dupe_check.enabled），只有这些站点显示开关。
@@ -655,6 +798,147 @@ const normalizeDupeToleranceBytes = (value: unknown): number => {
   const parsed = Number(value)
   if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_DUPE_TOLERANCE_BYTES
   return parsed
+}
+
+// --- dupe 规则（按媒介配置判定维度）---
+
+// 兜底规则在规则表里的保留键（与后端 dupe.DupeFallbackMedium 一致）。
+// 读取已保存的规则时用它作键（此时选项接口可能还没返回），保存时优先用后端下发的键。
+const DUPE_FALLBACK_MEDIUM = '*'
+// 兜底规则默认勾选的维度，与单条规则的默认值一致（等于旧版的全局判定口径）。
+const DUPE_DEFAULT_DIMENSIONS = ['size', 'team']
+// 规则本身已经按媒介区分，因此「媒介」在该规则里恒为判定维度：界面锁为「已勾选且不可取消」。
+// （后端 MatchRule 也会统一补上，两边都做是为了让界面显示与真实生效口径一致。）
+const DUPE_LOCKED_DIMENSION = 'medium'
+
+// withLockedDimension 保证维度集合包含被锁定的「媒介」。
+const withLockedDimension = (dimensions: string[]): string[] => {
+  const set = new Set(dimensions.map((item) => String(item)).filter(Boolean))
+  set.add(DUPE_LOCKED_DIMENSION)
+  return Array.from(set)
+}
+
+// 规则编辑器以「行」为编辑单位，提交时转成 dupe_rules 对象（媒介 → 维度集合）。
+const dupeRuleRows = ref<DupeRuleRow[]>([])
+// 兜底规则：开启后，未单独配置的媒介都走它。
+const dupeFallbackEnabled = ref(false)
+const dupeFallbackDimensions = ref<string[]>([...DUPE_DEFAULT_DIMENSIONS])
+// 站点可选的媒介与维度，来自后端 /api/sites/dupe_options。
+const dupeOptions = ref<DupeOptions | null>(null)
+const isDupeOptionsLoading = ref(false)
+const pendingDupeMedium = ref('')
+
+// dupeFallbackKey 保存兜底规则时用的键：以后端下发为准，拿不到时用本地常量。
+const dupeFallbackKey = computed(() => String(dupeOptions.value?.fallback_medium || DUPE_FALLBACK_MEDIUM))
+
+// rowsFromRules 把规则表转成编辑器行；兜底规则单独渲染，这里必须排除掉。
+const rowsFromRules = (rules: Record<string, string[]> | null | undefined): DupeRuleRow[] => {
+  if (!rules || typeof rules !== 'object') return []
+  return Object.entries(rules)
+    .filter(([medium]) => medium !== DUPE_FALLBACK_MEDIUM)
+    .map(([medium, dimensions]) => ({
+      medium: String(medium),
+      dimensions: withLockedDimension(Array.isArray(dimensions) ? dimensions.map((item) => String(item)) : []),
+    }))
+    .filter((row) => row.medium)
+}
+
+// fallbackFromRules 读取规则表里的兜底规则（未开启时返回空数组）。
+const fallbackFromRules = (rules: Record<string, string[]> | null | undefined): string[] => {
+  if (!rules || typeof rules !== 'object') return []
+  const dims = rules[DUPE_FALLBACK_MEDIUM]
+  return Array.isArray(dims) ? dims.map((item) => String(item)).filter(Boolean) : []
+}
+
+const rulesFromRows = (rows: DupeRuleRow[]): Record<string, string[]> => {
+  const rules: Record<string, string[]> = {}
+  rows.forEach((row) => {
+    const medium = String(row.medium || '').trim()
+    if (!medium) return
+    // 「媒介」是锁定维度，始终参与；其余维度按勾选情况。
+    const dimensions = withLockedDimension(
+      (row.dimensions || []).map((item) => String(item).trim()).filter(Boolean),
+    )
+    rules[medium] = dimensions
+  })
+  return rules
+}
+
+const dupeMediumLabel = (medium: string): string => {
+  const found = dupeOptions.value?.mediums.find((item) => item.medium === medium)
+  return found?.label || medium
+}
+
+// 按站点取值分组：同义媒介（如 UHD Blu-ray 与 UHD DIY 共用同一上传取值）相邻展示，便于批量添加。
+const dupeMediumGroups = computed(() => {
+  const groups = new Map<string, { value: string; label: string; items: DupeMediumOption[] }>()
+  for (const item of dupeOptions.value?.mediums || []) {
+    const key = item.site_value || item.medium
+    const existing = groups.get(key)
+    if (existing) {
+      existing.items.push(item)
+      continue
+    }
+    groups.set(key, { value: key, label: item.label, items: [item] })
+  }
+  return Array.from(groups.values())
+})
+
+// 站点不支持（界面上置灰）的筛选维度中文名，用于在规则区给出显式提示。
+const unsupportedRuleDimensions = computed(() =>
+  (dupeOptions.value?.dimensions || [])
+    .filter((item) => item.needs_site_filter && !item.supported)
+    .map((item) => item.label),
+)
+
+const addDupeRule = () => {
+  const medium = String(pendingDupeMedium.value || '').trim()
+  if (!medium) return
+  if (dupeRuleRows.value.some((row) => row.medium === medium)) {
+    ElMessage.info('该媒介已在规则列表中。')
+    return
+  }
+  // 新规则默认勾选「文件大小 + 制作组」（媒介为锁定项，恒定参与）——即旧版的全局判定口径。
+  dupeRuleRows.value.push({ medium, dimensions: withLockedDimension([...DUPE_DEFAULT_DIMENSIONS]) })
+  pendingDupeMedium.value = ''
+}
+
+const removeDupeRule = (row: DupeRuleRow) => {
+  dupeRuleRows.value = dupeRuleRows.value.filter((item) => item.medium !== row.medium)
+}
+
+// 一键把站点全部媒介按「文件大小 + 制作组」加入规则列表（等价于旧版对所有媒介统一查重）。
+const addAllDupeMediums = () => {
+  for (const item of dupeOptions.value?.mediums || []) {
+    if (dupeRuleRows.value.some((row) => row.medium === item.medium)) continue
+    dupeRuleRows.value.push({ medium: item.medium, dimensions: withLockedDimension([...DUPE_DEFAULT_DIMENSIONS]) })
+  }
+}
+
+const loadDupeOptions = async (siteCode: string) => {
+  dupeOptions.value = null
+  pendingDupeMedium.value = ''
+  const trimmed = String(siteCode || '').trim()
+  if (!trimmed) return
+  isDupeOptionsLoading.value = true
+  try {
+    const response = await axios.get(`${API_BASE_URL}/sites/dupe_options`, { params: { site: trimmed } })
+    dupeOptions.value = (response.data?.options as DupeOptions) || null
+  } catch {
+    dupeOptions.value = null
+    ElMessage.error('获取 dupe 可选项失败，媒介与维度提示暂不可用。')
+  } finally {
+    isDupeOptionsLoading.value = false
+  }
+}
+
+// buildDupeRules 把编辑器状态组装成提交用的规则表（含兜底规则）。
+const buildDupeRules = (): Record<string, string[]> => {
+  const rules = rulesFromRows(dupeRuleRows.value)
+  if (dupeFallbackEnabled.value && dupeFallbackDimensions.value.length > 0) {
+    rules[dupeFallbackKey.value] = [...dupeFallbackDimensions.value]
+  }
+  return rules
 }
 
 // --- 状态管理 ---
@@ -709,6 +993,7 @@ const siteForm = ref<SiteForm>({
   dupe_check_enabled: false,
   dupe_size_tolerance_bytes: DEFAULT_DUPE_TOLERANCE_BYTES,
   dupe_size_tolerance_mb: DEFAULT_DUPE_TOLERANCE_MB,
+  dupe_rules: {},
 })
 
 const API_BASE_URL = '/api'
@@ -753,6 +1038,44 @@ const formatDupeTolerance = (bytes: number | null | undefined): string => {
   if (!Number.isFinite(value) || value < 0) return `${DEFAULT_DUPE_TOLERANCE_MB} MB`
   // 0 表示要求体积完全一致，直接显示 0 MB。
   return `${bytesToMb(value)} MB`
+}
+
+// dupeRuleCount 返回站点单独配置的媒介规则条数（不含兜底规则）。
+const dupeRuleCount = (site: SiteConfig): number => {
+  const rules = site?.dupe_rules
+  if (!rules || typeof rules !== 'object') return 0
+  return Object.keys(rules).filter((key) => key !== DUPE_FALLBACK_MEDIUM).length
+}
+
+// siteHasDupeFallback 判断站点是否开启了兜底规则。
+const siteHasDupeFallback = (site: SiteConfig): boolean => fallbackFromRules(site.dupe_rules).length > 0
+
+// dupeTagText 生成列表页 Dupe 列的标签文案。
+const dupeTagText = (site: SiteConfig): string => {
+  const count = dupeRuleCount(site)
+  const fallback = siteHasDupeFallback(site)
+  if (count === 0 && !fallback) return '已开（未配置规则）'
+  const parts: string[] = []
+  if (count > 0) parts.push(`${count} 条规则`)
+  if (fallback) parts.push('兜底')
+  return `已开 ${parts.join(' + ')}`
+}
+
+// dupeTagType 决定标签样式：没配规则的「已开」要用醒目的红色，避免误以为已生效。
+const dupeTagType = (site: SiteConfig): 'warning' | 'danger' =>
+  dupeRuleCount(site) === 0 && !siteHasDupeFallback(site) ? 'danger' : 'warning'
+
+// dupeRuleSummary 生成列表页 Dupe 列的悬浮说明。
+// 强调「开了开关但没配规则 = 不会查重」，避免把开关误当成已生效。
+const dupeRuleSummary = (site: SiteConfig): string => {
+  const tolerance = `体积容差 ${formatDupeTolerance(site.dupe_size_tolerance_bytes)}`
+  const count = dupeRuleCount(site)
+  const fallback = siteHasDupeFallback(site)
+  if (count === 0 && !fallback) {
+    return `${tolerance}；尚未配置任何媒介规则，该站点当前不会执行查重`
+  }
+  const scope = count > 0 ? `已配置 ${count} 条媒介规则` : '未单独配置媒介规则'
+  return `${tolerance}；${scope}${fallback ? '，并已开启兜底规则（未单独配置的媒介按兜底执行）' : ''}`
 }
 
 const getSiteRole = (site: SiteConfig): 'none' | 'both' | 'source' | 'target' => {
@@ -1115,6 +1438,8 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   dupe_check_enabled: Boolean(Number(site.dupe_check_enabled) || 0),
   dupe_size_tolerance_bytes: normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes),
   dupe_size_tolerance_mb: bytesToMb(normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes)),
+  // 统一清洗一遍：去掉空维度与空条目，避免脏数据带进表单。
+  dupe_rules: rulesFromRows(rowsFromRules(site.dupe_rules)),
 })
 
 // [新增] 合并后的保存与同步功能
@@ -1179,6 +1504,12 @@ const handleSaveAndSync = async () => {
 
 const handleOpenDialog = (site: SiteConfig) => {
   siteForm.value = normalizeSiteForm(site)
+  dupeRuleRows.value = rowsFromRules(site.dupe_rules)
+  const fallbackDims = fallbackFromRules(site.dupe_rules)
+  dupeFallbackEnabled.value = fallbackDims.length > 0
+  dupeFallbackDimensions.value = fallbackDims.length > 0 ? fallbackDims : [...DUPE_DEFAULT_DIMENSIONS]
+  // 打开弹窗时按站点拉一次可选项（媒介清单与各维度可用性都取决于站点 YAML）。
+  void loadDupeOptions(String(site.site || ''))
   dialogVisible.value = true
 }
 
@@ -1189,6 +1520,11 @@ const handleRowClick = (row: SiteConfig) => {
 }
 
 const handleSave = async () => {
+  // 兜底规则开着却一个维度都不勾 → 配置没有可执行语义，先拦住并说清原因。
+  if (dupeFallbackEnabled.value && dupeFallbackDimensions.value.length === 0) {
+    ElMessage.error('兜底规则至少需要勾选一个判定维度，或关闭兜底规则。')
+    return
+  }
   isSaving.value = true
   try {
     const siteData: SiteForm = {
@@ -1198,6 +1534,8 @@ const handleSave = async () => {
       seed_speed_limit: siteForm.value.seed_speed_limit || 5,
       // 输入框以 MB 展示，提交前换算回后端存储口径（字节）。
       dupe_size_tolerance_bytes: mbToBytes(siteForm.value.dupe_size_tolerance_mb),
+      // 编辑器按行维护规则，提交前转成「媒介 → 维度集合」对象（含兜底规则）。
+      dupe_rules: buildDupeRules(),
     }
 
     const response = await axios.post(`${API_BASE_URL}/sites/update`, siteData)
@@ -1339,6 +1677,74 @@ const handleDelete = (site: SiteConfig) => {
   font-size: 12px;
   line-height: 1.5;
   margin-top: 4px;
+}
+
+/* dupe 规则编辑器：按媒介配置判定维度 */
+.dupe-rules {
+  width: 100%;
+}
+
+.dupe-rules-table {
+  margin-top: 6px;
+  border: 1px solid #ebeef5;
+  border-radius: 4px;
+}
+
+.dupe-rule-medium {
+  font-size: 13px;
+  color: #303133;
+  line-height: 1.4;
+}
+
+.dupe-rule-key {
+  font-family: monospace;
+  font-size: 11px;
+  color: #a8abb2;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.dupe-rule-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.dupe-medium-select {
+  flex: 1;
+}
+
+.dupe-rule-warning {
+  color: #e6a23c;
+}
+
+/* 兜底规则：未单独配置的媒介统一走它 */
+.dupe-fallback {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #ebeef5;
+}
+
+.dupe-fallback-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dupe-fallback-title {
+  font-size: 13px;
+  color: #303133;
+}
+
+.dupe-fallback-desc {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.dupe-fallback-dims {
+  margin-top: 6px;
 }
 
 .settings-table :deep(tr.row-config-incomplete > td.el-table__cell) {

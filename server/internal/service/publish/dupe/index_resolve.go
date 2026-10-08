@@ -98,15 +98,17 @@ func ResolveIndexPlaceholders(siteCode string, query Query, formFields map[strin
 
 // PrepareSearchFilters 构造站点检索的筛选参数。
 //
-// 参数/返回：siteCode 为站点标识；query 提供 base_url/cookie；formFields 为最终表单字段。
-// 返回筛选参数与过程说明（说明为空表示无需提示）。
+// 参数/返回：siteCode 为站点标识；query 提供 base_url/cookie；formFields 为最终表单字段；
+//
+//	dimensions 为该媒介规则勾选的判定维度（只有勾选的筛选维度会进参数）。
+//	返回筛选参数与过程说明（说明为空表示无需提示）。
 //
 // 说明：先按需解析 `@index:N` 占位符（可能额外请求一次上传页），再交给 BuildSearchFilters 生成参数。
 // 解析失败的维度会被 BuildSearchFilters 跳过，因此本函数不会因为解析问题而中断发布。
 // 副作用：存在 @index 占位符时可能向站点发起一次 GET 请求。
-func PrepareSearchFilters(siteCode string, query Query, formFields map[string]string) (map[string]string, string) {
+func PrepareSearchFilters(siteCode string, query Query, formFields map[string]string, dimensions []string) (map[string]string, string) {
 	resolvedFields, detail := ResolveIndexPlaceholders(siteCode, query, formFields)
-	return BuildSearchFilters(siteCode, resolvedFields), detail
+	return BuildSearchFilters(siteCode, resolvedFields, dimensions), detail
 }
 
 // parseIndexMarker 解析 `@index:N` 形式的选项索引占位符。

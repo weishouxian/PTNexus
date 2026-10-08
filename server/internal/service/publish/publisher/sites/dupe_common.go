@@ -11,12 +11,22 @@ import (
 )
 
 // runSiteDupeCheck 是各站点 dupe 校验钩子的共用实现。
+//
 // 参数/返回：logModule 为日志模块名；input 为发布输入；formFields 为最终表单字段（已含站点映射值）。
 // 返回过程日志与错误。
+//
+// 判定维度由「站点设置里该媒介的规则」决定（dupe_rules）：
+//   - 规则按待发布种子的标准媒介（standardized_params.medium）精确匹配；
+//   - 未在站点设置里添加过的媒介**不做校验**，避免用户没配就被拦；
+//   - 勾选的维度分两类：文件大小 / 制作组由客户端比对，媒介 / 分辨率 / 视频编码 / 音频编码
+//     换算成站点检索筛选参数交给站点筛。
+//
 // 失败场景：命中重复时返回 *publisher.PreCheckError（确定性拒绝，上层改判跳过）；
-// 检索失败（Cookie 失效 / 站点限流 / 网络异常）时返回普通 error（上层走重试）——
-// 这两类语义不可混：把「查不到」当成「不重复」会漏过真正的 dupe。
-// 副作用：可能向目标站点发起 1~2 次 GET 请求（仅在开关开启且站点已声明 dupe 能力时）。
+//
+//	检索失败（Cookie 失效 / 站点限流 / 网络异常）时返回普通 error（上层走重试）——
+//	这两类语义不可混：把「查不到」当成「不重复」会漏过真正的 dupe。
+//
+// 副作用：可能向目标站点发起 1~2 次 GET 请求（仅在开关开启、站点已声明能力且该媒介配了规则时）。
 func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields map[string]string) (string, error) {
 	settings := publishdupe.ResolveSiteSettings(input.TargetInfo)
 	supportsDupe := publishdupe.SiteSupportsDupe(input.SiteCode)
@@ -44,11 +54,32 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 		return detail, nil
 	}
 
-	torrentSize, err := resolveTorrentTotalSize(input)
-	if err != nil {
-		detail := fmt.Sprintf("dupe 校验未执行：%v", err)
-		logx.Warnf(logModule, "site=%s %s", strings.TrimSpace(input.SiteCode), detail)
+	// 按待发布种子的标准媒介取规则；没有单独配置的媒介走兜底规则（未开启兜底则跳过）。
+	medium := publishdupe.SeedMediumFromPayload(input.UploadData)
+	dims, ruleKey, hasRule := settings.MatchRule(medium)
+	if !hasRule {
+		shown := medium
+		if strings.TrimSpace(shown) == "" {
+			shown = "未知"
+		}
+		detail := fmt.Sprintf("dupe 校验：该媒介（%s）未配置查重规则且未开启兜底规则，已跳过（可在「站点设置」里为该媒介添加规则或开启兜底）", shown)
+		logx.Infof(logModule, "site=%s medium=%s %s", strings.TrimSpace(input.SiteCode), medium, detail)
 		return detail, nil
+	}
+	usingFallback := ruleKey == publishdupe.DupeFallbackMedium
+
+	matchSize, matchTeam := publishdupe.ClientDimensions(dims)
+
+	// 体积只在规则勾选了「文件大小」时才需要 —— 没勾就不必读种子文件。
+	var torrentSize int64
+	if matchSize {
+		resolved, err := resolveTorrentTotalSize(input)
+		if err != nil {
+			detail := fmt.Sprintf("dupe 校验未执行：%v", err)
+			logx.Warnf(logModule, "site=%s %s", strings.TrimSpace(input.SiteCode), detail)
+			return detail, nil
+		}
+		torrentSize = resolved
 	}
 
 	query := publishdupe.Query{
@@ -60,21 +91,38 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 		Title:              strings.TrimSpace(input.Title),
 		TorrentSizeBytes:   torrentSize,
 		SizeToleranceBytes: settings.SizeToleranceBytes,
+		MatchSize:          matchSize,
+		MatchTeam:          matchTeam,
+		Dimensions:         dims,
+	}
+
+	// 规则勾选了站点并不支持的筛选维度时，该维度实际不会生效。必须显式提示，
+	// 否则用户会以为「勾了就一定比过」，而实际是漏检（拦不住重复）。
+	preDetails := make([]string, 0, 3)
+	if unsupported := unsupportedFilterDimensions(input.SiteCode, dims); len(unsupported) > 0 {
+		preDetails = append(preDetails, fmt.Sprintf(
+			"⚠️ dupe 规则勾选了「%s」，但站点未声明对应检索参数，该维度本次无法生效",
+			strings.Join(publishdupe.DupeDimensionLabels(unsupported), "、")))
 	}
 
 	// 筛选参数：部分站点（如家园）的维度映射是「上传页选项索引」，需先换算成真实选项值，
 	// 这样媒介 / 编码 / 分辨率等维度才能参与检索（换算失败的维度会被跳过，不影响判定正确性）。
-	filters, filterDetail := publishdupe.PrepareSearchFilters(input.SiteCode, query, formFields)
+	filters, filterDetail := publishdupe.PrepareSearchFilters(input.SiteCode, query, formFields, dims)
 	query.Filters = filters
-	preDetail := strings.TrimSpace(filterDetail)
+	if trimmed := strings.TrimSpace(filterDetail); trimmed != "" {
+		preDetails = append(preDetails, trimmed)
+	}
+	preDetails = append(preDetails, fmt.Sprintf("dupe 规则：%s 判定维度=%s", ruleScopeLabel(medium, ruleKey, usingFallback),
+		strings.Join(publishdupe.DupeDimensionLabels(dims), "、")))
 
 	result, detail, checkErr := publishdupe.CheckBySite(input.SiteCode, query)
-	// 把筛选换算说明并进过程日志，便于在「发布进度 → 日志」里看清到底带了哪些筛选。
-	if preDetail != "" {
+	// 把规则与筛选换算说明并进过程日志，便于在「发布进度 → 日志」里看清这次到底比了哪些维度。
+	if len(preDetails) > 0 {
+		prefix := strings.Join(preDetails, "\n")
 		if detail == "" {
-			detail = preDetail
+			detail = prefix
 		} else {
-			detail = preDetail + "\n" + detail
+			detail = prefix + "\n" + detail
 		}
 	}
 	if detail != "" {
@@ -98,6 +146,43 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 		return detail, publisher.NewPreCheckErrorWithMeta(reason, detail, meta)
 	}
 	return detail, nil
+}
+
+// ruleScopeLabel 生成「本次用的是哪条规则」的日志片段。
+// 参数/返回：medium 为待发布种子的标准媒介；ruleKey 为命中的规则键；usingFallback 表示是否走兜底。
+// 说明：区分「该媒介单独配了规则」与「走兜底」很关键 —— 事后排查时能一眼看出
+// 是规则配错了，还是压根没配、被兜底接手了。
+// 副作用：无。
+func ruleScopeLabel(medium string, ruleKey string, usingFallback bool) string {
+	if usingFallback {
+		shown := strings.TrimSpace(medium)
+		if shown == "" {
+			shown = "未知"
+		}
+		return fmt.Sprintf("兜底规则（媒介 %s 未单独配置）", shown)
+	}
+	return fmt.Sprintf("媒介=%s", strings.TrimSpace(ruleKey))
+}
+
+// unsupportedFilterDimensions 返回规则勾选、但站点未声明检索参数的筛选维度。
+// 参数/返回：siteCode 为站点标识；dims 为规则勾选的维度；返回不受支持的筛选维度。
+// 副作用：加载站点配置（有缓存）。
+func unsupportedFilterDimensions(siteCode string, dims []string) []string {
+	filterDims := publishdupe.FilterDimensions(dims)
+	if len(filterDims) == 0 {
+		return nil
+	}
+	available := map[string]struct{}{}
+	for _, dimension := range publishdupe.FilterDimensionsForSite(siteCode) {
+		available[dimension] = struct{}{}
+	}
+	unsupported := make([]string, 0, len(filterDims))
+	for _, dimension := range filterDims {
+		if _, ok := available[dimension]; !ok {
+			unsupported = append(unsupported, dimension)
+		}
+	}
+	return unsupported
 }
 
 // resolveTorrentTotalSize 取待发布种子的载荷总体积。

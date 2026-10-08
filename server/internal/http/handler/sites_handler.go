@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pt-nexus/server/internal/repository"
+	publishdupe "github.com/pt-nexus/server/internal/service/publish/dupe"
 )
 
 type SitesHandler struct {
@@ -41,6 +42,20 @@ func (h *SitesHandler) Sites(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, sites)
+}
+
+// DupeOptions 返回站点 dupe 规则的可选项：可配置的媒介清单与可用判定维度。
+// 参数/返回：query 参数 site 为站点标识；返回 {"success":true,"options":{...}}。
+// 说明：媒介清单来自站点 YAML 的 mappings.medium（与发布时写进 standardized_params.medium 的键同源），
+// 维度支持情况取自 dupe_check.param_templates —— 前端据此把站点不支持的维度置灰。
+// 副作用：加载站点配置与反向映射表。
+func (h *SitesHandler) DupeOptions(c *gin.Context) {
+	siteCode := strings.TrimSpace(c.Query("site"))
+	if siteCode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点标识。"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "options": publishdupe.BuildSiteDupeOptions(siteCode)})
 }
 
 func (h *SitesHandler) UpdateSite(c *gin.Context) {

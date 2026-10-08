@@ -82,6 +82,100 @@ func toIntWithDefault(value any, fallback int) int {
 // 站点未显式配置 dupe_size_tolerance_bytes 时使用该值；0 为合法配置（要求体积完全一致）。
 const DefaultDupeSizeToleranceBytes int64 = 1073741824
 
+// siteDupeRulesFromAny 把 sites.dupe_rules 的原始值解析成「媒介 → 判定维度」表。
+// 参数/返回：value 为数据库返回值（不同驱动可能是 string / []byte / 已是 map）；返回规则表。
+// 说明：这里只负责 JSON 形状的解析（去掉空条目），维度白名单校验在 dupe 服务侧做
+// （repository 不依赖发布服务，避免分层倒置）。解析失败时返回空表而不是报错 ——
+// 一条脏数据不该让整个站点列表接口失败。
+// 副作用：无。
+func siteDupeRulesFromAny(value any) map[string][]string {
+	switch typed := value.(type) {
+	case nil:
+		return map[string][]string{}
+	case map[string][]string:
+		return normalizeRuleShape(toAnyRuleMap(typed))
+	case map[string]any:
+		return normalizeRuleShape(typed)
+	case []byte:
+		return parseSiteDupeRulesJSON(string(typed))
+	case string:
+		return parseSiteDupeRulesJSON(typed)
+	default:
+		return map[string][]string{}
+	}
+}
+
+func parseSiteDupeRulesJSON(text string) map[string][]string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || trimmed == "null" {
+		return map[string][]string{}
+	}
+	decoded := map[string]any{}
+	if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+		return map[string][]string{}
+	}
+	return normalizeRuleShape(decoded)
+}
+
+// normalizeRuleShape 把规则表的每个值统一成去空的字符串切片，并丢弃空条目。
+func normalizeRuleShape(raw map[string]any) map[string][]string {
+	rules := make(map[string][]string, len(raw))
+	for key, value := range raw {
+		medium := strings.TrimSpace(key)
+		if medium == "" {
+			continue
+		}
+		dims := make([]string, 0, 4)
+		switch typed := value.(type) {
+		case []string:
+			dims = append(dims, typed...)
+		case []any:
+			for _, item := range typed {
+				if text, ok := item.(string); ok {
+					dims = append(dims, text)
+				}
+			}
+		case string:
+			dims = append(dims, strings.Split(typed, ",")...)
+		}
+		cleaned := make([]string, 0, len(dims))
+		for _, dim := range dims {
+			if trimmed := strings.TrimSpace(dim); trimmed != "" {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		rules[medium] = cleaned
+	}
+	return rules
+}
+
+func toAnyRuleMap(raw map[string][]string) map[string]any {
+	out := make(map[string]any, len(raw))
+	for key, value := range raw {
+		out[key] = value
+	}
+	return out
+}
+
+// encodeSiteDupeRules 把前端提交的规则表编码为写库用的 JSON 文本。
+// 参数/返回：value 为请求体中的 dupe_rules；返回 JSON 文本（无有效规则时返回空串）。
+// 说明：空串表示「未配置规则」，与「配置了但为空表」等价，读回时同样解析为空表。
+// 副作用：无。
+func encodeSiteDupeRules(value any) string {
+	rules := siteDupeRulesFromAny(value)
+	if len(rules) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(rules)
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
+}
+
 func toInt64WithDefault(value any, fallback int64) int64 {
 	parsed, err := toInt64(value)
 	if err != nil {
