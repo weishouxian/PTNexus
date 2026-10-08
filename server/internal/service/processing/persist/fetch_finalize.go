@@ -80,6 +80,10 @@ func FinalizeFetchedSeed(input FinalizeFetchedSeedInput) (FinalizeFetchedSeedRes
 		draft.Source = inferredSource
 	}
 
+	// 音频编码以媒体文本（首条音轨）为准：标题音频 token 与标准键矛盾时先替换标题，
+	// 再建组件——组件「音频编码」由标题文本推导，先改标题才能让它跟随。
+	draft.alignTitleAudioCodecWithStandard()
+
 	draft.BuildTitleComponents(input.BuildSimpleTitleComponents)
 
 	// 年份改以简介“年代”行为准：站点标题常缺年份，或标题年份与发行年份不一致（如重映/合集）。

@@ -30,6 +30,9 @@ type tagMappingTable struct {
 
 var tagMappingCache sync.Map
 
+// globalTagExclusionCache 缓存全局标准标签黑名单，键为 global_mappings.yaml 路径。
+var globalTagExclusionCache sync.Map
+
 // MapTagsToStandard 将原始标签映射为标准化 tag.*，并过滤掉无法映射的条目。
 func MapTagsToStandard(rawTags []string, siteCode string) ([]string, []string) {
 	cleaned := make([]string, 0, len(rawTags))
@@ -51,6 +54,7 @@ func MapTagsToStandard(rawTags []string, siteCode string) ([]string, []string) {
 
 	siteTable := loadSiteTagMappingTable(siteCode)
 	globalTable := loadGlobalTagMappingTable()
+	excluded := loadGlobalExcludedTags()
 
 	mapped := make([]string, 0, len(cleaned))
 	unmapped := make([]string, 0, 8)
@@ -59,6 +63,9 @@ func MapTagsToStandard(rawTags []string, siteCode string) ([]string, []string) {
 
 	for _, standard := range directStandard {
 		if standard == "" {
+			continue
+		}
+		if isExcludedStandardTag(excluded, standard) {
 			continue
 		}
 		if _, exists := seen[standard]; exists {
@@ -75,6 +82,9 @@ func MapTagsToStandard(rawTags []string, siteCode string) ([]string, []string) {
 				seenUnmapped[raw] = struct{}{}
 				unmapped = append(unmapped, raw)
 			}
+			continue
+		}
+		if isExcludedStandardTag(excluded, standard) {
 			continue
 		}
 		if _, exists := seen[standard]; exists {
@@ -192,6 +202,61 @@ func loadGlobalTagMappingTable() tagMappingTable {
 	table := buildTagMappingTableFromYAML(data, []string{"global_standard_keys", "tag"})
 	tagMappingCache.Store(cacheKey, table)
 	return table
+}
+
+// loadGlobalExcludedTags 读取 global_standard_keys.excluded_tags（标准标签黑名单）。
+// 返回小写键集合；配置缺失或解析失败时返回空集合（不拦截任何标签）。
+// 副作用：读文件并按路径缓存，配置在进程内不会热更新（与 tag 映射表同一套缓存策略）。
+func loadGlobalExcludedTags() map[string]struct{} {
+	paths := config.ResolveRuntimePaths()
+	mappingPath := strings.TrimSpace(paths.GlobalMapYML)
+	if mappingPath == "" || filepath.Clean(mappingPath) == "." {
+		return nil
+	}
+	cacheKey := "excluded:" + mappingPath
+	if cached, ok := globalTagExclusionCache.Load(cacheKey); ok {
+		if set, ok := cached.(map[string]struct{}); ok {
+			return set
+		}
+	}
+
+	data, err := os.ReadFile(mappingPath)
+	if err != nil {
+		logx.Debugf(tagMappingLogModule, "读取标准标签黑名单失败 path=%s err=%v", mappingPath, err)
+		return nil
+	}
+
+	excluded := buildExcludedTagSetFromYAML(data, []string{"global_standard_keys", "excluded_tags"})
+	globalTagExclusionCache.Store(cacheKey, excluded)
+	return excluded
+}
+
+func buildExcludedTagSetFromYAML(data []byte, keyPath []string) map[string]struct{} {
+	node := findYAMLMappingNodeByPath(data, keyPath)
+	if node == nil || node.Kind != yaml.SequenceNode {
+		return nil
+	}
+	result := make(map[string]struct{}, len(node.Content))
+	for _, item := range node.Content {
+		key := strings.ToLower(strings.TrimSpace(item.Value))
+		if key == "" {
+			continue
+		}
+		result[key] = struct{}{}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// isExcludedStandardTag 判断标准标签是否落在全局黑名单里（大小写不敏感）。
+func isExcludedStandardTag(excluded map[string]struct{}, standard string) bool {
+	if len(excluded) == 0 {
+		return false
+	}
+	_, blocked := excluded[strings.ToLower(strings.TrimSpace(standard))]
+	return blocked
 }
 
 func loadSiteTagMappingTable(siteCode string) tagMappingTable {

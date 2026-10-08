@@ -18,6 +18,9 @@ type SiteSettings struct {
 	// （1 MB = 1024² 字节），存库仍按字节；<= 0 且未配置时回退到默认 1024 MB。
 	// 注意 0 是合法值，表示要求体积完全一致。
 	SizeToleranceBytes int64
+	// Rules 为「标准媒介键 → 判定维度」的规则表（站点设置里按媒介配置）。
+	// 为空表示站点未配置任何规则，此时不执行 dupe 校验。
+	Rules map[string][]string
 }
 
 // DefaultSizeToleranceBytes 为未配置容差时的默认值（1024 MB = 1 GiB）。
@@ -56,6 +59,7 @@ func ResolveSiteSettings(targetInfo map[string]any) SiteSettings {
 	}
 	settings.Enabled = toBool(targetInfo["dupe_check_enabled"])
 	settings.SizeToleranceBytes = resolveSizeTolerance(targetInfo["dupe_size_tolerance_bytes"])
+	settings.Rules = ParseDupeRules(targetInfo["dupe_rules"])
 	return settings
 }
 
@@ -100,14 +104,50 @@ func SiteSupportsDupe(siteCode string) bool {
 	return siteCfg.DupeCheck.Enabled
 }
 
+// dupeFilterFieldFallbacks 为筛选维度 → NexusPHP 常见上传字段名的回退表。
+// 站点未在 form_fields 里声明该维度时用它兜底（如 medium → medium_sel）。
+var dupeFilterFieldFallbacks = map[string]string{
+	DimensionMedium:     "medium",
+	DimensionResolution: "standard",
+	DimensionVideoCodec: "codec",
+	DimensionAudioCodec: "audiocodec",
+}
+
+// FilterDimensionsForSite 返回站点实际能作为检索筛选的维度。
+// 参数/返回：siteCode 为站点标识；返回筛选维度集合（按规范顺序），无 dupe 配置时返回 nil。
+// 说明：判据是该维度在站点 YAML 的 dupe_check.param_templates 里有声明 ——
+// 没有声明的维度无法拼出检索参数，界面上应置灰，避免用户以为勾了就一定生效。
+// 副作用：加载站点配置（有缓存）。
+func FilterDimensionsForSite(siteCode string) []string {
+	siteCfg, err := publishmapping.LoadSitePublishConfig(siteCode)
+	if err != nil || siteCfg == nil || !siteCfg.DupeCheck.Enabled {
+		return nil
+	}
+	available := make([]string, 0, len(dupeFilterFieldFallbacks))
+	for _, dimension := range []string{DimensionMedium, DimensionResolution, DimensionVideoCodec, DimensionAudioCodec} {
+		if strings.TrimSpace(siteCfg.DupeCheck.ParamTemplates[dimension]) == "" {
+			continue
+		}
+		available = append(available, dimension)
+	}
+	return available
+}
+
 // BuildSearchFilters 依据站点 dupe 配置，把最终表单字段换算为搜索页筛选参数。
-// 参数/返回：siteCode 为站点标识；formFields 为已完成映射与站点修正的最终表单字段。
-// 返回搜索参数（键为参数名、值为参数值）；站点未声明 dupe 配置时返回 nil。
-// 副作用：无。
 //
-// 说明：维度取值直接取自 formFields —— 也就是 ResolveBasicPublishMappings + AdjustFormFields
-// 之后的站点取值，避免在 dupe 侧重复维护一份映射。
-func BuildSearchFilters(siteCode string, formFields map[string]string) map[string]string {
+// 参数/返回：siteCode 为站点标识；formFields 为已完成映射与站点修正的最终表单字段；
+//
+//	dimensions 为该媒介规则勾选的判定维度；返回搜索参数（键为参数名、值为参数值）。
+//
+// 说明：
+//  1. 只有勾选的筛选维度才会进检索参数 —— 没勾的维度不筛，候选会多一些，
+//     但最终判定只看勾选的维度，符合「规则按媒介配置」的语义；
+//  2. 「类型」始终参与筛选：它把检索范围限定在对应分类，不属于可配置的判定维度；
+//  3. 维度取值直接取自 formFields（ResolveBasicPublishMappings + AdjustFormFields 之后
+//     的站点取值），避免在 dupe 侧重复维护一份映射。
+//
+// 副作用：无。
+func BuildSearchFilters(siteCode string, formFields map[string]string, dimensions []string) map[string]string {
 	siteCfg, err := publishmapping.LoadSitePublishConfig(siteCode)
 	if err != nil || siteCfg == nil || !siteCfg.DupeCheck.Enabled {
 		return nil
@@ -145,7 +185,7 @@ func BuildSearchFilters(siteCode string, formFields map[string]string) map[strin
 		// 这类值要到「抓取上传页」阶段才会由 uploader 换成真实选项值，而 dupe 校验发生在
 		// 上传页抓取之前，此刻拿到的是占位符。若把它当成维度值拼进检索参数，
 		// 会筛到错误类别（甚至 0 结果）→ 把「查不到」误判成「不重复」而漏检。
-		// 宁可不筛（候选多一些无妨，最终判定靠制作组 + 体积容差），也不能筛错。
+		// 宁可不筛（候选多一些无妨），也不能筛错。
 		if strings.HasPrefix(value, "@index:") {
 			return
 		}
@@ -163,11 +203,18 @@ func BuildSearchFilters(siteCode string, formFields map[string]string) map[strin
 		filters[name] = value
 	}
 
+	// 类型始终参与（限定分类范围），其余维度按规则勾选情况决定。
 	addFilter("type", "type")
-	addFilter("medium", "medium")
-	addFilter("resolution", "standard")
-	addFilter("video_codec", "codec")
-	addFilter("audio_codec", "audiocodec")
+	selected := map[string]struct{}{}
+	for _, dimension := range FilterDimensions(dimensions) {
+		selected[dimension] = struct{}{}
+	}
+	for _, dimension := range []string{DimensionMedium, DimensionResolution, DimensionVideoCodec, DimensionAudioCodec} {
+		if _, ok := selected[dimension]; !ok {
+			continue
+		}
+		addFilter(dimension, dupeFilterFieldFallbacks[dimension])
+	}
 
 	return filters
 }

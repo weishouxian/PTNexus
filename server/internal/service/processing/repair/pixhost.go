@@ -48,26 +48,36 @@ func NormalizePosterBBCode(raw string) string {
 }
 
 // NormalizePosterBBCodeWithConfig 按 rootConfig 中的 image_hoster 规范化海报字段。
+// 转存图床失败时会回退原始链接，失败原因请使用 NormalizePosterBBCodeWithConfigDetailed 获取。
 func NormalizePosterBBCodeWithConfig(raw string, rootConfig map[string]any) string {
+	bbcode, _ := NormalizePosterBBCodeWithConfigDetailed(raw, rootConfig)
+	return bbcode
+}
+
+// NormalizePosterBBCodeWithConfigDetailed 规范化海报字段，并返回转存失败原因（成功时为空串）。
+// 参数/返回：raw 为原始海报文本；rootConfig 提供 image_hoster 配置；返回规范化后的 BBCode 与失败说明。
+// 失败场景：图床未配置/登录失败/下载被防盗链拦截/上传失败时，回退原始链接并返回原因文案。
+// 副作用：可能发起外部网络请求（下载与上传图片）。
+func NormalizePosterBBCodeWithConfigDetailed(raw string, rootConfig map[string]any) (string, string) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return ""
+		return "", ""
 	}
 
 	urls := ExtractImageURLsFromText(trimmed)
 	if len(urls) == 0 {
-		return trimmed
+		return trimmed, ""
 	}
 	primary := strings.TrimSpace(urls[0])
 	if primary == "" {
-		return trimmed
+		return trimmed, ""
 	}
 
-	normalized := NormalizePosterURLWithConfig(primary, rootConfig)
+	normalized, warning := NormalizePosterURLWithConfigDetailed(primary, rootConfig)
 	if normalized == "" {
 		normalized = primary
 	}
-	return "[img]" + normalized + "[/img]"
+	return "[img]" + normalized + "[/img]", warning
 }
 
 // NormalizePosterURL 对海报 URL 做直链修复，并尽量转存到 Pixhost。
@@ -77,9 +87,18 @@ func NormalizePosterURL(raw string) string {
 
 // NormalizePosterURLWithConfig 按 rootConfig 中的 image_hoster 对海报 URL 做直链修复并转存。
 func NormalizePosterURLWithConfig(raw string, rootConfig map[string]any) string {
+	normalized, _ := NormalizePosterURLWithConfigDetailed(raw, rootConfig)
+	return normalized
+}
+
+// NormalizePosterURLWithConfigDetailed 按 rootConfig 中的 image_hoster 做直链修复并转存。
+// 参数/返回：raw 为原始图片 URL；rootConfig 提供 image_hoster 配置；返回可用 URL 与转存失败原因。
+// 失败场景：图床配置缺失、登录失败、下载或上传失败时返回原始 URL 并附原因。
+// 副作用：可能发起外部网络请求。
+func NormalizePosterURLWithConfigDetailed(raw string, rootConfig map[string]any) (string, string) {
 	url := strings.TrimSpace(raw)
 	if url == "" {
-		return ""
+		return "", ""
 	}
 
 	hoster := GetImageHosterFromConfig(rootConfig)
@@ -89,60 +108,60 @@ func NormalizePosterURLWithConfig(raw string, rootConfig map[string]any) string 
 	return normalizePosterURLForPixhost(url, GetPixhostUploadConfigFromRootConfig(rootConfig))
 }
 
-func normalizePosterURLForChevereto(url string, cfg CheveretoUploadConfig) string {
+func normalizePosterURLForChevereto(url string, cfg CheveretoUploadConfig) (string, string) {
 	if cfg.BaseURL == "" {
 		// 没有配置域名，回退到原始 URL
 		logx.Warnf(posterTransferLogModule, "末日图床域名未配置，回退原始URL source=%s", CompactLogText(url, 160))
-		return url
+		return url, "末日图床域名未配置，已回退原始链接"
 	}
 
 	token, err := CheveretoLogin(cfg)
 	if err != nil {
 		logx.Warnf(posterTransferLogModule, "末日图床登录失败，回退原始URL source=%s err=%v", CompactLogText(url, 160), err)
-		return url
+		return url, "末日图床登录失败，已回退原始链接：" + CompactLogText(err.Error(), 120)
 	}
 
 	transferred, err := TransferRemoteImageToChevereto(url, cfg, token)
 	if err != nil || strings.TrimSpace(transferred) == "" {
 		if err != nil {
 			logx.Warnf(posterTransferLogModule, "海报转存末日图床失败，回退原始URL source=%s err=%v", CompactLogText(url, 160), err)
-		} else {
-			logx.Warnf(posterTransferLogModule, "海报转存末日图床失败，回退原始URL source=%s err=empty transfer result", CompactLogText(url, 160))
+			return url, "海报转存末日图床失败，已回退原始链接：" + CompactLogText(err.Error(), 120)
 		}
-		return url
+		logx.Warnf(posterTransferLogModule, "海报转存末日图床失败，回退原始URL source=%s err=empty transfer result", CompactLogText(url, 160))
+		return url, "海报转存末日图床失败（返回空链接），已回退原始链接"
 	}
 	logx.Infof(posterTransferLogModule, "海报转存末日图床成功 source=%s target=%s", CompactLogText(url, 160), CompactLogText(transferred, 160))
-	return strings.TrimSpace(transferred)
+	return strings.TrimSpace(transferred), ""
 }
 
-func normalizePosterURLForPixhost(url string, cfg PixhostUploadConfig) string {
+func normalizePosterURLForPixhost(url string, cfg PixhostUploadConfig) (string, string) {
 	lower := strings.ToLower(url)
 	if strings.Contains(lower, "pixhost.to") || strings.Contains(lower, "pixhost.cc") {
 		if resolved, err := ResolvePixhostImageURLWithConfig(url, cfg); err == nil && strings.TrimSpace(resolved) != "" {
 			logx.Infof(posterTransferLogModule, "海报URL已是Pixhost，直链解析成功 source=%s resolved=%s", CompactLogText(url, 160), CompactLogText(resolved, 160))
-			return strings.TrimSpace(resolved)
+			return strings.TrimSpace(resolved), ""
 		} else if err != nil {
 			logx.Warnf(posterTransferLogModule, "海报URL已是Pixhost但直链解析失败 source=%s err=%v", CompactLogText(url, 160), err)
 		}
 		if direct := NormalizePixhostDirectHostWithConfig(url, cfg); direct != "" {
 			logx.Infof(posterTransferLogModule, "海报URL已是Pixhost，域名规范化完成 source=%s normalized=%s", CompactLogText(url, 160), CompactLogText(direct, 160))
-			return direct
+			return direct, ""
 		}
 		logx.Warnf(posterTransferLogModule, "海报URL已是Pixhost但无法规范化，保留原始URL source=%s", CompactLogText(url, 160))
-		return url
+		return url, "海报已是 Pixhost 链接但无法解析出可用直链，已保留原始链接"
 	}
 
 	transferred, err := TransferRemoteImageToPixhostWithConfig(url, cfg)
 	if err != nil || strings.TrimSpace(transferred) == "" {
 		if err != nil {
 			logx.Warnf(posterTransferLogModule, "海报转存Pixhost失败，回退原始URL source=%s err=%v", CompactLogText(url, 160), err)
-		} else {
-			logx.Warnf(posterTransferLogModule, "海报转存Pixhost失败，回退原始URL source=%s err=empty transfer result", CompactLogText(url, 160))
+			return url, "海报转存 Pixhost 失败，已回退原始链接：" + CompactLogText(err.Error(), 120)
 		}
-		return url
+		logx.Warnf(posterTransferLogModule, "海报转存Pixhost失败，回退原始URL source=%s err=empty transfer result", CompactLogText(url, 160))
+		return url, "海报转存 Pixhost 失败（返回空链接），已回退原始链接"
 	}
 	logx.Infof(posterTransferLogModule, "海报转存Pixhost成功 source=%s target=%s", CompactLogText(url, 160), CompactLogText(transferred, 160))
-	return strings.TrimSpace(transferred)
+	return strings.TrimSpace(transferred), ""
 }
 
 // TransferRemoteImageToPixhost 将远程图片下载后上传到 Pixhost，再返回可用直链。
@@ -305,6 +324,51 @@ func makeProxyWrappedPosterURL(prefix, targetURL string) string {
 	return p + t
 }
 
+// buildPosterReferer 为带防盗链的图床生成同源 Referer（豆瓣/亚马逊等缺 Referer 会返回 418/403）。
+// 参数/返回：target 为待下载的图片 URL；返回应设置的 Referer，无法推导时返回空串（不设置）。
+func buildPosterReferer(target string) string {
+	trimmed := strings.TrimSpace(target)
+	if trimmed == "" {
+		return ""
+	}
+
+	// 若目标已被代理前缀包装，取内嵌的真实地址推导 Referer。
+	inner := trimmed
+	for _, prefix := range posterTransferProxyPrefixes {
+		p := strings.TrimSpace(prefix)
+		if p == "" {
+			continue
+		}
+		if !strings.HasSuffix(p, "/") {
+			p += "/"
+		}
+		if strings.HasPrefix(trimmed, p) {
+			inner = strings.TrimSpace(strings.TrimPrefix(trimmed, p))
+			break
+		}
+	}
+
+	parsed, err := neturl.Parse(inner)
+	if err != nil || parsed == nil || parsed.Host == "" {
+		return ""
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Host))
+
+	// 只对已知有防盗链的图床补 Referer，其余域名保持无 Referer，避免误伤。
+	refererHost := ""
+	switch {
+	case host == "img1.doubanio.com" || host == "img2.doubanio.com" || host == "img3.doubanio.com" ||
+		host == "img9.doubanio.com" || strings.HasSuffix(host, ".doubanio.com"):
+		refererHost = host
+	case strings.HasSuffix(host, ".media-amazon.com"):
+		refererHost = host
+	}
+	if refererHost == "" {
+		return ""
+	}
+	return parsed.Scheme + "://" + refererHost + "/"
+}
+
 func downloadPosterImage(target string) ([]byte, string, error) {
 	trimmed := strings.TrimSpace(target)
 	if trimmed == "" {
@@ -317,6 +381,10 @@ func downloadPosterImage(target string) ([]byte, string, error) {
 	}
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	// 豆瓣/亚马逊等图床有防盗链，缺 Referer 会返回 418/403 而非图片，需补同源 Referer。
+	if referer := buildPosterReferer(trimmed); referer != "" {
+		req.Header.Set("Referer", referer)
+	}
 
 	client := &http.Client{Timeout: 45 * time.Second}
 	resp, err := client.Do(req)

@@ -2304,10 +2304,20 @@ const refreshPosters = async () => {
         torrentData.value.tmdb_link = response.data.extracted_tmdb_link
       }
 
-      ElNotification.success({
-        title: '重新获取成功',
-        message: '已成功生成并加载了新的海报。',
-      })
+      // 海报本身拿到了，但图床转存失败回退成了原始链接（如豆瓣防盗链）—— 用提示而非成功弹窗告知。
+      if (response.data.poster_warning) {
+        posterErrorMessage.value = response.data.poster_warning
+        ElNotification.warning({
+          title: '海报已获取（转存失败）',
+          message: response.data.poster_warning,
+        })
+      } else {
+        posterErrorMessage.value = ''
+        ElNotification.success({
+          title: '重新获取成功',
+          message: '已成功生成并加载了新的海报。',
+        })
+      }
     } else {
       posterErrorMessage.value = response.data.error || '无法从后端获取新的海报，请查看后台日志。'
       ElNotification.error({

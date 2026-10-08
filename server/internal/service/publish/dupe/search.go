@@ -64,8 +64,8 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 		plans[idx] = applySiteSearchEndpoint(siteCode, plans[idx])
 	}
 
-	if query.TorrentSizeBytes <= 0 {
-		appendDetail("dupe 校验跳过：无法确定待发布种子体积")
+	if query.MatchSize && query.TorrentSizeBytes <= 0 {
+		appendDetail("dupe 校验跳过：规则勾选了「文件大小」，但无法确定待发布种子体积")
 		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
 	}
 	trimmedBase := strings.TrimRight(strings.TrimSpace(query.BaseURL), "/")
@@ -73,6 +73,9 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 		appendDetail("dupe 校验跳过：目标站点缺少 base_url")
 		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
 	}
+
+	// 客户端比对维度：只有勾选了才逐条比对；都没勾时由站点筛选独占判定。
+	hasClientDimensions := query.MatchSize || query.MatchTeam
 
 	executed := 0
 	for _, plan := range plans {
@@ -99,7 +102,7 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 
 		// ⚠️ 筛选参数一旦与站点实际不符，部分站点会返回 0 条（而不是忽略该参数）。
 		// 若就此判定「无重复」，会把「筛错了」当成「查不到」而放行真正的重复。
-		// 因此带筛选却 0 候选时，去掉筛选再查一次；命中则以无筛选那一次为准。
+		// 因此带筛选却 0 候选时，去掉筛选再查一次。
 		if len(candidates) == 0 && len(plan.Filters) > 0 {
 			retryURL := buildSearchURL(trimmedBase, plan, search, nil)
 			appendDetail("dupe 带筛选检索为 0 条，去掉筛选重试: %s", retryURL)
@@ -109,6 +112,12 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 				return checkOutcome{Detail: strings.Join(detailLines, "\n"), Err: retryErr}
 			}
 			appendDetail("dupe 去掉筛选后命中候选 %d 条", len(retryCandidates))
+			// 规则只勾了筛选维度时，去掉筛选拿到的候选无法逐条确认那些维度是否真的一致
+			// （结果行里没有媒介/分辨率/编码可供比对），因此不能据它判重复，只能留痕后换下一段检索。
+			if !hasClientDimensions {
+				appendDetail("dupe 所选维度均由站点筛选承担，无法据去掉筛选的结果判定，按未重复处理")
+				continue
+			}
 			candidates = retryCandidates
 			searchURL = retryURL
 		} else {
@@ -117,10 +126,10 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 
 		for idx := range candidates {
 			candidate := candidates[idx]
-			if !TeamKeysMatch(query.Title, candidate.Title) {
+			if query.MatchTeam && !TeamKeysMatch(query.Title, candidate.Title) {
 				continue
 			}
-			if !SizeWithinTolerance(query.TorrentSizeBytes, candidate.SizeBytes, query.SizeToleranceBytes) {
+			if query.MatchSize && !SizeWithinTolerance(query.TorrentSizeBytes, candidate.SizeBytes, query.SizeToleranceBytes) {
 				continue
 			}
 			appendDetail("dupe 判定命中: %s", DescribeDupeMatch(query, candidate, query.BaseURL))
@@ -140,8 +149,20 @@ func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch site
 		appendDetail("dupe 校验跳过：没有可用于检索的外部 ID 或标题")
 		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
 	}
-	appendDetail("dupe 判定：未发现重复（制作组相同且体积差在容差内的候选不存在）")
+	appendDetail("dupe 判定：未发现重复（%s 均一致的候选不存在）", MatchScopeLabel(query))
 	return checkOutcome{Detail: strings.Join(detailLines, "\n")}
+}
+
+// MatchScopeLabel 返回本次判定要求的维度中文说明（用于日志）。
+// 参数/返回：query 为检索输入；返回形如「文件大小、制作组」的文本。
+// 说明：未声明 Dimensions 的调用按旧口径（制作组 + 文件大小）描述，保证历史行为与日志可读性一致。
+// 副作用：无。
+func MatchScopeLabel(query Query) string {
+	dims := NormalizeDupeDimensions(query.Dimensions)
+	if len(dims) == 0 {
+		dims = NormalizeDupeDimensions([]string{DimensionSize, DimensionTeam})
+	}
+	return strings.Join(DupeDimensionLabels(dims), "、")
 }
 
 // buildSearchURL 按站点配置拼接 NexusPHP 风格搜索 URL。

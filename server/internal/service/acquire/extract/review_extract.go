@@ -2674,28 +2674,35 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		values["medium"] = "medium.dvd"
 	}
 
-	switch {
-	case hasTech("AV1"):
-		values["video_codec"] = "video.av1"
-	case hasTech("VP9", "VP8/9", "VPB/VP9"):
-		values["video_codec"] = "video.vp9"
-	case hasTech("AVS2"):
-		values["video_codec"] = "video.avs2"
-	case hasTech("X265"):
-		values["video_codec"] = "video.x265"
-	case hasTech("H.265", "H265", "HEVC"):
-		values["video_codec"] = "video.h265"
-	case hasTech("X264", "H.264", "H264", "AVC"):
-		values["video_codec"] = "video.h264"
-	case hasTech("VC-1", "VC1"):
-		values["video_codec"] = "video.vc1"
-	case hasTech("MPEG-2"):
-		values["video_codec"] = "video.mpeg2"
+	// 视频编码优先从 MediaInfo 第一条 Video 段的 Format 字段提取，缺失时才回退标题 token。
+	if fromMediaInfo := inferVideoCodecFromMediainfo(sanitizedMediainfo); fromMediaInfo != "" {
+		values["video_codec"] = fromMediaInfo
+	} else {
+		switch {
+		case hasTech("AV1"):
+			values["video_codec"] = "video.av1"
+		case hasTech("VP9", "VP8/9", "VPB/VP9"):
+			values["video_codec"] = "video.vp9"
+		case hasTech("AVS2"):
+			values["video_codec"] = "video.avs2"
+		case hasTech("X265"):
+			values["video_codec"] = "video.x265"
+		case hasTech("H.265", "H265", "HEVC"):
+			values["video_codec"] = "video.h265"
+		case hasTech("X264", "H.264", "H264", "AVC"):
+			values["video_codec"] = "video.h264"
+		case hasTech("VC-1", "VC1"):
+			values["video_codec"] = "video.vc1"
+		case hasTech("MPEG-2"):
+			values["video_codec"] = "video.mpeg2"
+		}
 	}
 
-	// 对齐 Python：音频编码优先使用标题提取结果，避免 MediaInfo/BDInfo 的多音轨信息覆盖标题音频编码。
-	// 示例：标题为 DTS-HD MA 5.1，但 BDInfo 同时包含 TrueHD/DTS 两条音轨时，应优先 DTS-HD MA。
-	if fromTitle := inferAudioCodec(normalizedTitleForAudio); fromTitle != "" {
+	// 音频编码优先从 MediaInfo 第一条 Audio 段的 Format 字段提取（以实际音轨为准，取第一条音轨），
+	// 缺失时才回退标题 token，再回退合并技术文本 token。
+	if fromMediaInfo := inferAudioCodecFromMediainfo(sanitizedMediainfo); fromMediaInfo != "" {
+		values["audio_codec"] = fromMediaInfo
+	} else if fromTitle := inferAudioCodec(normalizedTitleForAudio); fromTitle != "" {
 		values["audio_codec"] = fromTitle
 	} else if fromTech := inferAudioCodec(normalizedUpperTechForAudio); fromTech != "" {
 		values["audio_codec"] = fromTech

@@ -87,6 +87,18 @@ func RewriteSeedTitleComponentsByMediaInfo(
 		}
 	}
 
+	// 音频编码同样以媒体文本为准：标题音频 token 与首条音轨矛盾时替换（如标题 DDP2.0、首音轨 AAC），
+	// 否则重建出的组件「音频编码」会继续停留在标题声明上。须在组件重建之前替换 finalTitle。
+	if inferred := parser.InferStandardizedValues(finalTitle, mediaInfoText, description); inferred != nil {
+		if standard := strings.TrimSpace(inferred["audio_codec"]); strings.HasPrefix(standard, "audio.") {
+			if replaced := processingmedia.ReplaceTitleAudioCodecToken(finalTitle, standard); replaced != "" && replaced != finalTitle {
+				logx.Infof(logModule, "标题音频标记替换：seed_id=%s_%s_%s audio_codec=%s before=%q after=%q",
+					hash, torrentID, siteName, standard, finalTitle, replaced)
+				finalTitle = replaced
+			}
+		}
+	}
+
 	result := processingtitle.BuildTitleComponentsForStorage(finalTitle, mediaInfoText, processingtitle.BuildSimpleTitleComponentsWithMediaInfo)
 	if !(result.IsMediainfo || result.IsBDInfo) {
 		logx.Warnf(logModule, "标题组件回写跳过：seed_id=%s_%s_%s 媒体格式未命中 reason=%s", hash, torrentID, siteName, result.Reason)

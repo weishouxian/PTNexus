@@ -77,26 +77,37 @@ func isUnknownTeamKey(key string) bool {
 // DescribeDupeMatch 生成命中 dupe 时的日志文案。
 // 参数/返回：query 为本次检索输入；candidate 为命中的候选种子；baseURL 为站点根地址。
 // 返回可直接写入发布日志的中文说明。
+//
+// 说明：文案只呈现「真正参与判定」的内容 —— 未勾选「文件大小」时不写体积差与容差，
+// 未勾选「制作组」时不写制作组，避免让人以为某维度参与过比对。
 // 副作用：无。
 func DescribeDupeMatch(query Query, candidate Candidate, baseURL string) string {
-	leftTeam := RawTeamFromTitle(query.Title)
-	rightTeam := RawTeamFromTitle(candidate.Title)
 	detail := fmt.Sprintf("标题=%s 体积=%s", strings.TrimSpace(candidate.Title), FormatSize(candidate.SizeBytes))
 	if link := buildTorrentDetailURL(baseURL, candidate.TorrentID); link != "" {
 		detail += " 详情页=" + link
 	}
-	if leftTeam != "" || rightTeam != "" {
-		detail += fmt.Sprintf(" 制作组=%s/%s", orDash(leftTeam), orDash(rightTeam))
+	if query.MatchTeam {
+		leftTeam := RawTeamFromTitle(query.Title)
+		rightTeam := RawTeamFromTitle(candidate.Title)
+		if leftTeam != "" || rightTeam != "" {
+			detail += fmt.Sprintf(" 制作组=%s/%s", orDash(leftTeam), orDash(rightTeam))
+		}
+	}
+	suffix := ""
+	if query.MatchSize {
+		// 体积差与容差统一按 MB 展示，与站点管理页的「体积容差（MB）」口径一致，便于直接对照。
+		suffix = fmt.Sprintf("，体积差 %s 在容差 %s 之内",
+			FormatSizeMB(sizeDistance(query.TorrentSizeBytes, candidate.SizeBytes)),
+			FormatSizeMB(query.SizeToleranceBytes))
 	}
 	return fmt.Sprintf(
-		"命中 dupe：站点已存在相同条目（豆瓣 %s / IMDb %s / TMDb %s），%s，体积差 %s 在容差 %s 之内",
+		"命中 dupe：站点已存在相同条目（豆瓣 %s / IMDb %s / TMDb %s），命中维度=%s，%s%s",
 		orDash(query.DoubanID),
 		orDash(query.IMDbID),
 		orDash(query.TMDbID),
+		MatchScopeLabel(query),
 		detail,
-		// 体积差与容差统一按 MB 展示，与站点管理页的「体积容差（MB）」口径一致，便于直接对照。
-		FormatSizeMB(sizeDistance(query.TorrentSizeBytes, candidate.SizeBytes)),
-		FormatSizeMB(query.SizeToleranceBytes),
+		suffix,
 	)
 }
 
