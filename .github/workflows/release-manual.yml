@@ -32,6 +32,8 @@ permissions:
 
 env:
   IMAGE_NAME: pt-nexus
+  # Docker Hub 上的仓库名与 GHCR 不同（Docker Hub: fenglaile/ptnexus）
+  DOCKERHUB_IMAGE_NAME: ptnexus
   GITEE_OWNER: sqing33
   GITEE_REPO: PTNexus
   BROWSER_EXTENSION_ASSET_NAME: pt-nexus-browser-extension.zip
@@ -620,7 +622,7 @@ jobs:
           FULL_TAGS="${GHCR_REPO}:${{ needs.meta.outputs.version }},${GHCR_REPO}:latest"
 
           if [[ -n "${DOCKERHUB_USERNAME}" && -n "${DOCKERHUB_TOKEN}" ]]; then
-            DOCKERHUB_REPO="${DOCKERHUB_USERNAME}/${{ env.IMAGE_NAME }}"
+            DOCKERHUB_REPO="${DOCKERHUB_USERNAME}/${{ env.DOCKERHUB_IMAGE_NAME }}"
             FULL_TAGS="${FULL_TAGS},${DOCKERHUB_REPO}:${{ needs.meta.outputs.version }},${DOCKERHUB_REPO}:latest"
           else
             echo "::warning::DOCKERHUB_USERNAME 或 DOCKERHUB_TOKEN 未配置，本次只推送 GHCR。"
