@@ -1038,6 +1038,8 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "dupe_size_tolerance_bytes", definition: map[string]string{"sqlite": "BIGINT NOT NULL DEFAULT 1073741824", "mysql": "BIGINT NOT NULL DEFAULT 1073741824", "postgresql": "BIGINT NOT NULL DEFAULT 1073741824"}},
 			// dupe_rules 为「标准媒介键 → 判定维度集合」的 JSON 对象，站点设置里按媒介配置。
 			{name: "dupe_rules", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
+			// audio_track_policy 多音轨选择策略：1=第一条音轨 / 2=码率最高（默认）/ 3=规格最高。
+			{name: "audio_track_policy", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 2", "mysql": "INT NOT NULL DEFAULT 2", "postgresql": "INTEGER NOT NULL DEFAULT 2"}},
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 		},
 		"app_settings": {
@@ -1073,6 +1075,7 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "statement", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "body", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "mediainfo", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
+			{name: "audio_tracks", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
 			{name: "title_components", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "removed_ardtudeclarations", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "is_reviewed", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "TINYINT(1) NOT NULL DEFAULT 0", "postgresql": "BOOLEAN NOT NULL DEFAULT FALSE"}},

@@ -12,7 +12,6 @@ import (
 type audioTitleFamilyRule struct {
 	standard   string         // 家族主标准键
 	atmos      string         // Atmos/JOC 细分标准键（可为空）
-	detect     *regexp.Regexp // 家族检测（含前置边界捕获组）
 	replace    *regexp.Regexp // 替换（$1=前置边界，$2=粘连声道数字）
 	token      string         // 展示 token
 	tokenAtmos string         // Atmos 展示 token（可为空）
@@ -20,71 +19,54 @@ type audioTitleFamilyRule struct {
 
 var audioTitleFamilyRules = []audioTitleFamilyRule{
 	{standard: "audio.truehd", atmos: "audio.truehd_atmos",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])True[-\s.]?HD\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])True[-\s.]?HD(\d*)`),
 		token:   "TrueHD", tokenAtmos: "TrueHD Atmos"},
 	{standard: "audio.dtsx",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[:\-\s.]?X\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[:\-\s.]?X(\d*)`),
 		token:   "DTS:X"},
 	{standard: "audio.dts_hd_ma",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[-\s.]?HD[-\s.]?MA\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[-\s.]?HD[-\s.]?MA(\d*)`),
 		token:   "DTS-HD MA"},
 	{standard: "audio.dts_hd_hr",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[-\s.]?HD[-\s.]?HR\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DTS[-\s.]?HD[-\s.]?HR(\d*)`),
 		token:   "DTS-HD HR"},
 	{standard: "audio.ddp", atmos: "audio.ddp_atmos",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:E[-\s.]?AC[-\s.]?3|EAC3|DD\s*[\+＋]|DDP)`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:E[-\s.]?AC[-\s.]?3|EAC3|DD\s*[\+＋]|DDP)(\d*)`),
 		token:   "DDP", tokenAtmos: "DDP Atmos"},
 	{standard: "audio.ac3",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])AC[-\s.]?3\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])AC[-\s.]?3(\d*)`),
 		token:   "DD"},
 	{standard: "audio.flac",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])FLAC\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])FLAC(\d*)`),
 		token:   "FLAC"},
 	{standard: "audio.av3a",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:AV3A|Audio[\s.]?Vivid)\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:AV3A|Audio[\s.]?Vivid)(\d*)`),
 		token:   "AV3A"},
 	{standard: "audio.alac",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])ALAC\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])ALAC(\d*)`),
 		token:   "ALAC"},
 	{standard: "audio.ape",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])APE\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])APE(\d*)`),
 		token:   "APE"},
 	{standard: "audio.wav",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])WAV\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])WAV(\d*)`),
 		token:   "WAV"},
 	{standard: "audio.ogg",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:OGG|VORBIS)\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:OGG|VORBIS)(\d*)`),
 		token:   "OGG"},
 	{standard: "audio.dsd",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DSD\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])DSD(\d*)`),
 		token:   "DSD"},
 	{standard: "audio.aac",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])AAC\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])AAC(\d*)`),
 		token:   "AAC"},
 	{standard: "audio.lpcm",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:LPCM|PCM)\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])(?:LPCM|PCM)(\d*)`),
 		token:   "LPCM"},
 	{standard: "audio.opus",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])OPUS\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])OPUS(\d*)`),
 		token:   "Opus"},
 	{standard: "audio.mp3",
-		detect:  regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])MP[23]\b`),
 		replace: regexp.MustCompile(`(?i)(^|[^A-Za-z0-9])MP[23](\d*)`),
 		token:   "MP3"},
 }
@@ -123,7 +105,8 @@ func TitleAudioCodecFamily(text string) string {
 		return ""
 	}
 	for _, rule := range audioTitleFamilyRules {
-		if !rule.detect.MatchString(trimmed) {
+		// 用 replace 正则判断命中（它兼容粘连声道数字如 AAC2.0/DDP2.0；detect 的尾部 \b 会漏判）。
+		if !rule.replace.MatchString(trimmed) {
 			continue
 		}
 		if rule.atmos != "" && audioTitleHasAtmosMarker(trimmed) {

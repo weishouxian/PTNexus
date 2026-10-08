@@ -76,7 +76,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	selectFields := fmt.Sprintf(`
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
 		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
-		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.sort_order,
+		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.audio_track_policy, s.sort_order,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -135,6 +135,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		s["dupe_size_tolerance_bytes"] = toInt64WithDefault(s["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
 		// 前端直接把规则表当对象用，这里统一解析成「媒介 → 判定维度」结构。
 		s["dupe_rules"] = siteDupeRulesFromAny(s["dupe_rules"])
+		// 多音轨策略默认「码率最高」（2）；旧数据无该列时回填默认值。
+		s["audio_track_policy"] = toIntWithDefault(s["audio_track_policy"], 2)
 	}
 	return sites, nil
 }
@@ -163,6 +165,11 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	}
 	// 规则表按 JSON 文本入库；未配置时写空串（读回解析为空表，等价于「该站点没有媒介规则」）。
 	dupeRules := encodeSiteDupeRules(data["dupe_rules"])
+	// 多音轨策略：1=第一条 / 2=码率最高（默认）/ 3=规格最高；非法值回退默认。
+	audioTrackPolicy := toIntWithDefault(data["audio_track_policy"], 2)
+	if audioTrackPolicy < 1 || audioTrackPolicy > 3 {
+		audioTrackPolicy = 2
+	}
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
 
 	groupColumn := r.store.GroupColumn()
@@ -183,6 +190,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			dupe_check_enabled = ?,
 			dupe_size_tolerance_bytes = ?,
 			dupe_rules = ?,
+			audio_track_policy = ?,
 			sort_order = ?
 		WHERE id = ?
 	`, groupColumn)
@@ -204,6 +212,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		dupeCheckEnabled,
 		dupeSizeTolerance,
 		dupeRules,
+		audioTrackPolicy,
 		sortOrder,
 		siteID,
 	)

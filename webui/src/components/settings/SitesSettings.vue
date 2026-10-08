@@ -411,6 +411,16 @@
           <el-switch v-model="siteForm.can_publish" />
           <div class="form-tip">关闭后，该站点在发种选择时将置灰不可选择。</div>
         </el-form-item>
+        <el-form-item label="多音轨策略" prop="audio_track_policy">
+          <el-select v-model="siteForm.audio_track_policy" style="width: 100%">
+            <el-option :value="1" label="第一条音轨" />
+            <el-option :value="2" label="码率最高" />
+            <el-option :value="3" label="规格最高" />
+          </el-select>
+          <div class="form-tip">
+            发布时种子含多条音轨，按此策略选出一条作为音频编码并同步修改发种标题。默认「码率最高」。
+          </div>
+        </el-form-item>
         <el-form-item v-if="isDupeCheckVisible" label="Dupe 校验" prop="dupe_check_enabled">
           <el-switch v-model="siteForm.dupe_check_enabled" />
           <div class="form-tip">
@@ -716,6 +726,8 @@ type SiteForm = {
   dupe_size_tolerance_mb: number
   /** 按媒介的查重规则：标准媒介键 → 判定维度集合（未列出的媒介不执行 dupe 校验） */
   dupe_rules: Record<string, string[]>
+  /** 多音轨选择策略：1=第一条音轨 / 2=码率最高 / 3=规格最高 */
+  audio_track_policy: number
 }
 
 /** dupe 判定维度选项（由 /api/sites/dupe_options 返回） */
@@ -994,6 +1006,7 @@ const siteForm = ref<SiteForm>({
   dupe_size_tolerance_bytes: DEFAULT_DUPE_TOLERANCE_BYTES,
   dupe_size_tolerance_mb: DEFAULT_DUPE_TOLERANCE_MB,
   dupe_rules: {},
+  audio_track_policy: 2,
 })
 
 const API_BASE_URL = '/api'
@@ -1440,6 +1453,7 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   dupe_size_tolerance_mb: bytesToMb(normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes)),
   // 统一清洗一遍：去掉空维度与空条目，避免脏数据带进表单。
   dupe_rules: rulesFromRows(rowsFromRules(site.dupe_rules)),
+  audio_track_policy: [1, 2, 3].includes(Number(site.audio_track_policy)) ? Number(site.audio_track_policy) : 2,
 })
 
 // [新增] 合并后的保存与同步功能

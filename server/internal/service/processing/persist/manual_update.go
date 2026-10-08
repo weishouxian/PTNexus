@@ -130,6 +130,10 @@ func BuildManualUpdatedSeedRecord(input BuildManualUpdateInput) BuildManualUpdat
 	draft.Statement = toStringAny(updated["statement"], toStringAny(existing["statement"], ""))
 	draft.Body = toStringAny(updated["body"], toStringAny(existing["body"], ""))
 	draft.Mediainfo = toStringAny(updated["mediainfo"], toStringAny(existing["mediainfo"], ""))
+	// mediainfo 可能被手工更新，音轨结构化数据需随之重解析（否则发布时按旧音轨重选）。
+	if strings.TrimSpace(draft.Mediainfo) != "" {
+		draft.AudioTracks = parser.ParseAudioTracksFromMediainfo(draft.Mediainfo)
+	}
 	draft.TitleComponents = titleComponentsAnyToMapSlice(titleComponents)
 	draft.RemovedARDTUDeclarations = removedDeclarations
 	draft.IsReviewed = true

@@ -84,6 +84,11 @@ func FinalizeFetchedSeed(input FinalizeFetchedSeedInput) (FinalizeFetchedSeedRes
 	// 再建组件——组件「音频编码」由标题文本推导，先改标题才能让它跟随。
 	draft.alignTitleAudioCodecWithStandard()
 
+	// 解析全部音轨为结构化数据，供发布时按站点策略（第一条/码率最高/规格最高）重选。
+	if strings.TrimSpace(draft.Mediainfo) != "" {
+		draft.AudioTracks = parser.ParseAudioTracksFromMediainfo(draft.Mediainfo)
+	}
+
 	draft.BuildTitleComponents(input.BuildSimpleTitleComponents)
 
 	// 年份改以简介“年代”行为准：站点标题常缺年份，或标题年份与发行年份不一致（如重映/合集）。

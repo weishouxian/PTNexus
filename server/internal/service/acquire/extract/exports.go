@@ -47,6 +47,16 @@ func InferStandardizedValues(title, mediainfo, body string) map[string]string {
 	return inferStandardizedValues(title, mediainfo, body)
 }
 
+// ParseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨（编码+码率+声道+默认标记）。
+func ParseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
+	return parseAudioTracksFromMediainfo(mediainfo)
+}
+
+// SelectAudioTrack 按策略从音轨列表中选出一条（1=第一条 / 2=码率最高 / 3=规格最高）。
+func SelectAudioTrack(tracks []AudioTrack, policy AudioTrackPolicy) AudioTrack {
+	return selectAudioTrack(tracks, policy)
+}
+
 func ExtractTeamFromPage(pageHTML string) string {
 	return extractTeamFromPage(pageHTML)
 }

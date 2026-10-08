@@ -51,6 +51,7 @@ type SeedDraft struct {
 
 	RawTags          []string
 	Tags             []string
+	AudioTracks      []parser.AudioTrack
 	TitleComponents  []map[string]any
 	TorrentFileNames []string
 	EpisodeTagReason string
@@ -474,6 +475,12 @@ func (d *SeedDraft) ToSeedParameterRecord() map[string]any {
 	}
 	encodedComponents, _ := json.Marshal(components)
 
+	audioTracks := d.AudioTracks
+	if audioTracks == nil {
+		audioTracks = []parser.AudioTrack{}
+	}
+	encodedAudioTracks, _ := json.Marshal(audioTracks)
+
 	return map[string]any{
 		"hash":                      strings.TrimSpace(d.Hash),
 		"torrent_id":                strings.TrimSpace(d.TorrentID),
@@ -501,6 +508,7 @@ func (d *SeedDraft) ToSeedParameterRecord() map[string]any {
 		"statement":                 strings.TrimSpace(d.Statement),
 		"body":                      strings.TrimSpace(d.Body),
 		"mediainfo":                 strings.TrimSpace(d.Mediainfo),
+		"audio_tracks":              string(encodedAudioTracks),
 		"title_components":          string(encodedComponents),
 		"removed_ardtudeclarations": string(encodedRemoved),
 		"is_reviewed":               d.IsReviewed,
