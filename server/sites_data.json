@@ -27,7 +27,8 @@
     "group": "-MWeb,-MTeam,-PTTV",
     "description": "MTeam",
     "migration": 3,
-    "speed_limit": 120
+    "speed_limit": 120,
+    "audio_track_policy": 2
   },
   {
     "site": "hdsky",
@@ -595,7 +596,8 @@
     "group": "-FROGE,-FROGWeb",
     "description": "QingWa",
     "migration": 3,
-    "speed_limit": 80
+    "speed_limit": 80,
+    "audio_track_policy": 3
   },
   {
     "site": "xingtan",

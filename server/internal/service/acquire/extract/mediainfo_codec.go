@@ -2,6 +2,7 @@ package extract
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -10,7 +11,29 @@ var (
 	reMediaInfoSectionHeader = regexp.MustCompile(`(?im)^\s*(General|Video|Audio|Text|Menu|Chapters)(?:\s*#\d+)?\s*$`)
 	// reMediaInfoFormatField 提取段落内 "Format : xxx" / "Format : xxx / yyy" 的取值。
 	reMediaInfoFormatField = regexp.MustCompile(`(?im)^\s*Format\s*:\s*([^\r\n]+)`)
+	// reMediaInfoBitRateField 提取段落内 "Bit rate : 192 kb/s"（兼容 kb/s、kbps、Mbps、bps 写法）。
+	reMediaInfoBitRateField = regexp.MustCompile(`(?im)^\s*Bit\s*[Rr]ate\s*(?:mode)?\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*(k|K|M|b|B)?[bB]?(?:/s|ps)?\b`)
+	// reMediaInfoChannelsField 提取段落内 "Channel(s) : 2 channels"。
+	reMediaInfoChannelsField = regexp.MustCompile(`(?im)^\s*Channel\(?s?\)?\s*:\s*(\d+)`)
+	// reMediaInfoDefaultField 提取段落内 "Default : Yes"。
+	reMediaInfoDefaultField = regexp.MustCompile(`(?im)^\s*Default\s*:\s*([^\r\n]+)`)
 )
+
+// AudioTrack 表示 MediaInfo/BDInfo 里一条音轨的结构化信息。
+type AudioTrack struct {
+	// CodecKey 为该音轨的标准音频编码键（audio.*）。
+	CodecKey string `json:"codec_key"`
+	// Format 为原始 Format 文本（如 "AAC LC" / "E-AC-3"）。
+	Format string `json:"format"`
+	// BitRateKbps 为码率（kbps，数值已归一为 kbps）。
+	BitRateKbps float64 `json:"bit_rate_kbps"`
+	// Channels 为声道数（如 2 / 6 / 8）。
+	Channels int `json:"channels"`
+	// Default 表示该音轨是否为默认主音轨。
+	Default bool `json:"default"`
+	// Index 为音轨序号（从 1 开始）。
+	Index int `json:"index"`
+}
 
 // inferVideoCodecFromMediainfo 从 MediaInfo 的第一条 Video 段的 Format 字段推断视频编码。
 // 参数/返回：mediainfo 为原始 MediaInfo 文本；无法定位 Video 段或 Format 无法识别时返回空串。
@@ -62,25 +85,149 @@ var audioCodecRank = map[string]int{
 func inferAudioCodecFromMediainfo(mediainfo string) string {
 	best := ""
 	bestRank := -1
-	for _, section := range allMediaInfoAudioSections(mediainfo) {
-		format := mediaInfoFormatField(section)
-		if format == "" {
-			continue
-		}
-		key := audioCodecKeyFromFormatText(format)
-		if key == "" {
-			continue
-		}
-		rank, ok := audioCodecRank[key]
+	for _, track := range parseAudioTracksFromMediainfo(mediainfo) {
+		rank, ok := audioCodecRank[track.CodecKey]
 		if !ok {
 			rank = 0
 		}
 		if rank > bestRank {
 			bestRank = rank
-			best = key
+			best = track.CodecKey
 		}
 	}
 	return best
+}
+
+// parseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨，返回结构化音轨列表。
+// 参数/返回：mediainfo 为原始 MediaInfo/BDInfo 文本；返回按出现顺序排列的音轨（可能为空）。
+// 副作用：无。
+//
+// 背景：多音轨选择策略（第一条 / 码率最高 / 规格最高）需要每条音轨的编码+码率+声道+默认标记，
+// 而非仅一个最终 codec。抓取时落库、发布时按站点策略重选，都依赖这份结构化数据。
+func parseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
+	sections := allMediaInfoAudioSections(mediainfo)
+	if len(sections) == 0 {
+		return nil
+	}
+	tracks := make([]AudioTrack, 0, len(sections))
+	for i, section := range sections {
+		format := mediaInfoFormatField(section)
+		codecKey := ""
+		if format != "" {
+			codecKey = audioCodecKeyFromFormatText(format)
+		}
+		if codecKey == "" && format == "" {
+			// 既无 format 也无 codec，跳过该段（可能是误切分）。
+			continue
+		}
+		tracks = append(tracks, AudioTrack{
+			CodecKey:    codecKey,
+			Format:      strings.TrimSpace(format),
+			BitRateKbps: mediaInfoBitRateKbps(section),
+			Channels:    mediaInfoChannels(section),
+			Default:     mediaInfoDefaultFlag(section),
+			Index:       i + 1,
+		})
+	}
+	return tracks
+}
+
+// mediaInfoBitRateKbps 解析段落里的 "Bit rate : xxx kb/s"，归一为 kbps 数值。
+func mediaInfoBitRateKbps(section string) float64 {
+	m := reMediaInfoBitRateField.FindStringSubmatch(section)
+	if len(m) < 2 {
+		return 0
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(m[1]), 64)
+	if err != nil {
+		return 0
+	}
+	unit := ""
+	if len(m) >= 3 {
+		unit = strings.ToUpper(strings.TrimSpace(m[2]))
+	}
+	switch unit {
+	case "K":
+		return value
+	case "M":
+		return value * 1000
+	case "B":
+		// bps 单位（无 k/M 前缀），换算 kbps。
+		return value / 1000
+	default:
+		// 未识别单位时按 kbps 处理（多数情况是 kb/s）。
+		return value
+	}
+}
+
+// mediaInfoChannels 解析段落里的 "Channel(s) : N channels"。
+func mediaInfoChannels(section string) int {
+	m := reMediaInfoChannelsField.FindStringSubmatch(section)
+	if len(m) < 2 {
+		return 0
+	}
+	v, err := strconv.Atoi(strings.TrimSpace(m[1]))
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// mediaInfoDefaultFlag 解析段落里的 "Default : Yes"。
+func mediaInfoDefaultFlag(section string) bool {
+	m := reMediaInfoDefaultField.FindStringSubmatch(section)
+	if len(m) < 2 {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(m[1]), "yes")
+}
+
+// AudioTrackPolicy 定义多音轨选择策略。
+type AudioTrackPolicy int
+
+const (
+	// AudioTrackPolicyFirst 取第一条音轨。
+	AudioTrackPolicyFirst AudioTrackPolicy = 1
+	// AudioTrackPolicyHighestBitRate 取码率最高的一条（默认）。
+	AudioTrackPolicyHighestBitRate AudioTrackPolicy = 2
+	// AudioTrackPolicyHighestSpec 取规格最高的一条。
+	AudioTrackPolicyHighestSpec AudioTrackPolicy = 3
+)
+
+// SelectAudioTrack 按策略从音轨列表中选出一条。
+// 参数/返回：tracks 为音轨列表；policy 为选择策略；返回选中的音轨（列表为空时返回零值）。
+// 副作用：无。策略非法时回退到码率最高（默认策略）。
+func selectAudioTrack(tracks []AudioTrack, policy AudioTrackPolicy) AudioTrack {
+	if len(tracks) == 0 {
+		return AudioTrack{}
+	}
+	switch policy {
+	case AudioTrackPolicyFirst:
+		return tracks[0]
+	case AudioTrackPolicyHighestSpec:
+		best := tracks[0]
+		bestRank := -1
+		for _, track := range tracks {
+			rank, ok := audioCodecRank[track.CodecKey]
+			if !ok {
+				rank = 0
+			}
+			if rank > bestRank {
+				bestRank = rank
+				best = track
+			}
+		}
+		return best
+	default:
+		// 默认：码率最高。
+		best := tracks[0]
+		for _, track := range tracks[1:] {
+			if track.BitRateKbps > best.BitRateKbps {
+				best = track
+			}
+		}
+		return best
+	}
 }
 
 // firstMediaInfoVideoSection 返回 MediaInfo 文本中第一条 Video 段。

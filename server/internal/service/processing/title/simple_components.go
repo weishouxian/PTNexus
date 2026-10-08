@@ -51,7 +51,7 @@ var (
 	reAudioDTSHDMA           = regexp.MustCompile(`(?i)\bDTS[-\s]?HD\s*MA\b`)
 	reAudioCodecDD           = regexp.MustCompile(`(?i)\bDD\b`)
 	reReleaseGroupSplit      = regexp.MustCompile(`[@\-\s]+`)
-	reHDRTitleToken          = regexp.MustCompile(`(?i)Dolby Vision|DoVi|HDR10\+|HDRVivid|HDR10|HLG|HDR|SDR|EDR|DV|Vivid`)
+	reHDRTitleToken          = regexp.MustCompile(`(?i)Dolby Vision|DoVi|HDR10\+|HDRVivid|HDR10|HLG|HDR|SDR|DV|Vivid`)
 )
 
 // BuildSimpleTitleComponents 构建标题组件（不使用媒体文本纠偏）。
@@ -1031,7 +1031,6 @@ func extractHDRFormatFromTitle(title string) string {
 	hasHLG := false
 	hasVivid := false
 	hasSDR := false
-	hasEDR := false
 	for _, item := range matches {
 		switch strings.ToUpper(strings.TrimSpace(item)) {
 		case "DOLBY VISION", "DOVI", "DV":
@@ -1046,8 +1045,6 @@ func extractHDRFormatFromTitle(title string) string {
 			hasVivid = true
 		case "SDR":
 			hasSDR = true
-		case "EDR":
-			hasEDR = true
 		}
 	}
 
@@ -1068,8 +1065,6 @@ func extractHDRFormatFromTitle(title string) string {
 		return "HLG"
 	case hasSDR:
 		return "SDR"
-	case hasEDR:
-		return "EDR"
 	default:
 		return ""
 	}
@@ -1132,8 +1127,6 @@ func hdrCleanupAliases(hdr string) []string {
 		aliases = append(aliases, "HLG")
 	case strings.Contains(upper, "SDR"):
 		aliases = append(aliases, "SDR")
-	case strings.Contains(upper, "EDR"):
-		aliases = append(aliases, "EDR")
 	}
 	return aliases
 }

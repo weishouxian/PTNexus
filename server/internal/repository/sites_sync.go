@@ -22,18 +22,20 @@ type siteSeedRow struct {
 	SpeedLimit           *int     `json:"speed_limit"`
 	RatioThreshold       *float64 `json:"ratio_threshold"`
 	SeedSpeedLimit       *int     `json:"seed_speed_limit"`
+	AudioTrackPolicy     *int     `json:"audio_track_policy"`
 }
 
 type existingSiteRow struct {
-	ID             int64   `gorm:"column:id"`
-	Site           string  `gorm:"column:site"`
-	Nickname       string  `gorm:"column:nickname"`
-	BaseURL        string  `gorm:"column:base_url"`
-	Description    string  `gorm:"column:description"`
-	SpeedLimit     int     `gorm:"column:speed_limit"`
-	Passkey        string  `gorm:"column:passkey"`
-	RatioThreshold float64 `gorm:"column:ratio_threshold"`
-	SeedSpeedLimit int     `gorm:"column:seed_speed_limit"`
+	ID               int64   `gorm:"column:id"`
+	Site             string  `gorm:"column:site"`
+	Nickname         string  `gorm:"column:nickname"`
+	BaseURL          string  `gorm:"column:base_url"`
+	Description      string  `gorm:"column:description"`
+	SpeedLimit       int     `gorm:"column:speed_limit"`
+	Passkey          string  `gorm:"column:passkey"`
+	RatioThreshold   float64 `gorm:"column:ratio_threshold"`
+	SeedSpeedLimit   int     `gorm:"column:seed_speed_limit"`
+	AudioTrackPolicy int     `gorm:"column:audio_track_policy"`
 }
 
 // SyncSitesFromJSON 将 sites_data.json 的站点元数据同步到 sites 表。
@@ -66,7 +68,7 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 
 	return m.store.DB.Transaction(func(tx *gorm.DB) error {
 		existing := make([]existingSiteRow, 0)
-		if err := tx.Raw("SELECT id, site, nickname, base_url, description, speed_limit, passkey, ratio_threshold, seed_speed_limit FROM sites").Scan(&existing).Error; err != nil {
+		if err := tx.Raw("SELECT id, site, nickname, base_url, description, speed_limit, passkey, ratio_threshold, seed_speed_limit, audio_track_policy FROM sites").Scan(&existing).Error; err != nil {
 			return fmt.Errorf("读取现有站点失败: %w", err)
 		}
 
@@ -106,6 +108,7 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 			jsonSpeedLimit := derefInt(item.SpeedLimit, 0)
 			jsonRatioThreshold := derefFloat(item.RatioThreshold, 0)
 			jsonSeedSpeed := derefInt(item.SeedSpeedLimit, -1)
+			jsonAudioTrackPolicy := derefInt(item.AudioTrackPolicy, 0)
 
 			if exists {
 				dbPasskey := strings.TrimSpace(matched.Passkey)
@@ -144,6 +147,13 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 					finalDescription = jsonDesc
 				}
 
+				// 多音轨策略：JSON 提供的是「初始化默认值」。库内已是合法值（1/2/3）时保留用户设置，
+				// 仅当库内缺省（0/空）且 JSON 给了合法值时用 JSON 兜底。
+				finalAudioTrackPolicy := matched.AudioTrackPolicy
+				if (finalAudioTrackPolicy < 1 || finalAudioTrackPolicy > 3) && jsonAudioTrackPolicy >= 1 && jsonAudioTrackPolicy <= 3 {
+					finalAudioTrackPolicy = jsonAudioTrackPolicy
+				}
+
 				groupColumn := m.store.GroupColumn()
 				updateSQL := fmt.Sprintf(`
 					UPDATE sites
@@ -157,7 +167,8 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 						migration = ?,
 						speed_limit = ?,
 						ratio_threshold = ?,
-						seed_speed_limit = ?
+						seed_speed_limit = ?,
+						audio_track_policy = ?
 					WHERE id = ?
 				`, groupColumn)
 
@@ -174,6 +185,7 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 					finalSpeedLimit,
 					finalRatio,
 					finalSeedSpeed,
+					finalAudioTrackPolicy,
 					matched.ID,
 				).Error; err != nil {
 					return fmt.Errorf("更新站点失败 site=%s err=%w", site, err)
@@ -186,6 +198,7 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 				matched.Passkey = finalPasskey
 				matched.RatioThreshold = finalRatio
 				matched.SeedSpeedLimit = finalSeedSpeed
+				matched.AudioTrackPolicy = finalAudioTrackPolicy
 				registerSiteIndex(index, matched)
 				updated++
 				continue
@@ -195,8 +208,8 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 			insertSQL := fmt.Sprintf(`
 				INSERT INTO sites (
 					site, nickname, base_url, special_tracker_domain, %s,
-					description, passkey, migration, speed_limit, ratio_threshold, seed_speed_limit
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					description, passkey, migration, speed_limit, ratio_threshold, seed_speed_limit, audio_track_policy
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			`, groupColumn)
 
 			ratio := jsonRatioThreshold
@@ -206,6 +219,10 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 			seedSpeed := jsonSeedSpeed
 			if seedSpeed < 0 {
 				seedSpeed = 5
+			}
+			audioTrackPolicy := jsonAudioTrackPolicy
+			if audioTrackPolicy < 1 || audioTrackPolicy > 3 {
+				audioTrackPolicy = 2
 			}
 
 			if err := tx.Exec(
@@ -221,12 +238,13 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 				jsonSpeedLimit,
 				ratio,
 				seedSpeed,
+				audioTrackPolicy,
 			).Error; err != nil {
 				return fmt.Errorf("新增站点失败 site=%s err=%w", site, err)
 			}
 			inserted := existingSiteRow{}
 			if err := tx.Raw(
-				"SELECT id, site, nickname, base_url, speed_limit, passkey, ratio_threshold, seed_speed_limit FROM sites WHERE site = ? ORDER BY id DESC LIMIT 1",
+				"SELECT id, site, nickname, base_url, speed_limit, passkey, ratio_threshold, seed_speed_limit, audio_track_policy FROM sites WHERE site = ? ORDER BY id DESC LIMIT 1",
 				site,
 			).Scan(&inserted).Error; err == nil && inserted.ID > 0 {
 				registerSiteIndex(index, inserted)

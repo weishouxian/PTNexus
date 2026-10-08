@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
+	parserextract "github.com/pt-nexus/server/internal/service/acquire/extract"
+	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 	publishpublisher "github.com/pt-nexus/server/internal/service/publish/publisher"
 	publishengine "github.com/pt-nexus/server/internal/service/publish/publisher/engine"
@@ -68,6 +70,10 @@ func PublishTorrentToTarget(
 	imdbLink, doubanLink := resolvePublishExternalLinks(uploadData)
 	mediainfo := strings.TrimSpace(toStringAny(uploadData["mediainfo"], ""))
 
+	// 多音轨策略：按目标站点的 audio_track_policy 重选音轨，并同步改发种标题与 audio_codec。
+	// 仅在存在多条音轨、且重选结果与当前标准键不一致时介入；仅改本次提交的标题，不动库内 title/组件。
+	title, mediainfo = applySiteAudioTrackPolicy(targetInfo, uploadData, siteCode, title, mediainfo, appendLog)
+
 	pubInput := publishpublisher.PublishInput{
 		TargetName: targetName,
 		SiteCode:   siteCode,
@@ -125,8 +131,80 @@ func PublishTorrentToTarget(
 	return result.PublishURL, result.DirectDownloadURL, strings.Join(logLines, "\n"), result.IsExistingTorrent, result.UploadFormFields, nil
 }
 
+// applySiteAudioTrackPolicy 按目标站点的多音轨策略重选音轨，并同步改发种标题与 audio_codec。
+// 参数/返回：targetInfo 为站点整行配置（含 audio_track_policy）；uploadData 为发布字段（会被原地更新 standardized_params.audio_codec）；
+// siteCode 为目标站点 code；title/mediainfo 为当前主标题与媒体文本；appendLog 为日志回调；
+// 返回（可能已修改的）title 与 mediainfo。
+// 失败场景：无音轨、策略默认、或重选结果与当前一致时不介入；mediainfo 缺失时静默跳过。
+// 副作用：可能原地修改 uploadData["standardized_params"]["audio_codec"]，并改标题里的音频 token。
+//
+// 背景：不同站点对多音轨的处理规则不同——有的取第一条、有的取码率最高、有的取规格最高。
+// 抓取时落库的 audio_codec 是全局单一口径，发布到具体站点时需按该站策略重选，并让发种标题与之匹配。
+func applySiteAudioTrackPolicy(targetInfo map[string]any, uploadData map[string]any, siteCode, title, mediainfo string, appendLog func(string)) (string, string) {
+	policy := parserextract.AudioTrackPolicy(toIntAny(targetInfo["audio_track_policy"], 2))
+	trimmedMediaInfo := strings.TrimSpace(mediainfo)
+	if trimmedMediaInfo == "" {
+		return title, mediainfo
+	}
+
+	tracks := parserextract.ParseAudioTracksFromMediainfo(trimmedMediaInfo)
+	if len(tracks) < 2 {
+		// 单音轨无需选择；多音轨才谈得上策略。
+		return title, mediainfo
+	}
+
+	selected := parserextract.SelectAudioTrack(tracks, policy)
+	if selected.CodecKey == "" {
+		return title, mediainfo
+	}
+
+	standardized, _ := uploadData["standardized_params"].(map[string]any)
+	current := ""
+	if standardized != nil {
+		current = strings.TrimSpace(toStringAny(standardized["audio_codec"], ""))
+	}
+	if current == selected.CodecKey {
+		// 重选结果与当前一致，无需改标题或字段。
+		return title, mediainfo
+	}
+
+	// 更新标准化音频编码，供后续字段映射提交到站点。
+	if standardized != nil {
+		standardized["audio_codec"] = selected.CodecKey
+	} else {
+		uploadData["standardized_params"] = map[string]any{"audio_codec": selected.CodecKey}
+	}
+
+	// 同步改标题里的音频编码 token（仅本次发种标题，不动库内）。
+	newTitle := processingmedia.ReplaceTitleAudioCodecToken(title, selected.CodecKey)
+	if newTitle == "" {
+		newTitle = title
+	}
+
+	appendLog(fmt.Sprintf("多音轨策略(%s)：%s → %s（音轨 %d/%d，%d kbps）",
+		audioTrackPolicyLabel(policy),
+		current,
+		selected.CodecKey,
+		selected.Index,
+		len(tracks),
+		int(selected.BitRateKbps),
+	))
+	return newTitle, mediainfo
+}
+
+// audioTrackPolicyLabel 返回策略的中文标签（用于日志）。
+func audioTrackPolicyLabel(policy parserextract.AudioTrackPolicy) string {
+	switch policy {
+	case parserextract.AudioTrackPolicyFirst:
+		return "第一条音轨"
+	case parserextract.AudioTrackPolicyHighestSpec:
+		return "规格最高"
+	default:
+		return "码率最高"
+	}
+}
+
 // resolvePublishMainTitle 生成目标站点实际发布时使用的主标题。
-// 参数/返回：siteCode 用于应用站点级标题修正；uploadData 为前端传入的发布参数；torrentPath 用于缺失标题时兜底文件名。
 // 失败场景：标题组件缺失或重建失败时回退到当前通用标题取值，不返回错误。
 // 副作用：无。
 // 站点差异：qingwapt 会用 title_components 重建主标题，剔除色深、剧集状态、帧率标记，并把 HDR10 归一为 HDR；其他站点直接沿用通用标题取值。
@@ -320,6 +398,55 @@ func toStringAny(value any, fallback string) string {
 		}
 	}
 	return fallback
+}
+
+// toIntAny 把任意标量转成 int，覆盖 MySQL TINYINT（int8）/ int32 / int64 / float64 / string / []byte 等全部类型。
+func toIntAny(value any, fallback int) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int8:
+		return int(typed)
+	case int16:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case int64:
+		return int(typed)
+	case uint:
+		return int(typed)
+	case uint8:
+		return int(typed)
+	case uint16:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case uint64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case float32:
+		return int(typed)
+	case bool:
+		if typed {
+			return 1
+		}
+		return 0
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return fallback
+		}
+		var v int
+		if _, err := fmt.Sscanf(trimmed, "%d", &v); err == nil {
+			return v
+		}
+		return fallback
+	case []byte:
+		return toIntAny(string(typed), fallback)
+	default:
+		return fallback
+	}
 }
 
 func resolvePublishExternalLinks(uploadData map[string]any) (string, string) {
