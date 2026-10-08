@@ -1614,6 +1614,28 @@
     height: 100%;
   }
 
+  /* 海报重新获取失败原因 */
+  .poster-fetch-error {
+    margin-top: 6px;
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #f56c6c;
+    word-break: break-word;
+  }
+
+  .poster-fetch-error__icon {
+    flex-shrink: 0;
+    margin-top: 2px;
+    font-size: 14px;
+  }
+
+  .poster-fetch-error__text {
+    min-width: 0;
+  }
+
   .code-font,
   .code-font .el-textarea__inner {
     font-family: 'Courier New', Courier, monospace;

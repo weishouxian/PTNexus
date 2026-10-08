@@ -202,6 +202,7 @@ export interface CrossSeedPanelContext {
   handleTagClose: (tag: string) => void
   refreshPosters: () => Promise<void>
   isRefreshingPosters: Ref<boolean>
+  posterErrorMessage: Ref<string>
   posterImages: ComputedRef<string[]>
   getProxyImageUrl: (url: string) => string
   handleImageErrorWithProxy: (url: string, type: 'poster' | 'screenshot', index: number) => void
