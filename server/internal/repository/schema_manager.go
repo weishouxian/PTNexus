@@ -1038,8 +1038,8 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "dupe_size_tolerance_bytes", definition: map[string]string{"sqlite": "BIGINT NOT NULL DEFAULT 1073741824", "mysql": "BIGINT NOT NULL DEFAULT 1073741824", "postgresql": "BIGINT NOT NULL DEFAULT 1073741824"}},
 			// dupe_rules 为「标准媒介键 → 判定维度集合」的 JSON 对象，站点设置里按媒介配置。
 			{name: "dupe_rules", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
-			// audio_track_policy 多音轨选择策略：1=第一条音轨 / 2=码率最高（默认）/ 3=规格最高。
-			{name: "audio_track_policy", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 2", "mysql": "INT NOT NULL DEFAULT 2", "postgresql": "INTEGER NOT NULL DEFAULT 2"}},
+			// audio_track_policy 多音轨选择策略：0=未设置（取第一条音轨）/ 1=第一条 / 2=码率最高 / 3=规格最高。
+			{name: "audio_track_policy", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 			// tags 站点自定义标签（JSON 字符串数组，如 ["电影","通用"]），发布时按标签一键勾选站点。
 			{name: "tags", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},

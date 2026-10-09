@@ -98,6 +98,54 @@
       />
     </div>
 
+    <!-- 标签筛选条件：位于表头上方，可多选；命中任一标签（或未设置标签）的站点即显示（与搜索、站点范围筛选为 AND） -->
+    <div v-if="!isSortMode" class="tag-filter-row glass-pagination">
+      <span class="tag-filter-row-label">标签筛选</span>
+      <el-select
+        v-model="activeTagFilters"
+        multiple
+        filterable
+        clearable
+        collapse-tags
+        collapse-tags-tooltip
+        placeholder="选择标签（可多选，命中任一即显示）"
+        class="tag-filter-select"
+      >
+        <template #tag="{ data, deleteTag }">
+          <span
+            v-for="item in data"
+            :key="String(item.value)"
+            class="site-tag-chip site-tag-chip--closable"
+            :class="{ 'site-tag-chip--unset': String(item.value) === TAG_FILTER_NO_TAG }"
+            :style="
+              String(item.value) === TAG_FILTER_NO_TAG
+                ? undefined
+                : siteTagStyle(String(item.value))
+            "
+          >
+            {{ item.currentLabel ?? item.value }}
+            <el-icon class="site-tag-chip-close" @click.stop="deleteTag($event, item)">
+              <Close />
+            </el-icon>
+          </span>
+        </template>
+        <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag">
+          <span class="site-tag-chip" :style="siteTagStyle(tag)">{{ tag }}</span>
+        </el-option>
+        <!-- 特殊筛选项：一个标签都没设置的站点（不是真实标签，用灰色虚线胶囊区分） -->
+        <el-option
+          :key="TAG_FILTER_NO_TAG"
+          :label="TAG_FILTER_NO_TAG_LABEL"
+          :value="TAG_FILTER_NO_TAG"
+        >
+          <span class="site-tag-chip site-tag-chip--unset">{{ TAG_FILTER_NO_TAG_LABEL }}</span>
+        </el-option>
+      </el-select>
+      <span v-if="activeTagFilters.length" class="tag-filter-row-hint">
+        {{ tagFilterHint }}
+      </span>
+    </div>
+
     <!-- 2. 中间可滚动内容区域 -->
     <div class="settings-view" v-loading="isSitesLoading">
       <el-table
@@ -239,18 +287,17 @@
           sortable="custom"
           :sort-orders="['ascending', 'descending']"
         />
-        <el-table-column prop="tags" label="标签" min-width="140">
+        <el-table-column prop="tags" label="标签" min-width="150">
           <template #default="scope">
             <div v-if="scope.row.tags?.length" class="site-tag-list">
-              <el-tag
+              <span
                 v-for="tag in scope.row.tags"
                 :key="tag"
-                size="small"
-                type="info"
-                effect="plain"
+                class="site-tag-chip"
+                :style="siteTagStyle(tag)"
               >
                 {{ tag }}
-              </el-tag>
+              </span>
             </div>
             <span v-else>-</span>
           </template>
@@ -443,10 +490,25 @@
             placeholder="输入后回车即可新增标签，如：电影、通用"
             style="width: 100%"
           >
-            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag" />
+            <template #tag="{ data, deleteTag }">
+              <span
+                v-for="item in data"
+                :key="String(item.value)"
+                class="site-tag-chip site-tag-chip--closable"
+                :style="siteTagStyle(String(item.value))"
+              >
+                {{ item.currentLabel ?? item.value }}
+                <el-icon class="site-tag-chip-close" @click.stop="deleteTag($event, item)">
+                  <Close />
+                </el-icon>
+              </span>
+            </template>
+            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag">
+              <span class="site-tag-chip" :style="siteTagStyle(tag)">{{ tag }}</span>
+            </el-option>
           </el-select>
           <div class="form-tip">
-            给站点打标签（可多个）。发布时可按标签一键勾选同一标签下的所有站点。
+            给站点打标签（可多个）。发布时可按标签一键勾选同一标签下的所有站点；列表页可在表头上方按标签筛选。
           </div>
         </el-form-item>
         <el-form-item label="禁转站点" prop="forbidden_transfer_sites">
@@ -475,12 +537,13 @@
         </el-form-item>
         <el-form-item label="多音轨策略" prop="audio_track_policy">
           <el-select v-model="siteForm.audio_track_policy" style="width: 100%">
+            <el-option :value="0" label="未设置（取第一条音轨）" />
             <el-option :value="1" label="第一条音轨" />
             <el-option :value="2" label="码率最高" />
             <el-option :value="3" label="规格最高" />
           </el-select>
           <div class="form-tip">
-            发布时种子含多条音轨，按此策略选出一条作为音频编码并同步修改发种标题。默认「码率最高」。
+            发布时种子含多条音轨，按此策略选出一条作为音频编码并同步修改发种标题。未设置时默认取第一条音轨。
           </div>
         </el-form-item>
         <el-form-item v-if="isDupeCheckVisible" label="Dupe 校验" prop="dupe_check_enabled">
@@ -738,7 +801,22 @@
             placeholder="输入后回车即可新增标签，如：电影、通用"
             style="width: 100%"
           >
-            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag" />
+            <template #tag="{ data, deleteTag }">
+              <span
+                v-for="item in data"
+                :key="String(item.value)"
+                class="site-tag-chip site-tag-chip--closable"
+                :style="siteTagStyle(String(item.value))"
+              >
+                {{ item.currentLabel ?? item.value }}
+                <el-icon class="site-tag-chip-close" @click.stop="deleteTag($event, item)">
+                  <Close />
+                </el-icon>
+              </span>
+            </template>
+            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag">
+              <span class="site-tag-chip" :style="siteTagStyle(tag)">{{ tag }}</span>
+            </el-option>
           </el-select>
         </el-form-item>
       </el-form>
@@ -761,6 +839,7 @@ import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { ElMessageBox } from 'element-plus'
 import {
+  Close,
   Delete,
   Download,
   Edit,
@@ -771,6 +850,8 @@ import {
   Upload,
 } from '@element-plus/icons-vue'
 import { ElMessage } from '@/utils/uiNotify'
+import { siteTagKey, siteTagKeys } from '@/utils/siteTag'
+import { siteTagStyle } from '@/utils/siteTagColor'
 
 type SiteConfig = {
   id: number | string | null
@@ -845,7 +926,7 @@ type SiteForm = {
   dupe_size_tolerance_mb: number
   /** 按媒介的查重规则：标准媒介键 → 判定维度集合（未列出的媒介不执行 dupe 校验） */
   dupe_rules: Record<string, string[]>
-  /** 多音轨选择策略：1=第一条音轨 / 2=码率最高 / 3=规格最高 */
+  /** 多音轨选择策略：0=未设置（取第一条）/ 1=第一条音轨 / 2=码率最高 / 3=规格最高 */
   audio_track_policy: number
 }
 
@@ -1126,7 +1207,7 @@ const siteForm = ref<SiteForm>({
   dupe_size_tolerance_bytes: DEFAULT_DUPE_TOLERANCE_BYTES,
   dupe_size_tolerance_mb: DEFAULT_DUPE_TOLERANCE_MB,
   dupe_rules: {},
-  audio_track_policy: 2,
+  audio_track_policy: 0,
 })
 
 const API_BASE_URL = '/api'
@@ -1173,6 +1254,40 @@ const allTagOptions = computed(() => {
     }
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+// --- 标签筛选：表头上方下拉框多选标签，命中任一标签（或未设置标签）的站点即显示 ---
+const activeTagFilters = ref<string[]>([])
+
+// 「未设置标签」是一个特殊筛选项而不是真实标签：用不可能与真实标签撞车的字面量做值，
+// 避免用户真的建了同名标签时产生歧义。
+const TAG_FILTER_NO_TAG = '__ptn_no_tag__'
+const TAG_FILTER_NO_TAG_LABEL = '未设置标签'
+
+const noTagFilterActive = computed(() =>
+  activeTagFilters.value.some((tag) => siteTagKey(tag) === TAG_FILTER_NO_TAG),
+)
+
+// 参与「任一命中」比对的真实标签 key 集合（哨兵值不参与）。
+const activeTagFilterKeys = computed(
+  () =>
+    new Set(
+      activeTagFilters.value
+        .filter((tag) => siteTagKey(tag) !== TAG_FILTER_NO_TAG)
+        .map((tag) => siteTagKey(tag)),
+    ),
+)
+
+// 筛选结果条文案：跟随「是否勾了未设置标签」变化。
+const tagFilterHint = computed(() => {
+  const total = sortedSites.value.length
+  if (noTagFilterActive.value && !activeTagFilterKeys.value.size) {
+    return `一个标签都没设置的站点，共 ${total} 个`
+  }
+  if (noTagFilterActive.value) {
+    return `命中任一标签、或未设置标签的站点，共 ${total} 个`
+  }
+  return `命中任一标签的站点，共 ${total} 个`
 })
 
 // 站点标签入库前统一清洗：去掉空串与重复项（忽略大小写）。
@@ -1397,6 +1512,19 @@ const filteredSites = computed(() => {
     })
   }
 
+  // 标签筛选与搜索、站点范围筛选是「同时成立」的关系（AND），
+  // 而多个筛选项之间是「任一命中」（OR）：「未设置标签」与普通标签并列参与 OR。
+  if (activeTagFilters.value.length) {
+    const wantedKeys = activeTagFilterKeys.value
+    const includeNoTag = noTagFilterActive.value
+    sites = sites.filter((site) => {
+      const keys = siteTagKeys(site.tags)
+      // 「未设置标签」：一个有效标签都没有的站点（空数组 / 缺字段 / 只有空白项都算）
+      if (includeNoTag && keys.length === 0) return true
+      return keys.some((key) => wantedKeys.has(key))
+    })
+  }
+
   const term = searchQuery.value.trim().toLowerCase()
   if (term) {
     sites = sites.filter((site) => {
@@ -1465,6 +1593,11 @@ watch(
 
 // 监听搜索词变化，如果变化则返回第一页
 watch(searchQuery, () => {
+  pagination.value.currentPage = 1
+})
+
+// 标签筛选变化（表头上方的标签下拉框）时同样回到第一页
+watch(activeTagFilters, () => {
   pagination.value.currentPage = 1
 })
 
@@ -1781,7 +1914,7 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   dupe_size_tolerance_mb: bytesToMb(normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes)),
   // 统一清洗一遍：去掉空维度与空条目，避免脏数据带进表单。
   dupe_rules: rulesFromRows(rowsFromRules(site.dupe_rules)),
-  audio_track_policy: [1, 2, 3].includes(Number(site.audio_track_policy)) ? Number(site.audio_track_policy) : 2,
+  audio_track_policy: [0, 1, 2, 3].includes(Number(site.audio_track_policy)) ? Number(site.audio_track_policy) : 0,
 })
 
 // [新增] 合并后的保存与同步功能
@@ -2025,6 +2158,7 @@ const handleDelete = (site: SiteConfig) => {
 }
 
 .top-actions,
+.tag-filter-row,
 .settings-footer {
   flex-shrink: 0;
 }
@@ -2101,11 +2235,42 @@ const handleDelete = (site: SiteConfig) => {
   margin-top: 4px;
 }
 
-/* 标签列：多个标签之间留出间距 */
+/* 标签列：多个标签之间留出间距（仅展示，不参与交互） */
 .site-tag-list {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
+}
+
+/* 表头上方的标签筛选条件行 */
+.tag-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+}
+
+.tag-filter-row-label {
+  color: var(--el-text-color-secondary);
+}
+
+.tag-filter-select {
+  width: 320px;
+}
+
+.tag-filter-row-hint {
+  color: var(--el-text-color-secondary);
+}
+
+/* 「未设置标签」是筛选项而非真实标签：灰色虚线胶囊，与按标签名推导的彩色胶囊区分开 */
+.site-tag-chip--unset {
+  color: var(--el-text-color-secondary);
+  background-color: var(--el-fill-color-light);
+  border-color: var(--el-border-color);
+  border-style: dashed;
 }
 
 /* dupe 规则编辑器：按媒介配置判定维度 */
@@ -2312,6 +2477,14 @@ const handleDelete = (site: SiteConfig) => {
   }
 
   .search-input {
+    width: 100%;
+  }
+
+  .tag-filter-row {
+    align-items: stretch;
+  }
+
+  .tag-filter-select {
     width: 100%;
   }
 

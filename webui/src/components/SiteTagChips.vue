@@ -8,24 +8,27 @@
       placement="top"
       :show-after="150"
     >
-      <el-tag
+      <span
         class="site-tag-chip"
-        :type="group.allSelected ? 'success' : 'info'"
-        :effect="group.allSelected ? 'dark' : 'plain'"
-        :class="{ 'site-tag-chip--empty': group.selectableCount === 0 }"
+        :class="{
+          'site-tag-chip--active': group.allSelected,
+          'site-tag-chip--empty': group.selectableCount === 0,
+        }"
+        :style="chipStyle(group)"
         @click="handleClick(group)"
       >
         {{ group.tag }}
         <span class="site-tag-chip-count">
           {{ group.selectedCount }}/{{ group.selectableCount }}
         </span>
-      </el-tag>
+      </span>
     </el-tooltip>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { siteTagStyle } from '@/utils/siteTagColor'
 
 /** 参与标签聚合的站点条目：disabled 的站点不会被标签勾选带入。 */
 export type SiteTagItem = {
@@ -112,6 +115,10 @@ const handleClick = (group: SiteTagGroup) => {
   }
   emit('apply', [...group.selectable])
 }
+
+// 标签用「标签本色」：未全选用浅底本色，已全选切同色系实底以区分状态。
+const chipStyle = (group: SiteTagGroup) =>
+  siteTagStyle(group.tag, group.allSelected ? 'solid' : 'plain')
 </script>
 
 <style scoped>
@@ -130,7 +137,6 @@ const handleClick = (group: SiteTagGroup) => {
 
 .site-tag-chip {
   cursor: pointer;
-  user-select: none;
 }
 
 .site-tag-chip--empty {

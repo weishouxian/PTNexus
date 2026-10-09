@@ -137,7 +137,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		// 前端直接把规则表当对象用，这里统一解析成「媒介 → 判定维度」结构。
 		s["dupe_rules"] = siteDupeRulesFromAny(s["dupe_rules"])
 		// 多音轨策略默认「码率最高」（2）；旧数据无该列时回填默认值。
-		s["audio_track_policy"] = toIntWithDefault(s["audio_track_policy"], 2)
+		s["audio_track_policy"] = toIntWithDefault(s["audio_track_policy"], 0)
 		// 站点自定义标签：统一解析成字符串数组，前端直接当数组用。
 		s["tags"] = siteStringListFromAny(s["tags"])
 	}
@@ -168,10 +168,10 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	}
 	// 规则表按 JSON 文本入库；未配置时写空串（读回解析为空表，等价于「该站点没有媒介规则」）。
 	dupeRules := encodeSiteDupeRules(data["dupe_rules"])
-	// 多音轨策略：1=第一条 / 2=码率最高（默认）/ 3=规格最高；非法值回退默认。
-	audioTrackPolicy := toIntWithDefault(data["audio_track_policy"], 2)
-	if audioTrackPolicy < 1 || audioTrackPolicy > 3 {
-		audioTrackPolicy = 2
+	// 多音轨策略：0=未设置（取第一条）/ 1=第一条 / 2=码率最高 / 3=规格最高；非法值回退未设置。
+	audioTrackPolicy := toIntWithDefault(data["audio_track_policy"], 0)
+	if audioTrackPolicy < 0 || audioTrackPolicy > 3 {
+		audioTrackPolicy = 0
 	}
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
 	// 站点自定义标签：统一编码成 JSON 数组入库；未配置时写 "[]"。
