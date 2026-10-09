@@ -141,7 +141,7 @@ func PublishTorrentToTarget(
 // 背景：不同站点对多音轨的处理规则不同——有的取第一条、有的取码率最高、有的取规格最高。
 // 抓取时落库的 audio_codec 是全局单一口径，发布到具体站点时需按该站策略重选，并让发种标题与之匹配。
 func applySiteAudioTrackPolicy(targetInfo map[string]any, uploadData map[string]any, siteCode, title, mediainfo string, appendLog func(string)) (string, string) {
-	policy := parserextract.AudioTrackPolicy(toIntAny(targetInfo["audio_track_policy"], 2))
+	policy := parserextract.AudioTrackPolicy(toIntAny(targetInfo["audio_track_policy"], 0))
 	trimmedMediaInfo := strings.TrimSpace(mediainfo)
 	if trimmedMediaInfo == "" {
 		return title, mediainfo
@@ -195,12 +195,16 @@ func applySiteAudioTrackPolicy(targetInfo map[string]any, uploadData map[string]
 // audioTrackPolicyLabel 返回策略的中文标签（用于日志）。
 func audioTrackPolicyLabel(policy parserextract.AudioTrackPolicy) string {
 	switch policy {
+	case parserextract.AudioTrackPolicyUnset:
+		return "未设置（取第一条）"
 	case parserextract.AudioTrackPolicyFirst:
 		return "第一条音轨"
+	case parserextract.AudioTrackPolicyHighestBitRate:
+		return "码率最高"
 	case parserextract.AudioTrackPolicyHighestSpec:
 		return "规格最高"
 	default:
-		return "码率最高"
+		return "未设置（取第一条）"
 	}
 }
 

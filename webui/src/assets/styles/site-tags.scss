@@ -1,0 +1,44 @@
+/* 站点标签彩色胶囊
+ * 颜色不在这里定义：由 utils/siteTagColor.ts 根据标签名推导后以内联 style 注入，
+ * 这里只负责尺寸、圆角、交互等与颜色无关的部分，保证「站点管理」「选择发布站点」
+ * 两处标签长得一致。
+ */
+.site-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  box-sizing: border-box;
+  padding: 1px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  user-select: none;
+  transition: filter 0.15s ease;
+}
+
+.site-tag-chip:hover {
+  filter: brightness(0.95);
+}
+
+/* 已激活（正在按该标签筛选 / 该标签下站点已全选）：加粗 + 轻微描边强调 */
+.site-tag-chip--active {
+  font-weight: 600;
+}
+
+/* 可关闭的标签（下拉框里已选中的标签） */
+.site-tag-chip--closable {
+  cursor: pointer;
+  padding-right: 4px;
+}
+
+.site-tag-chip-close {
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.site-tag-chip-close:hover {
+  opacity: 1;
+}

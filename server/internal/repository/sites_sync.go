@@ -221,8 +221,8 @@ func (m *SchemaManager) SyncSitesFromJSON(jsonPath string) error {
 				seedSpeed = 5
 			}
 			audioTrackPolicy := jsonAudioTrackPolicy
-			if audioTrackPolicy < 1 || audioTrackPolicy > 3 {
-				audioTrackPolicy = 2
+			if audioTrackPolicy < 0 || audioTrackPolicy > 3 {
+				audioTrackPolicy = 0
 			}
 
 			if err := tx.Exec(

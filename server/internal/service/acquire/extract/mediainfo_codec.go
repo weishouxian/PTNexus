@@ -76,26 +76,18 @@ var audioCodecRank = map[string]int{
 	"audio.other":        0,
 }
 
-// inferAudioCodecFromMediainfo 从 MediaInfo 的全部 Audio 段的 Format 字段推断音频编码，取规格最高的一条。
-// 参数/返回：mediainfo 为原始 MediaInfo 文本；无法定位 Audio 段或所有 Format 均无法识别时返回空串。
+// inferAudioCodecFromMediainfo 从 MediaInfo 的全部 Audio 段的 Format 字段推断音频编码，取第一条音轨。
+// 参数/返回：mediainfo 为原始 MediaInfo 文本；无法定位 Audio 段或首条 Format 无法识别时返回空串。
 // 副作用：无。
 //
-// 背景：多音轨（如 AAC 附属轨 + E-AC-3 主轨）时，首条音轨未必是最高规格；取最高规格能避免
-// 把标题声明的 DDP 误判成 AAC，反之亦然。
+// 背景：页面展示（抓取后核对详情页）与站点未配置音轨策略时的缺省口径，统一取第一条音轨。
+// 站点各自的多音轨策略在发布链路里按 audio_track_policy 单独重选，与此处无关。
 func inferAudioCodecFromMediainfo(mediainfo string) string {
-	best := ""
-	bestRank := -1
-	for _, track := range parseAudioTracksFromMediainfo(mediainfo) {
-		rank, ok := audioCodecRank[track.CodecKey]
-		if !ok {
-			rank = 0
-		}
-		if rank > bestRank {
-			bestRank = rank
-			best = track.CodecKey
-		}
+	tracks := parseAudioTracksFromMediainfo(mediainfo)
+	if len(tracks) == 0 {
+		return ""
 	}
-	return best
+	return tracks[0].CodecKey
 }
 
 // parseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨，返回结构化音轨列表。
@@ -186,9 +178,11 @@ func mediaInfoDefaultFlag(section string) bool {
 type AudioTrackPolicy int
 
 const (
+	// AudioTrackPolicyUnset 未设置（缺省）：等价于取第一条音轨。
+	AudioTrackPolicyUnset AudioTrackPolicy = 0
 	// AudioTrackPolicyFirst 取第一条音轨。
 	AudioTrackPolicyFirst AudioTrackPolicy = 1
-	// AudioTrackPolicyHighestBitRate 取码率最高的一条（默认）。
+	// AudioTrackPolicyHighestBitRate 取码率最高的一条。
 	AudioTrackPolicyHighestBitRate AudioTrackPolicy = 2
 	// AudioTrackPolicyHighestSpec 取规格最高的一条。
 	AudioTrackPolicyHighestSpec AudioTrackPolicy = 3
@@ -196,14 +190,20 @@ const (
 
 // SelectAudioTrack 按策略从音轨列表中选出一条。
 // 参数/返回：tracks 为音轨列表；policy 为选择策略；返回选中的音轨（列表为空时返回零值）。
-// 副作用：无。策略非法时回退到码率最高（默认策略）。
+// 副作用：无。未设置（0）或非法策略时回退到「第一条音轨」。
 func selectAudioTrack(tracks []AudioTrack, policy AudioTrackPolicy) AudioTrack {
 	if len(tracks) == 0 {
 		return AudioTrack{}
 	}
 	switch policy {
-	case AudioTrackPolicyFirst:
-		return tracks[0]
+	case AudioTrackPolicyHighestBitRate:
+		best := tracks[0]
+		for _, track := range tracks[1:] {
+			if track.BitRateKbps > best.BitRateKbps {
+				best = track
+			}
+		}
+		return best
 	case AudioTrackPolicyHighestSpec:
 		best := tracks[0]
 		bestRank := -1
@@ -219,14 +219,8 @@ func selectAudioTrack(tracks []AudioTrack, policy AudioTrackPolicy) AudioTrack {
 		}
 		return best
 	default:
-		// 默认：码率最高。
-		best := tracks[0]
-		for _, track := range tracks[1:] {
-			if track.BitRateKbps > best.BitRateKbps {
-				best = track
-			}
-		}
-		return best
+		// 未设置（0）、第一条（1）、或非法值：统一取第一条音轨。
+		return tracks[0]
 	}
 }
 
