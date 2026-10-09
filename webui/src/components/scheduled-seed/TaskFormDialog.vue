@@ -56,6 +56,12 @@
               <el-button size="small" type="info" @click="clearAllSites">清空</el-button>
             </el-button-group>
           </div>
+          <SiteTagChips
+            :sites="tagSiteItems"
+            :selected="form.target_sites"
+            @apply="applyTagSites"
+            @remove="removeTagSites"
+          />
           <div class="site-buttons-group" v-loading="sitesLoading">
             <el-button
               v-for="site in siteList"
@@ -129,6 +135,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import axios from 'axios'
 import { ElMessage } from '@/utils/uiNotify'
+import SiteTagChips from '@/components/SiteTagChips.vue'
 import SeedSelectDialog from './SeedSelectDialog.vue'
 
 type SeedItem = {
@@ -246,9 +253,33 @@ const removeSeed = (index: number) => {
 }
 
 // ---- 目标站点按钮网格 ----
-type SiteItem = { name: string; can_publish: boolean }
+type SiteItem = { name: string; can_publish: boolean; tags: string[] }
 const siteList = ref<SiteItem[]>([])
 const sitesLoading = ref(false)
+
+// 传给标签快捷选择组件的站点清单（不可发布 => disabled）。
+const tagSiteItems = computed(() =>
+  siteList.value.map((site) => ({
+    name: site.name,
+    tags: site.tags,
+    disabled: site.can_publish === false,
+  })),
+)
+
+// 点击标签：把该标签下所有站点追加到已选（不清掉已有选择）。
+const applyTagSites = (names: string[]) => {
+  if (!names.length) return
+  const merged = new Set(form.target_sites)
+  names.forEach((name) => merged.add(name))
+  form.target_sites = Array.from(merged)
+}
+
+// 再次点击已全选的标签：把这批站点移出已选，其余选择保留。
+const removeTagSites = (names: string[]) => {
+  if (!names.length) return
+  const dropped = new Set(names)
+  form.target_sites = form.target_sites.filter((name) => !dropped.has(name))
+}
 
 const toggleSite = (site: string) => {
   const idx = form.target_sites.indexOf(site)
@@ -274,11 +305,13 @@ const fetchSiteList = async () => {
       axios.get('/api/sites_list'),
       axios.get('/api/sites/status'),
     ])
-    // 构建 can_publish 映射 (name → boolean)
+    // 构建 can_publish / tags 映射 (name → 值)
     const canPublishMap = new Map<string, boolean>()
+    const tagsMap = new Map<string, string[]>()
     if (Array.isArray(statusRes.data)) {
       for (const s of statusRes.data) {
         canPublishMap.set(s.name, s.can_publish !== false)
+        tagsMap.set(s.name, Array.isArray(s.tags) ? s.tags : [])
       }
     }
     // /api/sites_list 返回 { source_sites: [...], target_sites: [...] }
@@ -286,14 +319,24 @@ const fetchSiteList = async () => {
       siteList.value = listRes.data.target_sites
         .map((s: any) => {
           const name = typeof s === 'string' ? s : s.site || s.nickname || ''
-          return name ? { name, can_publish: canPublishMap.get(name) !== false } : null
+          if (!name) return null
+          return {
+            name,
+            can_publish: canPublishMap.get(name) !== false,
+            tags: tagsMap.get(name) || [],
+          }
         })
         .filter(Boolean) as SiteItem[]
     } else if (Array.isArray(listRes.data)) {
       siteList.value = listRes.data
         .map((s: any) => {
           const name = typeof s === 'string' ? s : s.name || ''
-          return name ? { name, can_publish: canPublishMap.get(name) !== false } : null
+          if (!name) return null
+          return {
+            name,
+            can_publish: canPublishMap.get(name) !== false,
+            tags: tagsMap.get(name) || [],
+          }
         })
         .filter(Boolean) as SiteItem[]
     }

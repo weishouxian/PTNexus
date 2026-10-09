@@ -81,20 +81,6 @@
           @click.stop
         />
         <span class="name-header-actions" @click.stop>
-              <div
-                v-if="hasActiveFilters"
-                class="current-filters"
-                style="display: flex; align-items: center"
-              >
-                <el-tag type="info" size="default" effect="plain">{{ currentFilterText }}</el-tag>
-                <el-button
-                  type="danger"
-                  link
-                  style="padding: 0; margin-left: 8px"
-                  @click="clearAllFilters"
-                >清除</el-button
-                >
-              </div>
               <ColumnToggle
                 v-model="visibleColumns"
                 :columns="torrentsColumns"
@@ -1494,49 +1480,6 @@ const savePathColumnWidth = computed(() => {
   )
 })
 
-// 计算当前筛选条件的显示文本
-const currentFilterText = computed(() => {
-  const filters = activeFilters
-  const filterTexts = []
-
-  // 处理保存路径筛选
-  if (filters.paths && filters.paths.length > 0) {
-    filterTexts.push(`路径: ${filters.paths.length}`)
-  }
-
-  // 处理状态筛选
-  if (filters.states && filters.states.length > 0) {
-    filterTexts.push(`状态: ${filters.states.length}`)
-  }
-
-  if (filters.sourceDataStatuses && filters.sourceDataStatuses.length > 0) {
-    filterTexts.push(`源站数据状态: ${filters.sourceDataStatuses.length}`)
-  }
-
-  // 处理站点筛选
-  if (filters.existSiteNames && filters.existSiteNames.length > 0) {
-    filterTexts.push(`存在于: ${filters.existSiteNames.length}`)
-  }
-  if (filters.notExistSiteNames && filters.notExistSiteNames.length > 0) {
-    filterTexts.push(`不存在于: ${filters.notExistSiteNames.length}`)
-  }
-
-  return filterTexts.join(', ')
-})
-
-// 检查是否有任何筛选条件被应用
-// 下载器范围由顶部菜单的全局下载器决定，不再计入页面筛选条件。
-const hasActiveFilters = computed(() => {
-  const filters = activeFilters
-  return (
-    (filters.paths && filters.paths.length > 0) ||
-    (filters.states && filters.states.length > 0) ||
-    (filters.sourceDataStatuses && filters.sourceDataStatuses.length > 0) ||
-    (filters.existSiteNames && filters.existSiteNames.length > 0) ||
-    (filters.notExistSiteNames && filters.notExistSiteNames.length > 0)
-  )
-})
-
 // 检查特定站点在当前模式下是否可用
 const isSiteAvailable = (site: string) => {
   if (siteFilterMode.value === 'exist') {
@@ -2525,41 +2468,6 @@ const clearSourceDataStatusFilter = () => {
   tempFilters.sourceDataStatuses = []
 }
 
-// 清除所有筛选和搜索条件
-const clearAllFilters = async () => {
-  // 重置所有筛选条件
-  activeFilters.paths = []
-  activeFilters.states = []
-  activeFilters.sourceDataStatuses = []
-  activeFilters.existSiteNames = []
-  activeFilters.notExistSiteNames = []
-  activeFilters.typeFilters = []
-  activeFilters.mediumFilters = []
-  activeFilters.sourceFilters = []
-  // 下载器范围来自顶部菜单，清筛选时保持当前选择不变。
-  syncDownloaderScope()
-
-  // 重置名称搜索
-  nameSearch.value = ''
-
-  // 重置站点筛选模式
-  siteFilterMode.value = 'exist'
-
-  // 重置站点搜索
-  siteSearch.value = ''
-
-  // 清除路径树的选中状态
-  if (pathTreeRef.value) {
-    pathTreeRef.value.setCheckedKeys([], false)
-  }
-
-  // 重置到第一页并获取数据
-  currentPage.value = 1
-  syncUiSettingsCache()
-  await fetchDataWithSpinner()
-  saveUiSettings()
-}
-
 const formatBytes = (b: number | null): string => {
   if (b == null || b <= 0) return '0 B'
   const s = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
@@ -3063,14 +2971,6 @@ watch(visibleColumns, () => {
   align-items: center;
   gap: 12px;
   flex: 0 0 auto;
-  white-space: nowrap;
-}
-
-.name-header-container .current-filters {
-  display: flex;
-  align-items: center;
-  flex-wrap: nowrap;
-  gap: 8px;
   white-space: nowrap;
 }
 

@@ -78,6 +78,14 @@
         </div>
       </div>
     </div>
+    <div class="toolbar-tag-row">
+      <SiteTagChips
+        :sites="tagSiteItems"
+        :selected="selectedTargetSites"
+        @apply="applyTagSites"
+        @remove="removeTagSites"
+      />
+    </div>
     <div class="site-buttons-group">
       <el-button
         v-for="site in allSitesStatus.filter((s) => s.is_target)"
@@ -138,7 +146,9 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import { InfoFilled } from '@element-plus/icons-vue'
+import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
 
 const {
@@ -160,4 +170,30 @@ const {
   isIloliconSite,
   isCurrentSeedAnimationRelated,
 } = useCrossSeedPanelContext()
+
+// 目标站点 + 各自标签：不可发布的站点在标签里也会被排除（disabled）。
+const tagSiteItems = computed(() =>
+  allSitesStatus.value
+    .filter((site) => site.is_target)
+    .map((site) => ({
+      name: site.name,
+      tags: site.tags,
+      disabled: site.can_publish === false || !isTargetSiteSelectable(site.name),
+    })),
+)
+
+// 点击标签：把该标签下的站点追加到已选集合（不清掉已有选择）。
+const applyTagSites = (names: string[]) => {
+  if (!names.length) return
+  const merged = new Set(selectedTargetSites.value)
+  names.forEach((name) => merged.add(name))
+  selectedTargetSites.value = Array.from(merged)
+}
+
+// 再次点击已全选的标签：把这批站点移出已选集合，其余选择保留。
+const removeTagSites = (names: string[]) => {
+  if (!names.length) return
+  const dropped = new Set(names)
+  selectedTargetSites.value = selectedTargetSites.value.filter((name) => !dropped.has(name))
+}
 </script>

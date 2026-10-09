@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -76,7 +77,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	selectFields := fmt.Sprintf(`
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
 		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
-		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.audio_track_policy, s.sort_order,
+		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.audio_track_policy, s.tags, s.sort_order,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -137,6 +138,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		s["dupe_rules"] = siteDupeRulesFromAny(s["dupe_rules"])
 		// 多音轨策略默认「码率最高」（2）；旧数据无该列时回填默认值。
 		s["audio_track_policy"] = toIntWithDefault(s["audio_track_policy"], 2)
+		// 站点自定义标签：统一解析成字符串数组，前端直接当数组用。
+		s["tags"] = siteStringListFromAny(s["tags"])
 	}
 	return sites, nil
 }
@@ -171,6 +174,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		audioTrackPolicy = 2
 	}
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
+	// 站点自定义标签：统一编码成 JSON 数组入库；未配置时写 "[]"。
+	siteTags := encodeSiteStringList(data["tags"])
 
 	groupColumn := r.store.GroupColumn()
 	sql := fmt.Sprintf(`
@@ -191,6 +196,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			dupe_size_tolerance_bytes = ?,
 			dupe_rules = ?,
 			audio_track_policy = ?,
+			tags = ?,
 			sort_order = ?
 		WHERE id = ?
 	`, groupColumn)
@@ -213,6 +219,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		dupeSizeTolerance,
 		dupeRules,
 		audioTrackPolicy,
+		siteTags,
 		sortOrder,
 		siteID,
 	)
@@ -283,7 +290,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := sqlDB.Query("SELECT nickname, site, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, sort_order FROM sites ORDER BY sort_order, nickname")
+	rows, err := sqlDB.Query("SELECT nickname, site, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY sort_order, nickname")
 	if err != nil {
 		return nil, err
 	}
@@ -307,6 +314,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 			"can_publish":              toIntWithDefault(row["can_publish"], 1) != 0,
 			"forbidden_transfer_sites": siteStringListFromAny(row["forbidden_transfer_sites"]),
 			"dupe_check_enabled":       toIntWithDefault(row["dupe_check_enabled"], 0) != 0,
+			"tags":                     siteStringListFromAny(row["tags"]),
 			"dupe_size_tolerance_bytes": toInt64WithDefault(
 				row["dupe_size_tolerance_bytes"],
 				DefaultDupeSizeToleranceBytes,
@@ -330,6 +338,141 @@ func (r *SiteRepository) UpdateTorrentComment(torrentName, siteName, comment str
 		return false, result.Error
 	}
 	return result.RowsAffected > 0, nil
+}
+
+// 站点标签批量操作模式。
+const (
+	SiteTagModeAdd     = "add"     // 在原有标签上追加
+	SiteTagModeRemove  = "remove"  // 从原有标签里剔除
+	SiteTagModeReplace = "replace" // 整组覆盖（传空 = 清空标签）
+)
+
+// SiteTagBatchError 表示批量打标签的入参不合法（模式非法 / 缺标签）。
+// 上层据此区分「参数问题」与「数据库故障」，前者回 400、后者回 500。
+type SiteTagBatchError struct {
+	Message string
+}
+
+func (e *SiteTagBatchError) Error() string {
+	return e.Message
+}
+
+// BatchUpdateSiteTags 批量修改勾选站点的标签。
+// 参数/返回：ids 为 sites.id 列表；rawTags 为本次操作的标签（数组或逗号串，统一走 siteStringListFromAny 归一）；
+// mode 取 add（追加）/ remove（移除）/ replace（整组覆盖，传空数组即清空标签）。
+// 返回 matched（命中的站点数）与 changed（标签确有变化的站点数）与错误。
+// 失败场景：模式非法或缺标签返回 *SiteTagBatchError；查询/事务失败返回原始错误。
+// 副作用：事务内逐条写入 sites.tags。
+// 说明：changed 在 Go 侧按「标签集合（忽略大小写与顺序）」比对得出，且集合不变就不下发 UPDATE，
+// 因此不依赖各数据库 RowsAffected 的差异（MySQL 值未变回 0、SQLite 照样计 1），统计口径一致。
+func (r *SiteRepository) BatchUpdateSiteTags(ids []int64, rawTags any, mode string) (int, int, error) {
+	normalizedMode := strings.ToLower(strings.TrimSpace(mode))
+	if normalizedMode != SiteTagModeAdd && normalizedMode != SiteTagModeRemove && normalizedMode != SiteTagModeReplace {
+		return 0, 0, &SiteTagBatchError{Message: fmt.Sprintf("不支持的标签操作模式：%s", mode)}
+	}
+	operand := siteStringListFromAny(rawTags)
+	if len(operand) == 0 && normalizedMode != SiteTagModeReplace {
+		return 0, 0, &SiteTagBatchError{Message: "请选择要操作的标签。"}
+	}
+
+	validIDs := make([]int64, 0, len(ids))
+	for _, id := range ids {
+		if id > 0 {
+			validIDs = append(validIDs, id)
+		}
+	}
+	if len(validIDs) == 0 {
+		return 0, 0, &SiteTagBatchError{Message: "未找到有效的站点ID。"}
+	}
+
+	// 一次性读出这批站点的现有标签，再按模式在内存里算出每组新值。
+	// tags 列可能为 NULL，用 sql.NullString 承接；注意必须取 .String 再交给解析器——
+	// 直接把指针传进 siteStringListFromAny 会落到它的 default 分支，被 toString 按 %v 打成
+	// "0xc000..." 之类的地址串，标签会被静默写坏。
+	type siteTagRow struct {
+		ID   int64
+		Tags sql.NullString
+	}
+	rows := make([]siteTagRow, 0, len(validIDs))
+	if err := r.store.DB.Table("sites").Select("id, tags").Where("id IN ?", validIDs).Find(&rows).Error; err != nil {
+		return 0, 0, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+
+	encodedByID := make(map[int64]string, len(rows))
+	for _, row := range rows {
+		current := siteStringListFromAny(row.Tags.String)
+		var next []string
+		switch normalizedMode {
+		case SiteTagModeAdd:
+			next = dedupeSiteStringList(append(append([]string{}, current...), operand...))
+		case SiteTagModeRemove:
+			next = removeSiteTags(current, operand)
+		default:
+			next = operand
+		}
+		if sameSiteTagSet(current, next) {
+			continue
+		}
+		encodedByID[row.ID] = encodeSiteStringList(next)
+	}
+
+	err := r.store.DB.Transaction(func(tx *gorm.DB) error {
+		for id, encoded := range encodedByID {
+			if result := tx.Exec("UPDATE sites SET tags = ? WHERE id = ?", encoded, id); result.Error != nil {
+				return result.Error
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, 0, err
+	}
+	return len(rows), len(encodedByID), nil
+}
+
+// sameSiteTagSet 判断两组标签在「忽略大小写与顺序」的意义下是否等价。
+// 参数/返回：a、b 为已去重的标签列表；返回是否等价。
+// 副作用：无。
+func sameSiteTagSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, item := range a {
+		counts[strings.ToLower(strings.TrimSpace(item))]++
+	}
+	for _, item := range b {
+		key := strings.ToLower(strings.TrimSpace(item))
+		if counts[key] == 0 {
+			return false
+		}
+		counts[key]--
+	}
+	return true
+}
+
+// removeSiteTags 从当前标签里剔除指定标签（忽略大小写）。
+// 参数/返回：current 为站内现有标签，removing 为待移除标签；返回剩余标签（保留原顺序）。
+// 副作用：无。
+func removeSiteTags(current, removing []string) []string {
+	if len(current) == 0 || len(removing) == 0 {
+		return current
+	}
+	drop := make(map[string]struct{}, len(removing))
+	for _, item := range removing {
+		drop[strings.ToLower(strings.TrimSpace(item))] = struct{}{}
+	}
+	result := make([]string, 0, len(current))
+	for _, item := range current {
+		if _, found := drop[strings.ToLower(strings.TrimSpace(item))]; found {
+			continue
+		}
+		result = append(result, item)
+	}
+	return result
 }
 
 // UpdateSitesSortOrder 批量更新站点排序序号。

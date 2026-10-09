@@ -364,14 +364,11 @@ func audioCodecKeyFromFormatText(format string) string {
 			return "audio.truehd_atmos"
 		}
 		return "audio.truehd"
-	case strings.Contains(upper, "DTS:X") || strings.Contains(upper, "DTS X"):
-		return "audio.dtsx"
-	case strings.Contains(upper, "DTS-HD MA") || strings.Contains(upper, "DTS HD MA"):
-		return "audio.dts_hd_ma"
-	case strings.Contains(upper, "DTS-HD HR") || strings.Contains(upper, "DTS HD HR"):
-		return "audio.dts_hd_hr"
 	case strings.Contains(upper, "DTS"):
-		return "audio.dts"
+		// DTS 家族细分统一走 dtsCodecKeyFromText：
+		// 关键是不能用 contains("DTS X") 判 DTS:X —— MediaInfo 把 DTS-HD MA 的 Format 写作 `DTS XLL`，
+		// 会被误命中（2026-10-09 实测：`DTS XLL` + `DTS-HD Master Audio` 被判成 audio.dtsx）。
+		return dtsCodecKeyFromText(upper)
 	case strings.Contains(upper, "E-AC-3") || strings.Contains(upper, "EAC3") ||
 		strings.Contains(upper, "DDP") || strings.Contains(upper, "DOLBY DIGITAL PLUS") || strings.Contains(upper, "DD+"):
 		if strings.Contains(upper, "ATMOS") || strings.Contains(upper, "JOC") {
@@ -404,5 +401,37 @@ func audioCodecKeyFromFormatText(format string) string {
 		return "audio.mp3"
 	default:
 		return ""
+	}
+}
+
+var (
+	// reDTSXMarker 命中真正的 DTS:X 写法：`DTS:X` / `DTS-X` / `DTS X` / `DTSX`，以及 MediaInfo 对 DTS:X 的 `DTS XLL X` 写法。
+	// ⚠️ 不能用 contains("DTS X")：MediaInfo 把 **DTS-HD MA** 的 Format 写作 `DTS XLL`，
+	// 该写法会被 `DTS X` 误命中并判成 DTS:X（2026-10-09 实测）。
+	// Go RE2 无前瞻，用「X 后必须是非字母或字符串结尾」表达 X 的右边界。
+	reDTSXMarker = regexp.MustCompile(`(?:DTS[:\-\s.]*XLL[:\-\s.]*X|DTS[:\-\s.]*X)(?:[^A-Za-z]|$)`)
+	// reDTSHDHRMarker 命中 DTS-HD HR：`DTS-HD HR` / `DTS HD HR` / `DTS-HDMA` 之外的 HRA 写法。
+	reDTSHDHRMarker = regexp.MustCompile(`DTS[:\-\s.]*(?:HD[:\-\s.]*HR|XLL[:\-\s.]*HRA)`)
+	// reDTSHDMAMarker 命中 DTS-HD MA：`DTS-HD MA` / `DTS-HDMA` / `DTS XLL` / `DTS HD MA`。
+	reDTSHDMAMarker = regexp.MustCompile(`DTS[:\-\s.]*(?:HD[:\-\s.]*MA|XLL)`)
+)
+
+// dtsCodecKeyFromText 判定 DTS 家族的具体标准编码键。判定顺序：DTS:X → DTS-HD HR → DTS-HD MA → 裸 DTS。
+// 参数/返回：upper 为已大写的文本（MediaInfo 的 Format 值，或标题/技术文本 token）；非 DTS 家族返回空串。
+// 失败场景：文本为空或不含 `DTS` 时返回空串。
+// 副作用：无。
+func dtsCodecKeyFromText(upper string) string {
+	if !strings.Contains(upper, "DTS") {
+		return ""
+	}
+	switch {
+	case reDTSXMarker.MatchString(upper):
+		return "audio.dtsx"
+	case reDTSHDHRMarker.MatchString(upper) || strings.Contains(upper, "HIGH RESOLUTION"):
+		return "audio.dts_hd_hr"
+	case reDTSHDMAMarker.MatchString(upper) || strings.Contains(upper, "MASTER AUDIO"):
+		return "audio.dts_hd_ma"
+	default:
+		return "audio.dts"
 	}
 }

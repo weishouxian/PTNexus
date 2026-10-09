@@ -289,6 +289,11 @@ func registerRoutes(
 		api.POST("/sites/delete", sitesHandler.DeleteSite)
 		api.POST("/sites/update_cookie", sitesHandler.UpdateSiteCookie)
 		api.POST("/sites/update_order", sitesHandler.UpdateSitesOrder)
+		// 站点标签批量操作（列表页勾选多个站点后统一打标签）。
+		api.POST("/sites/batch_tags", sitesHandler.BatchUpdateSiteTags)
+		// 站点配置导出（含 Cookie/Passkey）与导入（仅补空、不新增站点）。
+		api.GET("/sites/export", sitesHandler.ExportSites)
+		api.POST("/sites/import", sitesHandler.ImportSites)
 		api.GET("/sites/cookie_sync_targets", sitesHandler.CookieSyncTargets)
 		api.GET("/sites/dupe_options", sitesHandler.DupeOptions)
 		api.POST("/sites/cookie_sync_batch", sitesHandler.BatchUpdateSiteCookies)

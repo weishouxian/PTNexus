@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/pt-nexus/server/internal/repository"
@@ -157,6 +159,110 @@ func (h *SitesHandler) SitesStatus(c *gin.Context) {
 		siteStatus["uses_public_publisher"] = h.usesPublicPublisher(siteCode)
 	}
 	c.JSON(http.StatusOK, status)
+}
+
+// ExportSites 导出全部站点配置，供备份或换机迁移使用。
+// 参数/返回：无入参；返回 {"type":"ptnexus.sites","version":1,... ,"sites":[...]}。
+// 说明：导出内容包含 Cookie / Passkey 等凭据，前端会先提示用户妥善保管再下载。
+// 副作用：只读。
+func (h *SitesHandler) ExportSites(c *gin.Context) {
+	sites, err := h.repo.ExportSites()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("导出站点失败: %v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"type":        "ptnexus.sites",
+		"version":     1,
+		"exported_at": time.Now().Format(time.RFC3339),
+		"count":       len(sites),
+		"sites":       sites,
+	})
+}
+
+// ImportSites 导入站点配置，按站点标识匹配已存在站点，且只填充「未配置」的字段（不新增站点）。
+// 说明：Cookie 与 Passkey 作为一组凭据，库里任意一个有值就整组保留，不做单个字段补空。
+// 参数/返回：请求体 {"sites":[...]}；兼容直接传数组。返回导入统计。
+// 失败场景：请求体解析失败、数据库读写失败返回错误；单条写入失败计入结果里的 failed。
+// 副作用：按需 UPDATE sites 表。
+func (h *SitesHandler) ImportSites(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "导入文件内容无法解析。"})
+		return
+	}
+	rawItems, ok := payload["sites"].([]any)
+	if !ok || len(rawItems) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "导入文件里没有站点数据（缺少 sites 数组）。"})
+		return
+	}
+	items := make([]map[string]any, 0, len(rawItems))
+	for _, raw := range rawItems {
+		if item, ok := raw.(map[string]any); ok {
+			items = append(items, item)
+		}
+	}
+	if len(items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "导入文件里没有可用的站点数据。"})
+		return
+	}
+	result, err := h.repo.ImportSites(items)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("导入站点失败: %v", err)})
+		return
+	}
+	result["success"] = true
+	result["message"] = fmt.Sprintf("导入完成：更新 %v 个站点，%v 个无需变更。", result["updated"], result["unchanged"])
+	c.JSON(http.StatusOK, result)
+}
+
+// BatchUpdateSiteTags 批量给勾选的站点打标签。
+// 参数/返回：请求体 {"ids":[1,2],"tags":["电影"],"mode":"add|remove|replace"}；
+// mode=add 追加、remove 移除、replace 整组覆盖（tags 传空数组即清空该批站点的标签）。
+// 返回 {"success":true,"matched":N,"changed":M,...}。
+// 说明：只改 sites.tags，不触碰 Cookie / Passkey / dupe 规则等其它字段，避免批量操作误伤已配好的配置。
+// 失败场景：缺 ids、模式非法、缺标签回 400；数据库读写失败回 500。
+// 副作用：按模式改写 sites.tags。
+func (h *SitesHandler) BatchUpdateSiteTags(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "缺少必要参数。"})
+		return
+	}
+	rawIDs, ok := payload["ids"].([]any)
+	if !ok || len(rawIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请先勾选要操作的站点。"})
+		return
+	}
+	siteIDs := make([]int64, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		id, err := parseInt64(raw)
+		if err != nil || id <= 0 {
+			continue
+		}
+		siteIDs = append(siteIDs, id)
+	}
+	if len(siteIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "未找到有效的站点ID。"})
+		return
+	}
+	mode := strings.TrimSpace(toString(payload["mode"], repository.SiteTagModeAdd))
+	matched, changed, err := h.repo.BatchUpdateSiteTags(siteIDs, payload["tags"], mode)
+	if err != nil {
+		var invalid *repository.SiteTagBatchError
+		if errors.As(err, &invalid) {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": invalid.Message})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("批量修改站点标签失败: %v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"matched": matched,
+		"changed": changed,
+		"message": fmt.Sprintf("已处理 %d 个站点，其中 %d 个站点的标签有变化。", matched, changed),
+	})
 }
 
 func (h *SitesHandler) usesPublicPublisher(siteCode string) bool {

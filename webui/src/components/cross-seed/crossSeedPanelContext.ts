@@ -94,6 +94,8 @@ export interface SiteStatus {
   is_source: boolean
   is_target: boolean
   can_publish: boolean
+  /** 站点自定义标签（站点管理里配置），发布时按标签一键勾选站点。 */
+  tags?: string[]
   uses_public_publisher?: boolean
   uses_public_extractor?: boolean
   forbidden_transfer_sites?: string[]
