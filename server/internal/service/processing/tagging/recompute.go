@@ -39,6 +39,8 @@ func RecomputeStandardTags(
 
 	_, isBDInfo, _ := processingmedia.ValidateMediaInfoFormat(strings.TrimSpace(mediainfo))
 	rawTagCandidates = append(rawTagCandidates, ExtractRawTagsFromMediaText(mediainfo, isBDInfo)...)
+	// 音频编码标签（Atmos）与标准值同源补齐：标题漏写 Atmos 时靠 MediaInfo/BDInfo 兜底。
+	rawTagCandidates = append(rawTagCandidates, ExtractRawTagsFromAudioCodec(title, mediainfo)...)
 
 	// 本体已落到原盘档且 BDInfo 碟指纹提示 DIY 时补 DIY 原始标签，
 	// 交由 MapTagsToStandard 按站点过滤（站点没配 tag.DIY 映射时自然被丢弃）。

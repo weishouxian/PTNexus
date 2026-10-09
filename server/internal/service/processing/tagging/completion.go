@@ -77,7 +77,9 @@ func extractRawTagsFromTitleComponents(components []map[string]any) []string {
 		}
 	}
 
-	// 音频编码：提取 Atmos 标签（对齐 Python：Atmos 可能无空格，如 Atmos7.1）
+	// 音频编码：提取 Atmos 标签（对齐 Python：Atmos 可能无空格，如 Atmos7.1）。
+	// 这里只覆盖标题组件自带的「音频编码」字段（宽松匹配，可命中裸 Atmos）；
+	// 标题漏写时的兜底由 ExtractRawTagsFromAudioCodec 从 MediaInfo/BDInfo 同源补齐。
 	audio := strings.TrimSpace(values["音频编码"])
 	if audio != "" && reAtmosFromAudio.MatchString(audio) {
 		tags = appendUniqueStringLocal(tags, "Atmos")
@@ -758,6 +760,21 @@ func ExtractTagsFromDescriptionScore(description string) []string {
 // ExtractRawTagsFromMediaText 从媒体文本提取原始标签。
 func ExtractRawTagsFromMediaText(mediaText string, isBDInfo bool) []string {
 	return extractRawTagsFromMediaText(mediaText, isBDInfo)
+}
+
+// ExtractRawTagsFromAudioCodec 按与标准值同源的口径从标题+媒体文本推断音频编码原始标签。
+// 目前仅产出 Atmos：判定复用 extract.InferAudioCodecKey（MediaInfo Format 优先 → 标题 token → 合并文本 token，
+// 并在同族编码内按 Atmos 线索升级），与站点「音频编码」字段（audio.truehd_atmos / audio.ddp_atmos）完全同源，避免两处口径漂移。
+// 背景：extractRawTagsFromTitleComponents 只认标题组件的「音频编码」字段，
+// 标题漏写 Atmos（如只有 TrueHD7.1）时标签会丢 Atmos，而标准值仍能判出（2026-10-09 实测）。
+// 参数/返回：title 为种子标题；mediaText 为 MediaInfo/BDInfo 原文；命中全景声时返回 ["Atmos"]。
+// 失败场景：标题与媒体文本都无线索时返回空切片。
+// 副作用：无。
+func ExtractRawTagsFromAudioCodec(title, mediaText string) []string {
+	if parser.AudioCodecKeyIndicatesAtmos(parser.InferAudioCodecKey(title, mediaText)) {
+		return []string{"Atmos"}
+	}
+	return []string{}
 }
 
 func processingExtractHDRInfoFromMediaText(text string, isBDInfo bool) processingmedia.HDRInfo {

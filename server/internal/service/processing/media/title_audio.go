@@ -105,6 +105,13 @@ func TitleAudioCodecFamily(text string) string {
 		return ""
 	}
 	for _, rule := range audioTitleFamilyRules {
+		// 「DTS XLL」是 MediaInfo 对 DTS-HD MA 的 Format 写法，会被 dtsx 规则里的 `DTS X` 误命中；
+		// 文本里只有 XLL、没有真正的 DTS:X 写法时跳过 dtsx 规则（2026-10-09 实测）。
+		if rule.standard == "audio.dtsx" &&
+			reDTSXLLFormatMarker.MatchString(trimmed) &&
+			!reDTSXExplicitMarker.MatchString(trimmed) {
+			continue
+		}
 		// 用 replace 正则判断命中（它兼容粘连声道数字如 AAC2.0/DDP2.0；detect 的尾部 \b 会漏判）。
 		if !rule.replace.MatchString(trimmed) {
 			continue
@@ -116,6 +123,14 @@ func TitleAudioCodecFamily(text string) string {
 	}
 	return ""
 }
+
+var (
+	// reDTSXLLFormatMarker 命中 MediaInfo 对 DTS-HD MA 的 `DTS XLL` 写法（不是 DTS:X）。
+	reDTSXLLFormatMarker = regexp.MustCompile(`(?i)DTS[:\-\s.]?XLL`)
+	// reDTSXExplicitMarker 命中真正的 DTS:X 写法（X 后必须是非字母或字符串结尾），
+	// 用于在含 XLL 的文本里确认是否存在真的 DTS:X。Go RE2 无前瞻，故用尾部边界组表达。
+	reDTSXExplicitMarker = regexp.MustCompile(`(?i)(?:DTS[:\-\s.]?XLL[:\-\s.]?X|DTS[:\-\s.]?X)(?:[^A-Za-z]|$)`)
+)
 
 // ReplaceTitleAudioCodecToken 把文本中旧家族的音频编码 token 替换为标准键对应的展示写法。
 // 参数/返回：text 为标题或标题组件值；standardAudioCodec 为标准音频键（audio.*）。

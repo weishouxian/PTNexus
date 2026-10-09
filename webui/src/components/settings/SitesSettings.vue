@@ -69,6 +69,16 @@
           >
             排序
           </el-button>
+          <el-button
+            :type="selectedSites.length ? 'primary' : 'default'"
+            :disabled="selectedSites.length === 0"
+            :icon="PriceTag"
+            @click="openBatchTagDialog"
+          >
+            批量打标签{{ selectedSites.length ? `（${selectedSites.length}）` : '' }}
+          </el-button>
+          <el-button :icon="Upload" :loading="isImporting" @click="triggerImport">导入</el-button>
+          <el-button :icon="Download" :loading="isExporting" @click="handleExport">导出</el-button>
           <el-input
             v-model="searchQuery"
             placeholder="搜索站点昵称/标识/官组"
@@ -78,6 +88,14 @@
           />
         </template>
       </div>
+      <!-- 站点配置导入：隐藏的原生文件选择框，由「导入」按钮触发 -->
+      <input
+        ref="importFileInput"
+        type="file"
+        accept="application/json,.json"
+        class="hidden-file-input"
+        @change="handleImportFileChange"
+      />
     </div>
 
     <!-- 2. 中间可滚动内容区域 -->
@@ -90,10 +108,19 @@
         :row-class-name="getRowClassName"
         @sort-change="handleSortChange"
         @row-click="handleRowClick"
+        @selection-change="handleSelectionChange"
         :default-sort="defaultSort"
         :row-style="{ cursor: 'pointer' }"
         row-key="id"
+        ref="sitesTableRef"
       >
+        <el-table-column
+          v-if="!isSortMode"
+          type="selection"
+          width="46"
+          align="center"
+          fixed="left"
+        />
         <el-table-column v-if="isSortMode" label="" width="50" align="center" class-name="drag-handle-col">
           <template #default="scope">
             <span
@@ -212,6 +239,22 @@
           sortable="custom"
           :sort-orders="['ascending', 'descending']"
         />
+        <el-table-column prop="tags" label="标签" min-width="140">
+          <template #default="scope">
+            <div v-if="scope.row.tags?.length" class="site-tag-list">
+              <el-tag
+                v-for="tag in scope.row.tags"
+                :key="tag"
+                size="small"
+                type="info"
+                effect="plain"
+              >
+                {{ tag }}
+              </el-tag>
+            </div>
+            <span v-else>-</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="forbidden_transfer_sites" label="禁转站点" min-width="150">
           <template #default="scope">
             <div v-if="scope.row.forbidden_transfer_sites?.length" class="site-tag-list">
@@ -386,6 +429,25 @@
         <el-form-item label="关联官组" prop="group">
           <el-input v-model="siteForm.group" placeholder="例如：PT, PTWEB"></el-input>
           <div class="form-tip">用于识别种子所属发布组，多个组用英文逗号(,)分隔。</div>
+        </el-form-item>
+        <el-form-item label="标签" prop="tags">
+          <el-select
+            v-model="siteForm.tags"
+            multiple
+            filterable
+            clearable
+            allow-create
+            default-first-option
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="输入后回车即可新增标签，如：电影、通用"
+            style="width: 100%"
+          >
+            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag" />
+          </el-select>
+          <div class="form-tip">
+            给站点打标签（可多个）。发布时可按标签一键勾选同一标签下的所有站点。
+          </div>
         </el-form-item>
         <el-form-item label="禁转站点" prop="forbidden_transfer_sites">
           <el-select
@@ -646,6 +708,51 @@
         </span>
       </template>
     </el-dialog>
+
+    <!-- 批量打标签对话框：作用于列表页勾选的站点 -->
+    <el-dialog
+      v-model="batchTagDialogVisible"
+      title="批量打标签"
+      width="520px"
+      :close-on-click-modal="false"
+      class="site-batch-tag-dialog"
+    >
+      <el-form label-width="72px" label-position="left">
+        <el-form-item label="操作">
+          <el-radio-group v-model="batchTagMode">
+            <el-radio-button label="add">添加</el-radio-button>
+            <el-radio-button label="remove">移除</el-radio-button>
+            <el-radio-button label="replace">覆盖</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="标签">
+          <el-select
+            v-model="batchTagSelection"
+            multiple
+            filterable
+            clearable
+            allow-create
+            default-first-option
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="输入后回车即可新增标签，如：电影、通用"
+            style="width: 100%"
+          >
+            <el-option v-for="tag in allTagOptions" :key="tag" :label="tag" :value="tag" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <div class="form-tip batch-tag-hint">{{ batchTagHint }}</div>
+      <div class="form-tip batch-tag-targets">作用于：{{ batchTagTargetText }}</div>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="batchTagDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="isBatchTagSaving" @click="handleBatchTagSubmit">
+            确定
+          </el-button>
+        </span>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -653,7 +760,16 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import axios from 'axios'
 import { ElMessageBox } from 'element-plus'
-import { Delete, Edit, Rank, Refresh, Search } from '@element-plus/icons-vue'
+import {
+  Delete,
+  Download,
+  Edit,
+  PriceTag,
+  Rank,
+  Refresh,
+  Search,
+  Upload,
+} from '@element-plus/icons-vue'
 import { ElMessage } from '@/utils/uiNotify'
 
 type SiteConfig = {
@@ -663,6 +779,7 @@ type SiteConfig = {
   base_url?: string
   special_tracker_domain?: string
   group?: string
+  tags?: string[]
   forbidden_transfer_sites?: string[]
   cookie?: string
   passkey?: string
@@ -711,6 +828,8 @@ type SiteForm = {
   base_url: string
   special_tracker_domain: string
   group: string
+  /** 站点自定义标签（发布时可按标签一键勾选站点） */
+  tags: string[]
   forbidden_transfer_sites: string[]
   cookie: string
   passkey: string
@@ -994,6 +1113,7 @@ const siteForm = ref<SiteForm>({
   base_url: '',
   special_tracker_domain: '',
   group: '',
+  tags: [],
   forbidden_transfer_sites: [],
   cookie: '',
   passkey: '',
@@ -1010,6 +1130,15 @@ const siteForm = ref<SiteForm>({
 })
 
 const API_BASE_URL = '/api'
+
+// --- 列表勾选与批量打标签状态 ---
+// 勾选范围只算「当前页」：表格未开 reserve-selection，翻页/改筛选后组件自身会清空选择。
+const sitesTableRef = ref<unknown>(null)
+const selectedSites = ref<SiteConfig[]>([])
+const batchTagDialogVisible = ref(false)
+const batchTagMode = ref<'add' | 'remove' | 'replace'>('add')
+const batchTagSelection = ref<string[]>([])
+const isBatchTagSaving = ref(false)
 
 // --- 计算属性 ---
 
@@ -1033,6 +1162,55 @@ const transferSiteOptions = computed(() =>
     (site) => String(site.site || '') !== String(siteForm.value.site || ''),
   ),
 )
+
+// 已存在的全部站点标签（去重、按中文排序）：编辑弹窗里供选择，也允许直接新建。
+const allTagOptions = computed(() => {
+  const set = new Set<string>()
+  for (const site of sitesList.value || []) {
+    for (const tag of site.tags || []) {
+      const trimmed = String(tag || '').trim()
+      if (trimmed) set.add(trimmed)
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+})
+
+// 站点标签入库前统一清洗：去掉空串与重复项（忽略大小写）。
+const normalizeTags = (tags: unknown): string[] => {
+  if (!Array.isArray(tags)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const raw of tags) {
+    const trimmed = String(raw ?? '').trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(trimmed)
+  }
+  return result
+}
+
+// 批量打标签作用的目标站点文案：列前几个昵称，其余用数量收口。
+const batchTagTargetText = computed(() => {
+  const list = selectedSites.value
+  if (!list.length) return '未勾选站点'
+  const names = list.slice(0, 5).map((site) => String(site.nickname || site.site || ''))
+  const suffix = list.length > names.length ? ` 等 ${list.length} 个站点` : ''
+  return `${names.join('、')}${suffix}`
+})
+
+// 批量打标签的操作说明：跟随模式变化，明确「追加 / 移除 / 覆盖」的后果。
+const batchTagHint = computed(() => {
+  switch (batchTagMode.value) {
+    case 'remove':
+      return '从勾选站点上移除所选标签，其余标签保留。'
+    case 'replace':
+      return '用所选标签替换勾选站点的全部原有标签；不选任何标签即清空这些站点的标签。'
+    default:
+      return '把所选标签追加到勾选站点的原有标签上，原有标签保留。'
+  }
+})
 
 // 仅对已实现 dupe 能力的站点显示开关（人人、幸运）。
 const isDupeCheckVisible = computed(() =>
@@ -1225,11 +1403,13 @@ const filteredSites = computed(() => {
       const nickname = (site.nickname || '').toLowerCase()
       const siteIdentifier = (site.site || '').toLowerCase()
       const group = (site.group || '').toLowerCase()
+      const tags = (site.tags || []).join(' ').toLowerCase()
       const forbidden = (site.forbidden_transfer_sites || []).join(' ').toLowerCase()
       return (
         nickname.includes(term) ||
         siteIdentifier.includes(term) ||
         group.includes(term) ||
+        tags.includes(term) ||
         forbidden.includes(term)
       )
     })
@@ -1419,6 +1599,151 @@ const fetchSites = async () => {
   }
 }
 
+// --- 站点配置导入 / 导出 ---
+const isExporting = ref(false)
+const isImporting = ref(false)
+const importFileInput = ref<HTMLInputElement | null>(null)
+
+/** 站点导入接口返回的统计结果 */
+type SiteImportResult = {
+  success?: boolean
+  message?: string
+  updated?: number
+  unchanged?: number
+  missing?: string[]
+  invalid?: string[]
+  failed?: { site?: string; error?: string }[]
+}
+
+const padNumber = (value: number) => String(value).padStart(2, '0')
+
+const formatTimestamp = (date: Date) =>
+  `${date.getFullYear()}${padNumber(date.getMonth() + 1)}${padNumber(date.getDate())}` +
+  `-${padNumber(date.getHours())}${padNumber(date.getMinutes())}${padNumber(date.getSeconds())}`
+
+const downloadJsonFile = (fileName: string, data: unknown) => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = window.URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  window.URL.revokeObjectURL(url)
+}
+
+const handleExport = () => {
+  ElMessageBox.confirm(
+    '导出文件包含各站点的 Cookie / Passkey 等凭据，请妥善保管、不要随意外发。',
+    '导出站点配置',
+    { confirmButtonText: '确认导出', cancelButtonText: '取消', type: 'warning' },
+  )
+    .then(async () => {
+      isExporting.value = true
+      try {
+        const response = await axios.get(`${API_BASE_URL}/sites/export`)
+        const payload = (response.data || {}) as { sites?: unknown[] }
+        const count = Array.isArray(payload.sites) ? payload.sites.length : 0
+        downloadJsonFile(
+          `ptnexus-sites-${formatTimestamp(new Date())}.json`,
+          response.data || { sites: [] },
+        )
+        ElMessage.success(`已导出 ${count} 个站点配置`)
+      } catch {
+        ElMessage.error('导出站点配置失败')
+      } finally {
+        isExporting.value = false
+      }
+    })
+    .catch(() => {})
+}
+
+const triggerImport = () => {
+  const input = importFileInput.value
+  if (!input) return
+  // 先清空 value，保证连续导入同一个文件也能触发 change
+  input.value = ''
+  input.click()
+}
+
+const handleImportFileChange = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files && input.files[0]
+  if (!file) return
+
+  let items: Record<string, unknown>[] = []
+  try {
+    const text = await file.text()
+    const parsed = JSON.parse(text) as unknown
+    // 既接受完整导出结构 { sites: [...] }，也接受裸数组
+    const rawSites = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object' && Array.isArray((parsed as { sites?: unknown }).sites)
+        ? (parsed as { sites: unknown[] }).sites
+        : []
+    items = rawSites.filter(
+      (item): item is Record<string, unknown> => !!item && typeof item === 'object',
+    )
+  } catch {
+    ElMessage.error('文件解析失败，请确认是合法的 JSON 文件')
+    return
+  }
+  if (items.length === 0) {
+    ElMessage.error('文件里没有站点数据，请选择由「导出」生成的 JSON 文件')
+    return
+  }
+
+  try {
+    await ElMessageBox.confirm(
+      `文件里共 ${items.length} 个站点。导入只填充当前为空或仍是默认值的字段，已手动配置过的值不会被覆盖，也不会新增站点；Cookie / Passkey 只要库里有一个有值，就整组都不动。`,
+      '导入站点配置',
+      { confirmButtonText: '开始导入', cancelButtonText: '取消', type: 'info' },
+    )
+  } catch {
+    return
+  }
+
+  isImporting.value = true
+  try {
+    const response = await axios.post(`${API_BASE_URL}/sites/import`, { sites: items })
+    const result = (response.data || {}) as SiteImportResult
+    if (result.success === false) {
+      ElMessage.error(String(result.message || '导入失败'))
+      return
+    }
+    const missing = Array.isArray(result.missing) ? result.missing : []
+    const failed = Array.isArray(result.failed) ? result.failed : []
+    const lines = [
+      `更新 ${Number(result.updated) || 0} 个站点，${Number(result.unchanged) || 0} 个无需变更。`,
+    ]
+    if (missing.length > 0) {
+      lines.push(
+        `跳过 ${missing.length} 个库中不存在的站点（导入不会新增站点）：` +
+          `${missing.slice(0, 5).join('、')}${missing.length > 5 ? ' 等' : ''}`,
+      )
+    }
+    if (failed.length > 0) {
+      const failedNames = failed
+        .slice(0, 3)
+        .map((item) => String(item?.site || ''))
+        .filter(Boolean)
+        .join('、')
+      lines.push(`${failed.length} 个站点写入失败：${failedNames}`)
+    }
+    ElMessageBox.alert(lines.join('<br/>'), failed.length > 0 ? '导入完成（有失败项）' : '导入完成', {
+      confirmButtonText: '知道了',
+      type: failed.length > 0 ? 'warning' : 'success',
+      dangerouslyUseHTMLString: true,
+    }).catch(() => {})
+    await fetchSites()
+  } catch {
+    ElMessage.error('导入站点配置失败')
+  } finally {
+    isImporting.value = false
+  }
+}
+
 // 当后端筛选器改变时，重置分页并重新获取数据
 const handleFilterChange = () => {
   pagination.value.currentPage = 1
@@ -1436,6 +1761,9 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   base_url: String(site.base_url || ''),
   special_tracker_domain: String(site.special_tracker_domain || ''),
   group: String(site.group || ''),
+  tags: Array.isArray(site.tags)
+    ? site.tags.map((item) => String(item).trim()).filter(Boolean)
+    : [],
   forbidden_transfer_sites: Array.isArray(site.forbidden_transfer_sites)
     ? site.forbidden_transfer_sites.map((item) => String(item).trim()).filter(Boolean)
     : [],
@@ -1527,10 +1855,88 @@ const handleOpenDialog = (site: SiteConfig) => {
   dialogVisible.value = true
 }
 
-// 点击表格行打开编辑对话框
-const handleRowClick = (row: SiteConfig) => {
+// 表格行点击：打开编辑对话框。
+// 说明：勾选框所在列（type=selection）不打开弹窗，否则每勾一个站点都会弹出编辑框。
+const handleRowClick = (row: SiteConfig, column?: { type?: string }) => {
   if (isSortMode.value) return
+  if (column && column.type === 'selection') return
   handleOpenDialog(row)
+}
+
+// 勾选变化：只维护当前勾选的站点，实际作用范围由后端按 id 处理。
+const handleSelectionChange = (rows: SiteConfig[]) => {
+  selectedSites.value = Array.isArray(rows) ? rows : []
+}
+
+const openBatchTagDialog = () => {
+  if (!selectedSites.value.length) {
+    ElMessage.warning('请先勾选要操作的站点。')
+    return
+  }
+  batchTagMode.value = 'add'
+  batchTagSelection.value = []
+  batchTagDialogVisible.value = true
+}
+
+const resetSiteSelection = () => {
+  selectedSites.value = []
+  // 表格实例类型由 Element Plus 提供，这里只用到 clearSelection，用窄化断言避免引入 any。
+  const table = sitesTableRef.value as { clearSelection?: () => void } | null
+  table?.clearSelection?.()
+}
+
+const handleBatchTagSubmit = async () => {
+  const ids = selectedSites.value
+    .map((site) => Number(site.id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要操作的站点。')
+    return
+  }
+  const tags = normalizeTags(batchTagSelection.value)
+  if (batchTagMode.value !== 'replace' && !tags.length) {
+    ElMessage.warning('请选择要操作的标签。')
+    return
+  }
+  // 「覆盖 + 不选标签」等于清空这批站点的标签，属于破坏性操作，先单独确认一次。
+  if (batchTagMode.value === 'replace' && !tags.length) {
+    try {
+      await ElMessageBox.confirm(
+        `将清空这 ${ids.length} 个站点的全部标签，是否继续？`,
+        '确认清空标签',
+        { confirmButtonText: '确定清空', cancelButtonText: '取消', type: 'warning' },
+      )
+    } catch {
+      ElMessage.info('操作已取消。')
+      return
+    }
+  }
+
+  isBatchTagSaving.value = true
+  try {
+    const response = await axios.post(`${API_BASE_URL}/sites/batch_tags`, {
+      ids,
+      tags,
+      mode: batchTagMode.value,
+    })
+    if (response.data?.success) {
+      ElMessage.success(response.data.message || '站点标签已更新。')
+      batchTagDialogVisible.value = false
+      resetSiteSelection()
+      await fetchSites()
+    } else {
+      ElMessage.error(response.data?.message || '操作失败！')
+    }
+  } catch (error: unknown) {
+    const msg = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string } | undefined)?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '请求失败，请检查网络或后端服务。'
+    ElMessage.error(msg)
+  } finally {
+    isBatchTagSaving.value = false
+  }
 }
 
 const handleSave = async () => {
@@ -1550,6 +1956,8 @@ const handleSave = async () => {
       dupe_size_tolerance_bytes: mbToBytes(siteForm.value.dupe_size_tolerance_mb),
       // 编辑器按行维护规则，提交前转成「媒介 → 维度集合」对象（含兜底规则）。
       dupe_rules: buildDupeRules(),
+      // 标签统一清洗后再提交（去空、去重）。
+      tags: normalizeTags(siteForm.value.tags),
     }
 
     const response = await axios.post(`${API_BASE_URL}/sites/update`, siteData)
@@ -1691,6 +2099,13 @@ const handleDelete = (site: SiteConfig) => {
   font-size: 12px;
   line-height: 1.5;
   margin-top: 4px;
+}
+
+/* 标签列：多个标签之间留出间距 */
+.site-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* dupe 规则编辑器：按媒介配置判定维度 */
@@ -1843,6 +2258,24 @@ const handleDelete = (site: SiteConfig) => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* 站点配置导入用的隐藏文件选择框（由「导入」按钮触发 click） */
+.hidden-file-input {
+  display: none;
+}
+
+/* 批量打标签弹窗：说明与作用范围对齐表单 label 宽度（72px） */
+.batch-tag-hint {
+  margin-left: 72px;
+  margin-top: -6px;
+  margin-bottom: 6px;
+}
+
+.batch-tag-targets {
+  margin-left: 72px;
+  color: var(--el-text-color-secondary);
+  word-break: break-all;
 }
 
 @media (max-width: 768px) {

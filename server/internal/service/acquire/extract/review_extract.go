@@ -2565,64 +2565,6 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		"tags_array":  "",
 	}
 
-	normalizedTitleForAudio := normalizeAudioCodecTokensForInference(title)
-	normalizedUpperTechForAudio := strings.ToUpper(normalizeAudioCodecTokensForInference(title + "\n" + sanitizedMediainfo))
-
-	inferAudioCodec := func(upperText string) string {
-		upper := strings.ToUpper(strings.TrimSpace(upperText))
-		if upper == "" {
-			return ""
-		}
-		switch {
-		case strings.Contains(upper, "TRUEHD"):
-			if strings.Contains(upper, "ATMOS") {
-				return "audio.truehd_atmos"
-			}
-			return "audio.truehd"
-		case strings.Contains(upper, "DTS:X") || strings.Contains(upper, "DTS X"):
-			return "audio.dtsx"
-		case strings.Contains(upper, "DTS-HD MA") || strings.Contains(upper, "DTS HD MA"):
-			return "audio.dts_hd_ma"
-		case strings.Contains(upper, "DTS"):
-			return "audio.dts"
-		case strings.Contains(upper, "E-AC-3") || strings.Contains(upper, "DDP") || strings.Contains(upper, "DD+"):
-			// 对齐 MediaInfo/BDInfo 解析：E-AC-3 + JOC 属独立标准值 audio.ddp_atmos，
-			// 漏判会退化成普通 DDP，发布到支持杜比全景声的站点时丢失 Atmos 标记。
-			if strings.Contains(upper, "ATMOS") || strings.Contains(upper, "JOC") {
-				return "audio.ddp_atmos"
-			}
-			return "audio.ddp"
-		case strings.Contains(upper, "AC-3") || strings.Contains(upper, "AC3"):
-			return "audio.ac3"
-		case strings.Contains(upper, "FLAC"):
-			return "audio.flac"
-		case strings.Contains(upper, "AV3A") || strings.Contains(upper, "AUDIO VIVID"):
-			return "audio.av3a"
-		case strings.Contains(upper, "ALAC"):
-			return "audio.alac"
-		case strings.Contains(upper, "APE"):
-			return "audio.ape"
-		case strings.Contains(upper, "WAV"):
-			return "audio.wav"
-		case strings.Contains(upper, "OGG"), strings.Contains(upper, "VORBIS"):
-			return "audio.ogg"
-		case strings.Contains(upper, "DSD"):
-			return "audio.dsd"
-		case strings.Contains(upper, "AAC"):
-			return "audio.aac"
-		case strings.Contains(upper, "LPCM"), strings.Contains(upper, "PCM"):
-			return "audio.lpcm"
-		case strings.Contains(upper, "OPUS"):
-			return "audio.opus"
-		case strings.Contains(upper, "MP3"):
-			return "audio.mp3"
-		case strings.Contains(upper, "MP2"):
-			return "audio.mp3"
-		default:
-			return ""
-		}
-	}
-
 	hasTech := func(parts ...string) bool {
 		for _, part := range parts {
 			if part != "" && strings.Contains(upperTech, strings.ToUpper(part)) {
@@ -2698,14 +2640,11 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 		}
 	}
 
-	// 音频编码优先从 MediaInfo 第一条 Audio 段的 Format 字段提取（以实际音轨为准，取第一条音轨），
-	// 缺失时才回退标题 token，再回退合并技术文本 token。
-	if fromMediaInfo := inferAudioCodecFromMediainfo(sanitizedMediainfo); fromMediaInfo != "" {
-		values["audio_codec"] = fromMediaInfo
-	} else if fromTitle := inferAudioCodec(normalizedTitleForAudio); fromTitle != "" {
-		values["audio_codec"] = fromTitle
-	} else if fromTech := inferAudioCodec(normalizedUpperTechForAudio); fromTech != "" {
-		values["audio_codec"] = fromTech
+	// 音频编码统一走 InferAudioCodecKey（与标签链路同源）：
+	// MediaInfo 的 Audio 段 Format（多轨取规格最高）> 标题 token > 「标题+媒体文本」合并文本 token，
+	// 并在同族编码内按 Atmos 线索升级（标题只写 TrueHD7.1、Atmos 落在 BDInfo/MediaInfo 音轨描述时不再漏判）。
+	if codecKey := InferAudioCodecKey(title, mediainfo); codecKey != "" {
+		values["audio_codec"] = codecKey
 	}
 
 	switch {

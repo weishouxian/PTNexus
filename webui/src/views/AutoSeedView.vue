@@ -354,6 +354,12 @@
               :disabled="site.can_publish === false"
             />
           </el-select>
+          <SiteTagChips
+            :sites="tagSiteItems"
+            :selected="ruleTargetSites"
+            @apply="applyTagSitesToRule"
+            @remove="removeTagSitesFromRule"
+          />
         </el-form-item>
         <el-form-item label="拉取频率">
           <el-input-number v-model="editingRule.pull_interval_minutes" :min="1" :max="1440" />
@@ -491,6 +497,12 @@
               :disabled="site.can_publish === false"
             />
           </el-select>
+          <SiteTagChips
+            :sites="tagSiteItems"
+            :selected="publishTargetSites"
+            @apply="applyTagSitesToPublish"
+            @remove="removeTagSitesFromPublish"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -507,6 +519,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Upload } from '@element-plus/icons-vue'
 import CrossSeedPanel from '@/components/CrossSeedPanel.vue'
+import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedStore } from '@/stores/crossSeed'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { WorkingTorrent } from '@/components/cross-seed/panel/types'
@@ -525,6 +538,8 @@ type SiteStatus = {
   is_source: boolean
   is_target: boolean
   can_publish: boolean
+  /** 站点自定义标签（站点管理里配置），发布时按标签一键勾选站点。 */
+  tags?: string[]
 }
 type Rule = {
   id: number
@@ -586,6 +601,41 @@ const downloaders = ref<Downloader[]>([])
 const sourceSiteOptions = ref<SiteStatus[]>([])
 const targetSiteOptions = ref<SiteStatus[]>([])
 const sitesLoading = ref(false)
+
+// 发布站点按标签快捷勾选：不可发布的站点在标签里也会被排除（disabled）。
+const tagSiteItems = computed(() =>
+  targetSiteOptions.value.map((site) => ({
+    name: site.name,
+    tags: site.tags,
+    disabled: site.can_publish === false,
+  })),
+)
+
+// 点击标签：把该标签下的站点追加到已选集合（不清掉已有选择）。
+const mergeSites = (current: string[], names: string[]): string[] => {
+  if (!names.length) return current
+  const merged = new Set(current)
+  names.forEach((name) => merged.add(name))
+  return Array.from(merged)
+}
+// 再次点击已全选的标签：把这批站点移出已选集合，其余选择保留。
+const dropSites = (current: string[], names: string[]): string[] => {
+  if (!names.length) return current
+  const dropped = new Set(names)
+  return current.filter((name) => !dropped.has(name))
+}
+const applyTagSitesToRule = (names: string[]) => {
+  ruleTargetSites.value = mergeSites(ruleTargetSites.value, names)
+}
+const removeTagSitesFromRule = (names: string[]) => {
+  ruleTargetSites.value = dropSites(ruleTargetSites.value, names)
+}
+const applyTagSitesToPublish = (names: string[]) => {
+  publishTargetSites.value = mergeSites(publishTargetSites.value, names)
+}
+const removeTagSitesFromPublish = (names: string[]) => {
+  publishTargetSites.value = dropSites(publishTargetSites.value, names)
+}
 const selectedRows = ref<Item[]>([])
 const page = ref(1)
 const pageSize = ref(20)
