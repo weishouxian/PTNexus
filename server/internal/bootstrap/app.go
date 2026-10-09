@@ -286,6 +286,7 @@ func registerRoutes(
 		api.GET("/sites_list", sitesHandler.SitesList)
 		api.GET("/sites", sitesHandler.Sites)
 		api.POST("/sites/update", sitesHandler.UpdateSite)
+		api.POST("/sites/update_dupe", sitesHandler.UpdateSiteDupe)
 		api.POST("/sites/delete", sitesHandler.DeleteSite)
 		api.POST("/sites/update_cookie", sitesHandler.UpdateSiteCookie)
 		api.POST("/sites/update_order", sitesHandler.UpdateSitesOrder)

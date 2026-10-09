@@ -285,6 +285,49 @@ func (r *SiteRepository) UpdateSiteCookieBySite(siteCode, cookie string) (bool, 
 	return count > 0, nil
 }
 
+// UpdateSiteDupeSettings 只更新站点的 dupe 查重配置（开关 / 体积容差 / 按媒介规则）。
+// 参数/返回：data 需含 id，其余键为 dupe_check_enabled、dupe_size_tolerance_bytes、dupe_rules。
+// 返回是否命中该站点；参数非法或执行失败时返回错误。
+//
+// 说明：单独开一个只更新这三列的方法，是因为 UpdateSiteDetails 是全字段覆盖 ——
+// 站点设置里的 dupe 弹窗只知道自己那几项，若走全量更新会把昵称 / cookie 等一并清空。
+// 副作用：更新 sites 表的 dupe 相关列。
+func (r *SiteRepository) UpdateSiteDupeSettings(data map[string]any) (bool, error) {
+	siteID, err := toInt64(data["id"])
+	if err != nil || siteID <= 0 {
+		return false, errors.New("invalid site id")
+	}
+
+	dupeCheckEnabled := 0
+	if toIntWithDefault(data["dupe_check_enabled"], 0) != 0 {
+		dupeCheckEnabled = 1
+	}
+	// 与 UpdateSiteDetails 同口径：0 是合法值（体积须完全一致），只有负数回退默认。
+	dupeSizeTolerance := toInt64WithDefault(data["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
+	if dupeSizeTolerance < 0 {
+		dupeSizeTolerance = DefaultDupeSizeToleranceBytes
+	}
+	dupeRules := encodeSiteDupeRules(data["dupe_rules"])
+
+	result := r.store.DB.Exec(
+		"UPDATE sites SET dupe_check_enabled = ?, dupe_size_tolerance_bytes = ?, dupe_rules = ? WHERE id = ?",
+		dupeCheckEnabled,
+		dupeSizeTolerance,
+		dupeRules,
+		siteID,
+	)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	// 同 UpdateSiteDetails：MySQL 在「提交值与库内完全相同」时 RowsAffected 为 0，
+	// 因此显式回查主键来判断站点是否存在，避免「没改任何值直接保存」被误报成站点不存在。
+	var count int64
+	if err := r.store.DB.Table("sites").Where("id = ?", siteID).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	sqlDB, err := r.store.DB.DB()
 	if err != nil {
