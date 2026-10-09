@@ -245,7 +245,7 @@
         >
           <template #default="scope">
             <span
-              v-if="!DUPE_CHECK_SUPPORTED_SITES.includes(String(scope.row.site || '').toLowerCase())"
+              v-if="!scope.row.dupe_supported"
               style="color: var(--el-text-color-placeholder)"
               >-</span
             >
@@ -412,10 +412,19 @@
             <el-tag v-else type="success"> 自动获取 </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" align="center" fixed="right">
+        <el-table-column label="操作" width="260" align="center" fixed="right">
           <template #default="scope">
             <el-button type="primary" :icon="Edit" link @click="handleOpenDialog(scope.row)">
               编辑
+            </el-button>
+            <el-button
+              v-if="scope.row.dupe_supported"
+              type="warning"
+              :icon="Filter"
+              link
+              @click.stop="handleOpenDupeDialog(scope.row)"
+            >
+              Dupe 设置
             </el-button>
             <el-button type="danger" :icon="Delete" link @click.stop="handleDelete(scope.row)">
               删除
@@ -546,21 +555,125 @@
             发布时种子含多条音轨，按此策略选出一条作为音频编码并同步修改发种标题。未设置时默认取第一条音轨。
           </div>
         </el-form-item>
-        <el-form-item v-if="isDupeCheckVisible" label="Dupe 校验" prop="dupe_check_enabled">
-          <el-switch v-model="siteForm.dupe_check_enabled" />
-          <div class="form-tip">
-            开启后，发布前会用 {{ dupeSearchIdLabel }} 加类型、媒介、分辨率、音视频编码到站点检索；
-            若已存在「制作组相同且体积差在 {{ formatDupeTolerance(siteForm.dupe_size_tolerance_bytes) }} 以内」的种子，则判定为重复并拒绝发布，
-            <strong>判为重复的种子不会添加到下载器</strong>，避免重复下载与重复做种。默认关闭。
+        <el-form-item label="排序序号" prop="sort_order">
+          <el-input-number
+            v-model="siteForm.sort_order"
+            :min="0"
+            :max="9999"
+            style="width: 100%"
+          />
+          <div class="form-tip">数值越小越靠前，0 表示不参与自定义排序（按默认规则排列）。</div>
+        </el-form-item>
+        <el-form-item label="Cookie" prop="cookie">
+          <el-input
+            v-model="siteForm.cookie"
+            type="textarea"
+            :rows="3"
+            :placeholder="siteForm.site === 'rousi' ? '无需设置' : '从浏览器获取的Cookie字符串'"
+            :disabled="siteForm.site === 'rousi'"
+          ></el-input>
+        </el-form-item>
+        <el-form-item label="Passkey" prop="passkey">
+          <el-input
+            v-model="siteForm.passkey"
+            :placeholder="
+              siteForm.site === 'm-team' ? '控制台 → 实验室 → 存取令牌（36 位 UUID）' : '站点的Passkey'
+            "
+          ></el-input>
+          <div
+            v-if="siteForm.site === 'hddolby' || siteForm.site === 'pthome'"
+            class="form-tip"
+            style="color: #409eff; font-weight: bold"
+          >
+            杜比/铂金家的passkey为种子详情页复制种子链接时downhash=后的部分
+          </div>
+          <div
+            v-else-if="siteForm.site === 'm-team'"
+            class="form-tip"
+            style="color: #409eff; font-weight: bold"
+          >
+            馒头这里要填「存取令牌」而不是站点 Passkey：控制台 → 实验室 → 存取令牌，生成结果是 36 位 UUID（形如 57b1fa6c-4444-3333-2222-1b1111111111）。填成站点 Passkey（32 位）发种会报 code=1「key無效」。
+          </div>
+          <div
+            v-else-if="siteForm.site === 'rousi'"
+            class="form-tip"
+            style="color: #409eff; font-weight: bold"
+          >
+            获取肉丝passkey-
+            <el-button
+              type="primary"
+              size="small"
+              tag="a"
+              href="https://rousi.pro/account?tab=passkey"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              跳转
+            </el-button>
           </div>
         </el-form-item>
-        <el-form-item
-          v-if="isDupeCheckVisible && siteForm.dupe_check_enabled"
-          label="体积容差"
-          prop="dupe_size_tolerance_bytes"
-        >
+        <el-form-item label="上传限速 (MB/s)" prop="speed_limit">
           <el-input-number
-            v-model="siteForm.dupe_size_tolerance_mb"
+            v-model="siteForm.speed_limit"
+            :min="0"
+            :max="1000"
+            style="width: 100%"
+          />
+          <div class="form-tip" style="color: red; font-size: 12px">
+            填写 0 重启恢复默认；超过 999 显示不限速
+          </div>
+        </el-form-item>
+        <el-form-item label="分享率阈值" prop="ratio_threshold">
+          <el-input-number
+            v-model="siteForm.ratio_threshold"
+            :min="1.2"
+            :max="100"
+            :step="0.1"
+            :precision="1"
+            style="width: 100%"
+          />
+          <div class="form-tip" style="font-size: 12px">默认 3.0，达到后触发出种限速</div>
+        </el-form-item>
+        <el-form-item label="出种限速 (MB/s)" prop="seed_speed_limit">
+          <el-input-number
+            v-model="siteForm.seed_speed_limit"
+            :min="0"
+            :max="1000"
+            style="width: 100%"
+          />
+          <div class="form-tip" style="color: #409eff; font-size: 12px">默认 5 MB/s</div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <span class="dialog-footer">
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button type="primary" @click="handleSave" :loading="isSaving"> 保存 </el-button>
+        </span>
+      </template>
+    </el-dialog>
+    <!-- Dupe 查重设置：独立弹窗，只更新 dupe 相关字段（走 /api/sites/update_dupe） -->
+    <el-dialog
+      v-model="dupeDialogVisible"
+      title="Dupe 查重设置"
+      width="760px"
+      :close-on-click-modal="false"
+      class="site-edit-dialog"
+    >
+      <div class="dupe-dialog-target">
+        站点：{{ dupeForm.nickname || '-' }}
+        <span class="dupe-rule-key">{{ dupeForm.site }}</span>
+      </div>
+      <el-form label-width="100px" label-position="left">
+        <el-form-item label="Dupe 校验">
+          <el-switch v-model="dupeForm.enabled" />
+          <div class="form-tip">
+            开启后，发布前会用 {{ dupeSearchIdLabelFor(dupeForm.site) }} 按下面的查重规则到站点检索；
+            <strong>判为重复的种子不会发布、也不会添加到下载器</strong>。默认关闭。
+          </div>
+        </el-form-item>
+        <el-form-item v-if="dupeForm.enabled" label="体积容差">
+          <el-input-number
+            v-model="dupeForm.tolerance_mb"
             :min="0"
             :max="102400"
             :step="64"
@@ -571,10 +684,7 @@
             单位 MB。默认 {{ DEFAULT_DUPE_TOLERANCE_MB }} MB；设为 0 表示要求体积完全一致才算重复。
           </div>
         </el-form-item>
-        <el-form-item
-          v-if="isDupeCheckVisible && siteForm.dupe_check_enabled"
-          label="查重规则"
-        >
+        <el-form-item v-if="dupeForm.enabled" label="查重规则">
           <div class="dupe-rules">
             <div class="form-tip">
               按媒介分别设置判定维度：<strong>只对下面添加过的媒介做查重</strong>，未添加的媒介走兜底规则（未开启兜底则跳过）。
@@ -675,100 +785,10 @@
             </div>
           </div>
         </el-form-item>
-        <el-form-item label="排序序号" prop="sort_order">
-          <el-input-number
-            v-model="siteForm.sort_order"
-            :min="0"
-            :max="9999"
-            style="width: 100%"
-          />
-          <div class="form-tip">数值越小越靠前，0 表示不参与自定义排序（按默认规则排列）。</div>
-        </el-form-item>
-        <el-form-item label="Cookie" prop="cookie">
-          <el-input
-            v-model="siteForm.cookie"
-            type="textarea"
-            :rows="3"
-            :placeholder="siteForm.site === 'rousi' ? '无需设置' : '从浏览器获取的Cookie字符串'"
-            :disabled="siteForm.site === 'rousi'"
-          ></el-input>
-        </el-form-item>
-        <el-form-item label="Passkey" prop="passkey">
-          <el-input
-            v-model="siteForm.passkey"
-            :placeholder="
-              siteForm.site === 'm-team' ? '控制台 → 实验室 → 存取令牌（36 位 UUID）' : '站点的Passkey'
-            "
-          ></el-input>
-          <div
-            v-if="siteForm.site === 'hddolby' || siteForm.site === 'pthome'"
-            class="form-tip"
-            style="color: #409eff; font-weight: bold"
-          >
-            杜比/铂金家的passkey为种子详情页复制种子链接时downhash=后的部分
-          </div>
-          <div
-            v-else-if="siteForm.site === 'm-team'"
-            class="form-tip"
-            style="color: #409eff; font-weight: bold"
-          >
-            馒头这里要填「存取令牌」而不是站点 Passkey：控制台 → 实验室 → 存取令牌，生成结果是 36 位 UUID（形如 57b1fa6c-4444-3333-2222-1b1111111111）。填成站点 Passkey（32 位）发种会报 code=1「key無效」。
-          </div>
-          <div
-            v-else-if="siteForm.site === 'rousi'"
-            class="form-tip"
-            style="color: #409eff; font-weight: bold"
-          >
-            获取肉丝passkey-
-            <el-button
-              type="primary"
-              size="small"
-              tag="a"
-              href="https://rousi.pro/account?tab=passkey"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              跳转
-            </el-button>
-          </div>
-        </el-form-item>
-        <el-form-item label="上传限速 (MB/s)" prop="speed_limit">
-          <el-input-number
-            v-model="siteForm.speed_limit"
-            :min="0"
-            :max="1000"
-            style="width: 100%"
-          />
-          <div class="form-tip" style="color: red; font-size: 12px">
-            填写 0 重启恢复默认；超过 999 显示不限速
-          </div>
-        </el-form-item>
-        <el-form-item label="分享率阈值" prop="ratio_threshold">
-          <el-input-number
-            v-model="siteForm.ratio_threshold"
-            :min="1.2"
-            :max="100"
-            :step="0.1"
-            :precision="1"
-            style="width: 100%"
-          />
-          <div class="form-tip" style="font-size: 12px">默认 3.0，达到后触发出种限速</div>
-        </el-form-item>
-        <el-form-item label="出种限速 (MB/s)" prop="seed_speed_limit">
-          <el-input-number
-            v-model="siteForm.seed_speed_limit"
-            :min="0"
-            :max="1000"
-            style="width: 100%"
-          />
-          <div class="form-tip" style="color: #409eff; font-size: 12px">默认 5 MB/s</div>
-        </el-form-item>
       </el-form>
       <template #footer>
-        <span class="dialog-footer">
-          <el-button @click="dialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="handleSave" :loading="isSaving"> 保存 </el-button>
-        </span>
+        <el-button @click="dupeDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="isDupeSaving" @click="handleSaveDupe">保存</el-button>
       </template>
     </el-dialog>
 
@@ -843,6 +863,7 @@ import {
   Delete,
   Download,
   Edit,
+  Filter,
   PriceTag,
   Rank,
   Refresh,
@@ -870,6 +891,8 @@ type SiteConfig = {
   has_cookie?: boolean
   has_passkey?: boolean
   can_publish?: boolean | number
+  /** 站点是否声明了 dupe 查重能力（后端按站点 YAML 标注） */
+  dupe_supported?: boolean
   dupe_check_enabled?: boolean | number
   dupe_size_tolerance_bytes?: number | null
   dupe_rules?: Record<string, string[]> | null
@@ -963,15 +986,6 @@ type DupeRuleRow = {
 
 // 已实现 dupe 检索能力的站点（configs/<site>.yaml 里有 dupe_check.enabled），只有这些站点显示开关。
 // 判定能力以站点 YAML 为准；这里只负责入口显隐，后端在站点未声明能力时会跳过校验并写日志说明。
-const DUPE_CHECK_SUPPORTED_SITES = [
-  'audiences',
-  'luckpt',
-  'hdhome',
-  'pterclub',
-  'ourbits',
-  'chdbits',
-]
-
 // 检索所用的外部 ID 描述：各站 search_area 支持的范围不同（有的站没有豆瓣/IMDb 范围），故按站点区分文案。
 // 值与该站 configs/<site>.yaml 的 dupe_check.search_areas 保持一致，避免提示与实际行为不符。
 const DUPE_SEARCH_ID_LABELS: Record<string, string> = {
@@ -1327,16 +1341,12 @@ const batchTagHint = computed(() => {
   }
 })
 
-// 仅对已实现 dupe 能力的站点显示开关（人人、幸运）。
-const isDupeCheckVisible = computed(() =>
-  DUPE_CHECK_SUPPORTED_SITES.includes(String(siteForm.value.site || '').toLowerCase()),
-)
-
+// dupe 设置入口只对已实现 dupe 能力的站点开放。
+// ⚠️ 判据来自后端站点列表接口的 dupe_supported（后端按站点 YAML 的 dupe_check.enabled 标注），
+// 前端不再维护站点清单，避免新增站点时两处都要改。
 // 检索所用的外部 ID 描述：按站点区分，未登记时用通用文案。
-const dupeSearchIdLabel = computed(
-  () =>
-    DUPE_SEARCH_ID_LABELS[String(siteForm.value.site || '').toLowerCase()] ?? '豆瓣 / IMDb ID',
-)
+const dupeSearchIdLabelFor = (siteCode: unknown): string =>
+  DUPE_SEARCH_ID_LABELS[String(siteCode || '').toLowerCase()] ?? '豆瓣 / IMDb ID'
 
 // 供表单提示文案使用的容差展示。
 const formatDupeTolerance = (bytes: number | null | undefined): string => {
@@ -1979,13 +1989,71 @@ const handleSaveAndSync = async () => {
 
 const handleOpenDialog = (site: SiteConfig) => {
   siteForm.value = normalizeSiteForm(site)
+  dialogVisible.value = true
+}
+
+// --- Dupe 查重设置弹窗 ---
+// 只维护 dupe 相关字段，保存走独立接口（/api/sites/update_dupe）。
+// ⚠️ 不能复用站点编辑的全量更新：那个接口是全字段覆盖，只带 dupe 字段会把昵称 / cookie 清空。
+const dupeDialogVisible = ref(false)
+const isDupeSaving = ref(false)
+const dupeForm = ref({
+  id: null as number | string | null,
+  site: '',
+  nickname: '',
+  enabled: false,
+  tolerance_mb: DEFAULT_DUPE_TOLERANCE_MB,
+})
+
+const handleOpenDupeDialog = (site: SiteConfig) => {
+  dupeForm.value = {
+    id: site.id ?? null,
+    site: String(site.site || ''),
+    nickname: String(site.nickname || ''),
+    enabled: Boolean(Number(site.dupe_check_enabled) || 0),
+    tolerance_mb: bytesToMb(normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes)),
+  }
   dupeRuleRows.value = rowsFromRules(site.dupe_rules)
   const fallbackDims = fallbackFromRules(site.dupe_rules)
   dupeFallbackEnabled.value = fallbackDims.length > 0
   dupeFallbackDimensions.value = fallbackDims.length > 0 ? fallbackDims : [...DUPE_DEFAULT_DIMENSIONS]
-  // 打开弹窗时按站点拉一次可选项（媒介清单与各维度可用性都取决于站点 YAML）。
+  pendingDupeMedium.value = ''
+  // 媒介清单与各维度可用性都取决于站点 YAML，打开时按站点拉一次。
   void loadDupeOptions(String(site.site || ''))
-  dialogVisible.value = true
+  dupeDialogVisible.value = true
+}
+
+const handleSaveDupe = async () => {
+  // 兜底规则开着却一个维度都不勾 → 配置没有可执行语义，先拦住并说清原因。
+  if (dupeForm.value.enabled && dupeFallbackEnabled.value && dupeFallbackDimensions.value.length === 0) {
+    ElMessage.error('兜底规则至少需要勾选一个判定维度，或关闭兜底规则。')
+    return
+  }
+  isDupeSaving.value = true
+  try {
+    const response = await axios.post(`${API_BASE_URL}/sites/update_dupe`, {
+      id: dupeForm.value.id,
+      dupe_check_enabled: dupeForm.value.enabled,
+      dupe_size_tolerance_bytes: mbToBytes(dupeForm.value.tolerance_mb),
+      dupe_rules: buildDupeRules(),
+    })
+    if (response.data.success) {
+      ElMessage.success(response.data.message || 'Dupe 查重设置已保存。')
+      dupeDialogVisible.value = false
+      await fetchSites()
+    } else {
+      ElMessage.error(response.data.message || '保存失败！')
+    }
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data as { message?: string } | undefined)?.message || error.message
+      : error instanceof Error
+        ? error.message
+        : '保存失败，请检查网络或后端服务。'
+    ElMessage.error(message)
+  } finally {
+    isDupeSaving.value = false
+  }
 }
 
 // 表格行点击：打开编辑对话框。
@@ -2073,11 +2141,6 @@ const handleBatchTagSubmit = async () => {
 }
 
 const handleSave = async () => {
-  // 兜底规则开着却一个维度都不勾 → 配置没有可执行语义，先拦住并说清原因。
-  if (dupeFallbackEnabled.value && dupeFallbackDimensions.value.length === 0) {
-    ElMessage.error('兜底规则至少需要勾选一个判定维度，或关闭兜底规则。')
-    return
-  }
   isSaving.value = true
   try {
     const siteData: SiteForm = {
@@ -2087,8 +2150,9 @@ const handleSave = async () => {
       seed_speed_limit: siteForm.value.seed_speed_limit || 5,
       // 输入框以 MB 展示，提交前换算回后端存储口径（字节）。
       dupe_size_tolerance_bytes: mbToBytes(siteForm.value.dupe_size_tolerance_mb),
-      // 编辑器按行维护规则，提交前转成「媒介 → 维度集合」对象（含兜底规则）。
-      dupe_rules: buildDupeRules(),
+      // dupe 规则已迁到独立弹窗维护：这里原样透传库里的值，
+      // 不能拿弹窗的编辑器状态来重建，否则「只编辑站点信息」会把规则覆盖成空。
+      dupe_rules: { ...siteForm.value.dupe_rules },
       // 标签统一清洗后再提交（去空、去重）。
       tags: normalizeTags(siteForm.value.tags),
     }
@@ -2274,6 +2338,12 @@ const handleDelete = (site: SiteConfig) => {
 }
 
 /* dupe 规则编辑器：按媒介配置判定维度 */
+.dupe-dialog-target {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: #606266;
+}
+
 .dupe-rules {
   width: 100%;
 }

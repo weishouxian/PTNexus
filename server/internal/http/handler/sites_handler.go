@@ -43,6 +43,12 @@ func (h *SitesHandler) Sites(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "获取站点列表失败"})
 		return
 	}
+	// 逐站点标注是否实现了 dupe 查重能力（同 SitesStatus 标注 uses_public_publisher 的做法）。
+	// 判据是站点 YAML 的 dupe_check.enabled —— 前端据此决定「Dupe 设置」入口与 Dupe 列，
+	// 不必再维护一份硬编码站点清单，避免新增站点时漏改前端。
+	for _, site := range sites {
+		site["dupe_supported"] = publishdupe.SiteSupportsDupe(toString(site["site"], ""))
+	}
 	c.JSON(http.StatusOK, sites)
 }
 
@@ -84,6 +90,33 @@ func (h *SitesHandler) UpdateSite(c *gin.Context) {
 	}
 	nickname := pythonLikeString(payload["nickname"])
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("站点 '%s' 的信息已成功更新。", nickname)})
+}
+
+// UpdateSiteDupe 只更新站点的 dupe 查重配置（开关 / 体积容差 / 按媒介规则）。
+// 参数/返回：请求体需含 id 与 dupe 相关字段；返回 {"success":true}。
+// 说明：与全量更新分开，避免 dupe 弹窗把站点的其它字段覆盖成空值。
+// 副作用：更新 sites 表的 dupe 相关列。
+func (h *SitesHandler) UpdateSiteDupe(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点ID。"})
+		return
+	}
+	rawID, exists := payload["id"]
+	if !exists || rawID == nil || isFalsyID(rawID) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点ID。"})
+		return
+	}
+	updated, err := h.repo.UpdateSiteDupeSettings(payload)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("保存 dupe 设置失败: %v", err)})
+		return
+	}
+	if !updated {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": fmt.Sprintf("未找到站点ID '%v'。", rawID)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Dupe 查重设置已保存。"})
 }
 
 func (h *SitesHandler) DeleteSite(c *gin.Context) {
