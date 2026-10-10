@@ -34,7 +34,7 @@ env:
   IMAGE_NAME: pt-nexus
   # Docker Hub 上的仓库名与 GHCR 不同（Docker Hub: fenglaile/ptnexus）
   DOCKERHUB_IMAGE_NAME: ptnexus
-  GITEE_OWNER: sqing33
+  GITEE_OWNER: wsx181
   GITEE_REPO: PTNexus
   BROWSER_EXTENSION_ASSET_NAME: pt-nexus-browser-extension.zip
 
