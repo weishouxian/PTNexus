@@ -247,7 +247,7 @@ func extractAudioInfoFromMediaInfo(text string) AudioInfo {
 				curr["profile"] = m[1]
 			} else if m := regexp.MustCompile(`(?i)^\s*Title\s*:\s*(.+?)\s*$`).FindStringSubmatch(line); len(m) == 2 {
 				curr["title"] = m[1]
-			} else if m := regexp.MustCompile(`(?i)^\s*Channel\\(s\\)\s*:\s*(.+?)\s*$`).FindStringSubmatch(line); len(m) == 2 {
+			} else if m := regexp.MustCompile(`(?i)^\s*Channel\(s\)\s*:\s*(.+?)\s*$`).FindStringSubmatch(line); len(m) == 2 {
 				curr["ch_count"] = m[1]
 			} else if m := regexp.MustCompile(`(?i)^\s*Channel\s+layout\s*:\s*(.+?)\s*$`).FindStringSubmatch(line); len(m) == 2 {
 				curr["ch_layout"] = m[1]
@@ -352,7 +352,7 @@ func buildMediaInfoAudioFromTracks(tracks []parsedAudioTrack, isMediaInfo bool) 
 		return AudioInfo{}
 	}
 
-	best := tracks[0]
+	best := pickMainAudioTrack(tracks)
 	total := len(tracks)
 	audioCount := ""
 	if isMediaInfo && total > 1 {
@@ -380,6 +380,37 @@ func buildMediaInfoAudioFromTracks(tracks []parsedAudioTrack, isMediaInfo bool) 
 		HasAtmos:  strings.EqualFold(best.SuffixTag, "Atmos"),
 		AllTracks: allTracks,
 	}
+}
+
+// pickMainAudioTrack 按「标准音频编码推断口径」从音轨列表中挑出主音轨。
+// 参数/返回：tracks 为按出现顺序排列的音轨；列表为空时返回零值。
+// 失败场景：不返回错误；规则不命中的一律保持物理首轨。
+// 副作用：无。
+//
+// 背景（2026-10-11）：多语言发行的 WEB-DL 常把配音轨排在第一条（实测首轨为捷克语
+// AAC LC 2.0、主音轨却是 E-AC-3 5.1），恒取物理首轨会让「音频编码」组件显示 `AAC 2.0`，
+// 与标准值 audio_codec（同源规则、会跳过低规格配音轨）长期不一致。
+//
+// 选轨规则不在此处重写，而是复用 extract.SelectInferenceAudioTrack：
+// 仅当首轨是已识别的低规格配音轨（AAC/MP3）且存在更高规格音轨时才改判，其余保持首轨
+// （BDInfo 的「首轨权威」语义因此不受影响——首轨 LPCM/TrueHD/DTS 均高于阈值）。
+func pickMainAudioTrack(tracks []parsedAudioTrack) parsedAudioTrack {
+	if len(tracks) == 0 {
+		return parsedAudioTrack{}
+	}
+
+	candidates := make([]parser.AudioTrack, len(tracks))
+	for idx, track := range tracks {
+		candidates[idx] = parser.AudioTrack{CodecKey: parser.AudioCodecKeyFromDisplayName(track.BaseCodec)}
+	}
+
+	chosen := parser.SelectInferenceAudioTrack(candidates)
+	for idx, candidate := range candidates {
+		if candidate.CodecKey == chosen.CodecKey {
+			return tracks[idx]
+		}
+	}
+	return tracks[0]
 }
 
 func cleanBBCode(text string) string {

@@ -110,6 +110,15 @@
 
 - TorrentsView，`GET /api/data`，聚合键 name+size；类型/媒介/地区取自 `seed_parameters`（择优 is_reviewed > 非空多 > updated_at 晚），中文靠 `reverse_mappings`；`columns_version=2`。
 
+### 站点标签全链（sites.tags）
+
+- 真源列 `sites.tags`（JSON 数组，编解码 `siteStringListFromAny`/`encodeSiteStringList`）。单站写在 `UpdateSiteDetails`；**批量** `SiteRepository.BatchUpdateSiteTags(ids, rawTags, mode)`（mode=add/remove/replace，只改 tags 不动其它字段）→ `POST /api/sites/batch_tags`，入口 = 站点管理列表勾选后的「批量打标签」；非法入参回 `*SiteTagBatchError` → handler 400。
+- ⚠️ 读 `tags` 列必须用 `sql.NullString` 并取 `.String` 再交给解析器 —— 传 `*string` 会落到 `siteStringListFromAny` 的 default 分支被 `toString` 按 `%v` 打成 `0xc000...` 地址串，标签被静默写坏（已踩）。`changed` 在 Go 侧按标签集合（忽略大小写/顺序）比对，不用 RowsAffected（MySQL 与 SQLite 口径不同）。
+- 前端快捷选择唯一实现 `components/SiteTagChips.vue`（4 处引用：转种 `CrossSeedStepSiteSelection`、定时发种 `TaskFormDialog`、自动发种 `AutoSeedView` 规则+发布弹窗）：**点标签 = 切换** —— 该标签下站点未全选 emit `apply`（父组件并集补选），已全选 emit `remove`（父组件过滤剔除），其余选择不动；`disabled` 站点不计入 `selectable`，无可选站点时不 emit。
+- 配色 `utils/siteTagColor.ts`（`siteTagStyle(tag,'plain'|'solid')`，同名恒定同色、不落库）；key 归一/匹配 `utils/siteTag.ts`（`siteTagKey`/`siteTagMatchesAnyTagKey`，忽略大小写与空白）；共享样式 `assets/styles/site-tags.scss`（`.site-tag-chip`，main.ts 引入）。⚠️ 色相哈希必须带雪崩混淆（FNV-1a + 末尾 xorshift）—— 用 `hash*31+code` 这种线性哈希时中文短标签会聚集（实测 24 个标签只落到 9 个色相、单色相挤 7 个）。
+- 站点管理列表：**筛选条件在表头上方** `.tag-filter-row`（`v-if="!isSortMode"`，无标签时也显示）里一个 `el-select` 多选绑定 `activeTagFilters`（filterable/clearable/collapse-tags，选项来自 `allTagOptions` + 末尾特殊项「未设置标签」，与搜索/站点范围筛选 AND，变更回第一页，激活时 `tagFilterHint` 显示命中数）。**「未设置标签」= 哨兵值 `__ptn_no_tag__`**（`TAG_FILTER_NO_TAG[_LABEL]`，灰底虚线胶囊、不注入按名推导的颜色），语义是与普通标签并列的 OR 分支：`siteTagKeys(site.tags).length === 0`（空数组/缺字段/只有空白项都算未设置）；哨兵不进 `activeTagFilterKeys`。⚠️ 别用 `siteMatchesAnyTagKey` 承接这段逻辑 —— 它在 `wantedKeys.size===0` 时返回 **true**，只勾「未设置标签」会把全部站点放行。
+- 标签列只做展示、不可点击筛选（点标签列等同点行 → 打开编辑弹窗）。标签列、筛选下拉与编辑/批量弹窗的 `el-select` 标签都上色（弹窗用 EP `#tag` 插槽渲染彩色可关闭标签）。
+
 ## 修复/校验入口（转种面板「重新获取」）
 
 - 统一入口 `POST /api/media/validate`（`bootstrap/app.go:352`）→ `handler/migrate/downloader_media.go:MediaValidate` → `migrationflow/media.go:MediaValidate`（补 savePath）→ `repair.MediaValidateEntry` → `repair.ValidateMediaPayload`，按 `type` 分发 `screenshot_preview`/`screenshot_finalize`/`screenshot`/`poster`/`intro`/`mediainfo`。

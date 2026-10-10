@@ -76,18 +76,136 @@ var audioCodecRank = map[string]int{
 	"audio.other":        0,
 }
 
-// inferAudioCodecFromMediainfo 从 MediaInfo 的全部 Audio 段的 Format 字段推断音频编码，取第一条音轨。
+// inferAudioCodecFromMediainfo 从 MediaInfo 的全部 Audio 段的 Format 字段推断音频编码。
 // 参数/返回：mediainfo 为原始 MediaInfo 文本；无法定位 Audio 段或首条 Format 无法识别时返回空串。
 // 副作用：无。
 //
-// 背景：页面展示（抓取后核对详情页）与站点未配置音轨策略时的缺省口径，统一取第一条音轨。
+// 背景：页面展示（抓取后核对详情页）与站点未配置音轨策略时的缺省口径，默认取第一条音轨。
 // 站点各自的多音轨策略在发布链路里按 audio_track_policy 单独重选，与此处无关。
+//
+// 例外（2026-10-10 实测）：多语言发行的 WEB-DL 常把配音轨排在第一条——首轨是捷克语
+// AAC LC 2.0、主音轨却是 E-AC-3 5.1，此时「取第一条」会把标准音频编码判成 audio.aac，
+// 再经标题 token 替换链路写成「AAC 5.1」这类源里不存在的组合。
+// 故首轨规格不高于 AAC 且存在更高规格音轨时改取规格最高者，其余情况口径不变。
 func inferAudioCodecFromMediainfo(mediainfo string) string {
 	tracks := parseAudioTracksFromMediainfo(mediainfo)
 	if len(tracks) == 0 {
 		return ""
 	}
-	return tracks[0].CodecKey
+	return audioCodecKeyForInference(tracks)
+}
+
+// audioCodecKeyForInference 从结构化音轨列表里挑出用于「标准音频编码」的音轨编码键。
+// 参数/返回：tracks 为按出现顺序排列的音轨；列表为空时返回空串。
+// 失败场景：不返回错误；全部音轨都无可用编码键时返回首轨（可能为空串）。
+// 副作用：无。
+//
+// 判定规则：单音轨、首轨编码无法识别、或首轨规格已高于 AAC 时，一律保持「取第一条」的既有口径；
+// 仅当首轨是已识别的低规格配音轨（AAC/MP3）时才改取 audioCodecRank 最高的一条，
+// 同规格时按 Default 标记、码率、出现顺序依次决胜。
+//
+// ⚠️ 「首轨编码无法识别（rank 0）」必须原样返回空串而不是改为次高轨：MediaInfo 把 TrueHD 的
+// Format 写作 `MLP FBA`，本包映射不到标准键，若改成后面的 AAC 轨会把正确的高规格音轨降级，
+// 同时掐掉 InferAudioCodecKey 里「媒体识别不到 → 回退标题 token」的兜底。
+func audioCodecKeyForInference(tracks []AudioTrack) string {
+	if len(tracks) == 0 {
+		return ""
+	}
+
+	first := tracks[0]
+	firstRank := audioCodecRank[first.CodecKey]
+	if len(tracks) == 1 || firstRank <= 0 || firstRank > audioCodecRank["audio.aac"] {
+		return first.CodecKey
+	}
+
+	best := first
+	bestRank := firstRank
+	for _, track := range tracks[1:] {
+		rank := audioCodecRank[track.CodecKey]
+		switch {
+		case rank > bestRank:
+			best, bestRank = track, rank
+		case rank == bestRank && rank > firstRank:
+			if track.Default && !best.Default {
+				best = track
+			} else if track.Default == best.Default && track.BitRateKbps > best.BitRateKbps {
+				best = track
+			}
+		}
+	}
+	return best.CodecKey
+}
+
+// SelectInferenceAudioTrack 按「标准音频编码推断口径」从音轨列表中挑出主音轨（导出版本）。
+// 参数/返回：tracks 为按出现顺序排列的音轨；列表为空时返回零值。
+// 失败场景：不返回错误；目标编码在列表中找不到对应项时回退首轨。
+// 副作用：无。
+//
+// 用途：processing/media 拼「音频编码」组件时复用同一套选轨规则，
+// 避免组件值（物理首轨）与标准值 audio_codec（跳过低规格配音轨）两套口径长期打架。
+func SelectInferenceAudioTrack(tracks []AudioTrack) AudioTrack {
+	if len(tracks) == 0 {
+		return AudioTrack{}
+	}
+	target := audioCodecKeyForInference(tracks)
+	for _, track := range tracks {
+		if track.CodecKey == target {
+			return track
+		}
+	}
+	return tracks[0]
+}
+
+// AudioCodecKeyFromDisplayName 把展示口径的音频编码名（DDP/TrueHD/DTS-HD MA/DD…）归一为标准键（audio.*）。
+// 参数/返回：display 为 processing/media:standardAudioCode 产出的展示名；无法识别时返回空串。
+// 副作用：无。
+//
+// 说明：展示口径由 processing/media 维护，与 mediainfo_codec.go:audioCodecKeyFromFormatText
+// （面向 MediaInfo 的 `Format :` 字段）是两套不同输入，不能合并。
+// 此处只做「展示名 → 标准键」的字典映射，让媒体侧能复用同一张 audioCodecRank 与同一套选轨规则，
+// 避免规格权重表在两处各写一份造成漂移。
+func AudioCodecKeyFromDisplayName(display string) string {
+	switch strings.ToUpper(strings.TrimSpace(display)) {
+	case "AV3A":
+		return "audio.av3a"
+	case "DTS:X":
+		return "audio.dtsx"
+	case "DTS-HD MA":
+		return "audio.dts_hd_ma"
+	case "DTS-HD HR":
+		return "audio.dts_hd_hr"
+	case "DTS":
+		return "audio.dts"
+	case "TRUEHD":
+		return "audio.truehd"
+	case "DDP":
+		return "audio.ddp"
+	// 展示口径的裸 DD 是 Dolby Digital（有损 AC-3），对应标准键 audio.ac3。
+	case "DD":
+		return "audio.ac3"
+	case "FLAC":
+		return "audio.flac"
+	case "ALAC":
+		return "audio.alac"
+	case "APE":
+		return "audio.ape"
+	case "DSD":
+		return "audio.dsd"
+	case "WAV":
+		return "audio.wav"
+	case "LPCM", "PCM":
+		return "audio.lpcm"
+	case "OGG", "VORBIS":
+		return "audio.ogg"
+	case "OPUS":
+		return "audio.opus"
+	case "AAC":
+		return "audio.aac"
+	case "MP3":
+		return "audio.mp3"
+	default:
+		return ""
+	}
 }
 
 // parseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨，返回结构化音轨列表。
