@@ -5,6 +5,7 @@ import { ElNotification } from '@/utils/uiNotify'
 import { openSSE, type EventSourceLike } from '@/desktop/sse'
 
 import type {
+  AutoAddResult,
   LimitAlert,
   ProgressCounter,
   PublishDisplayResult,
@@ -101,6 +102,16 @@ export type PublishFlowApi = {
   getValidUrlsCount: (row: PublishDisplayResult[]) => number
   forceRepublishSite: (siteName: string) => Promise<void>
   forceRepublishingSite: Ref<string>
+  /** 发布成功但自动加入下载器失败的站点：单站一键重新添加（不会再次发种）。 */
+  reAddSiteToDownloader: (siteName: string, options?: { silent?: boolean }) => Promise<boolean>
+  /** 一键把全部「加种失败」的站点逐个重新添加。 */
+  reAddFailedSitesToDownloader: () => Promise<void>
+  /** 正在重新添加的站点名，用于卡片按钮 loading。 */
+  reAddingSites: Ref<string[]>
+  /** 批量重新添加进行中。 */
+  isReAddingFailedSites: Ref<boolean>
+  /** 当前可一键重试的失败站点名列表（为空表示没有需要处理的站点）。 */
+  failedDownloaderSites: ComputedRef<string[]>
 }
 
 export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
@@ -1754,6 +1765,128 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     logProgressTaskId.value = ''
   }
 
+  // ===== 发布成功但自动加入下载器失败：一键重新添加（不会再发种） =====
+  // 正在重新添加的站点名（卡片按钮 loading）；批量重试时逐个加入/移除。
+  const reAddingSites = ref<string[]>([])
+  const isReAddingFailedSites = ref(false)
+
+  // 只有「发布成功」且「自动加种明确失败」才允许重试：
+  // dupe 拦截、发布前限制、发布本身失败都不属于「加种失败」，不能走这条补救。
+  const isDownloaderAddFailedResult = (result?: PublishDisplayResult | null): boolean => {
+    if (!result) return false
+    if (result.success !== true) return false
+    if (result.dupe_blocked) return false
+    return result.auto_add_result?.success === false
+  }
+
+  // 当前可一键重试的失败站点（沿用卡片展示顺序）。
+  const failedDownloaderSites = computed<string[]>(() =>
+    publishDisplayResults.value.filter(isDownloaderAddFailedResult).map((item) => item.siteName),
+  )
+
+  const markReAdding = (siteName: string, adding: boolean) => {
+    reAddingSites.value = adding
+      ? Array.from(new Set([...reAddingSites.value, siteName]))
+      : reAddingSites.value.filter((name) => name !== siteName)
+  }
+
+  // 单站重新添加：复用发布成功后的详情页地址走「添加到下载器」逻辑，只下载站点种子入下载器。
+  // 参数/返回：siteName 为目标站点；options.silent 用于批量重试时抑制单个站点的提示；返回 true 表示已成功加入下载器。
+  const reAddSiteToDownloader = async (
+    siteName: string,
+    options: { silent?: boolean } = {},
+  ): Promise<boolean> => {
+    const silent = options.silent === true
+    const existing = publishResultsBySite.value[siteName]
+    const detailURL = String(existing?.url || '').trim()
+    if (!existing || !detailURL) {
+      if (!silent) {
+        ElNotification.warning({
+          title: '无法重新添加',
+          message: `站点「${siteName}」缺少发布详情地址，请点「查看日志」确认发布结果。`,
+        })
+      }
+      return false
+    }
+
+    markReAdding(siteName, true)
+    try {
+      const currentTorrent = torrent.value
+      const response = await axios.post('/api/publish_logs/re_add_downloader', {
+        task_id: taskId.value || '',
+        target_site: siteName,
+        url: detailURL,
+        publishURL: detailURL,
+        downloader_id: currentTorrent?.downloaderId || '',
+        save_path: currentTorrent?.save_path || '',
+      })
+      const data = (response.data || {}) as Record<string, unknown>
+      const addResult = (data.auto_add_result || data) as AutoAddResult
+
+      // 回写卡片状态：normalizePublishResult 会据 auto_add_result 重算 downloaderStatus。
+      publishResultsBySite.value[siteName] = normalizePublishResult(siteName, {
+        ...existing,
+        auto_add_result: addResult,
+      })
+      rebuildFinalResultsList()
+      rebuildProgress()
+
+      if (addResult.success !== true && !silent) {
+        ElNotification.warning({
+          title: '重新添加失败',
+          message: `${siteName}：${String(addResult.message || '下载器未接受该任务')}`,
+        })
+      }
+      return addResult.success === true
+    } catch (error: unknown) {
+      const message = axios.isAxiosError(error)
+        ? (error.response?.data as { message?: string } | undefined)?.message || error.message
+        : error instanceof Error
+          ? error.message
+          : '重新添加到下载器失败'
+      if (!silent) {
+        ElNotification.error({ title: '重新添加失败', message: `${siteName}：${message}` })
+      }
+      return false
+    } finally {
+      markReAdding(siteName, false)
+    }
+  }
+
+  // 一键：把全部「加种失败」的站点逐个重试（串行，避免同时打满下载器）。
+  const reAddFailedSitesToDownloader = async () => {
+    const targets = [...failedDownloaderSites.value]
+    if (targets.length === 0) return
+
+    isReAddingFailedSites.value = true
+    let succeeded = 0
+    const failedSites: string[] = []
+    try {
+      for (const siteName of targets) {
+        if (await reAddSiteToDownloader(siteName, { silent: true })) {
+          succeeded += 1
+        } else {
+          failedSites.push(siteName)
+        }
+      }
+    } finally {
+      isReAddingFailedSites.value = false
+    }
+
+    if (failedSites.length === 0) {
+      ElNotification.success({
+        title: '已全部加入下载器',
+        message: `${succeeded} 个站点已成功添加到下载器。`,
+      })
+    } else {
+      ElNotification.warning({
+        title: succeeded > 0 ? '部分站点添加失败' : '重新添加失败',
+        message: `成功 ${succeeded} 个；仍失败：${failedSites.join('、')}。可点「查看日志」确认原因。`,
+        duration: 0,
+      })
+    }
+  }
+
   // 过滤URL中的uploaded参数
   const filterUploadedParam = (url: string): string => {
     if (!url) return url
@@ -1818,5 +1951,10 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     getValidUrlsCount,
     forceRepublishSite,
     forceRepublishingSite,
+    reAddSiteToDownloader,
+    reAddFailedSitesToDownloader,
+    reAddingSites,
+    isReAddingFailedSites,
+    failedDownloaderSites,
   }
 }

@@ -159,6 +159,55 @@ func (r *PublishLogRepository) FindLatestByTaskAndSite(taskID string, targetSite
 	return &row, true, nil
 }
 
+// GetByID 按主键查询一条发种日志。
+// 参数/返回：id 为 publish_logs 主键；返回日志记录、是否命中与 error。
+// 失败场景：DB 未初始化或查询失败返回 error；id 非法时返回未命中。
+// 副作用：读取 publish_logs。
+func (r *PublishLogRepository) GetByID(id uint64) (*PublishLogEntry, bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, false, errors.New("publish log repo is nil")
+	}
+	if id == 0 {
+		return nil, false, nil
+	}
+
+	row := PublishLogEntry{}
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Where("id = ?", id).
+		Limit(1).
+		Find(&row).Error; err != nil {
+		return nil, false, err
+	}
+	if row.ID == 0 {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// UpdateDownloaderResultByID 回写某条日志的「添加到下载器」结果。
+// 参数/返回：id 为 publish_logs 主键；downloaderID 为本次实际生效的下载器（为空则不覆盖原值）；
+// autoAddResult 为新的结果 JSON 文本；返回 error。
+// 失败场景：DB 未初始化或更新失败返回 error；id 非法时返回 nil（无操作）。
+// 副作用：更新 publish_logs 的 downloader_id / auto_add_result / updated_at。
+// 说明：供「重新添加到下载器」重试后刷新页面展示，否则刷新后仍显示旧的失败结果。
+func (r *PublishLogRepository) UpdateDownloaderResultByID(id uint64, downloaderID string, autoAddResult string) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish log repo is nil")
+	}
+	if id == 0 {
+		return nil
+	}
+
+	updates := map[string]any{
+		"auto_add_result": strings.TrimSpace(autoAddResult),
+		"updated_at":      time.Now().Format(publishLogTimeLayout),
+	}
+	if trimmedDownloaderID := strings.TrimSpace(downloaderID); trimmedDownloaderID != "" {
+		updates["downloader_id"] = trimmedDownloaderID
+	}
+	return r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", id).Updates(updates).Error
+}
+
 // NewPublishLogRepository 创建发种日志仓储实例。
 // 参数/返回：store 为数据库连接容器；返回可复用的仓储对象。
 // 失败场景：无直接失败场景（store 为 nil 时由调用方处理）。

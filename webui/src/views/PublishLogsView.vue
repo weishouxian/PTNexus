@@ -166,7 +166,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="下载器" width="120" align="center">
+        <el-table-column label="下载器" width="160" align="center">
           <template #default="scope">
             <div class="status-tags">
               <el-tag
@@ -177,6 +177,17 @@
               >
                 {{ formatDownloaderStatus(scope.row) }}
               </el-tag>
+              <el-button
+                v-if="canReAddToDownloader(scope.row)"
+                link
+                type="primary"
+                size="small"
+                style="margin-left: 6px"
+                title="发布已成功，仅自动添加到下载器失败；点击重新添加"
+                @click="openReAddDialog(scope.row)"
+              >
+                重试
+              </el-button>
             </div>
           </template>
         </el-table-column>
@@ -208,16 +219,60 @@
       </el-table>
     </div>
 
+    <el-dialog
+      v-model="reAddDialogVisible"
+      title="重新添加到下载器"
+      width="440px"
+      :close-on-click-modal="false"
+    >
+      <div class="re-add-dialog-body">
+        <div class="re-add-line">
+          <span class="re-add-label">目标站点</span>
+          <span>{{ reAddRow?.target_site || '-' }}</span>
+        </div>
+        <div class="re-add-line">
+          <span class="re-add-label">种子标题</span>
+          <span class="re-add-title" :title="reAddRow?.title || ''">{{ reAddRow?.title || '-' }}</span>
+        </div>
+        <div class="re-add-line">
+          <span class="re-add-label">下载器</span>
+          <el-select
+            v-model="reAddDownloaderId"
+            placeholder="请选择下载器"
+            style="flex: 1"
+            filterable
+          >
+            <el-option
+              v-for="item in reAddDownloaderOptions"
+              :key="item.id"
+              :label="item.name"
+              :value="item.id"
+            />
+          </el-select>
+        </div>
+        <div class="re-add-hint">
+          仅重新下载站点种子并加入下载器，不会再次向站点发种。
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="reAddDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="reAddSubmitting" @click="submitReAdd">
+          重新添加
+        </el-button>
+      </template>
+    </el-dialog>
+
     <LogViewerCard v-model="dialogVisible" :title="dialogTitle" :content="dialogContent" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
 import axios from 'axios'
 import { useTorrentsViewState } from '@/stores/torrentsViewState'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import LogViewerCard from '@/components/LogViewerCard.vue'
 import type { Downloader } from '@/types'
 import { ElMessage } from '@/utils/uiNotify'
@@ -260,6 +315,7 @@ const loading = ref(false)
 const error = ref('')
 
 const torrentsViewState = useTorrentsViewState()
+const globalDownloader = useGlobalDownloaderStore()
 const allDownloadersList = ref<Downloader[]>([])
 const route = useRoute()
 const router = useRouter()
@@ -281,6 +337,16 @@ const targetSiteFilter = ref('')
 const dialogVisible = ref(false)
 const dialogTitle = ref('日志')
 const dialogContent = ref('')
+
+/** 「重新添加到下载器」弹窗状态：仅针对已发布成功但自动加入下载器失败的记录。 */
+const reAddDialogVisible = ref(false)
+const reAddSubmitting = ref(false)
+const reAddRow = ref<PublishLogRow | null>(null)
+const reAddDownloaderId = ref('')
+
+const reAddDownloaderOptions = computed(() =>
+  allDownloadersList.value.filter((item) => item.enabled !== false),
+)
 
 let fetchSeq = 0
 
@@ -603,7 +669,73 @@ const openResultURL = (row: PublishLogRow) => {
   window.open(url, '_blank', 'noopener,noreferrer')
 }
 
-const canDeleteRow = () => true
+/** 已发布成功的日志状态：种子已落在目标站点，只有「添加到下载器」这一步失败，可单独重试。 */
+const PUBLISHED_LOG_STATUSES = new Set(['success', 'exists', 'edited'])
+
+const canReAddToDownloader = (row: PublishLogRow) => {
+  if (!PUBLISHED_LOG_STATUSES.has(String(row?.status || '').trim())) return false
+  if (!String(row?.result_url || '').trim()) return false
+  return parseAutoAddResult(row).success !== true
+}
+
+const openReAddDialog = async (row: PublishLogRow) => {
+  reAddRow.value = row
+  const parsed = parseAutoAddResult(row)
+  const originalDownloaderId = (parsed.downloaderId || String(row?.downloader_id || '')).trim()
+
+  let globalDownloaderId = ''
+  try {
+    globalDownloaderId = (await globalDownloader.loadSelection()).trim()
+  } catch {
+    globalDownloaderId = String(globalDownloader.selectedDownloaderId || '').trim()
+  }
+
+  reAddDownloaderId.value =
+    originalDownloaderId || globalDownloaderId || reAddDownloaderOptions.value[0]?.id || ''
+  reAddDialogVisible.value = true
+}
+
+const submitReAdd = async () => {
+  const row = reAddRow.value
+  if (!row) return
+
+  const logId = Number(row.id)
+  if (!Number.isFinite(logId) || logId <= 0) {
+    ElMessage.error('日志 ID 无效')
+    return
+  }
+  if (!reAddDownloaderId.value) {
+    ElMessage.warning('请选择下载器')
+    return
+  }
+
+  reAddSubmitting.value = true
+  try {
+    const response = await axios.post('/api/publish_logs/re_add_downloader', {
+      id: logId,
+      downloader_id: reAddDownloaderId.value,
+    })
+    const data = response.data || {}
+    if (data.success) {
+      ElMessage.success(data.message || '已重新添加到下载器')
+      reAddDialogVisible.value = false
+    } else {
+      ElMessage.error(data.message || '重新添加到下载器失败')
+    }
+    // 无论成败都刷新：后端会把最新结果回写到该条日志，刷新后可直接看到真实状态。
+    await fetchLogs()
+  } catch (e: unknown) {
+    const message = axios.isAxiosError(e)
+      ? ((e.response?.data as { message?: string } | undefined)?.message || e.message)
+      : e instanceof Error
+        ? e.message
+        : '重新添加到下载器失败'
+    ElMessage.error(message)
+    await fetchLogs()
+  } finally {
+    reAddSubmitting.value = false
+  }
+}
 
 const deleteSingleLog = async (row: PublishLogRow) => {
   const id = Number(row.id)
@@ -843,5 +975,37 @@ watch(
   font-size: 13px;
   line-height: 1.25;
   white-space: normal;
+}
+
+.re-add-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.re-add-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #303133;
+}
+
+.re-add-label {
+  flex: 0 0 64px;
+  color: #909399;
+}
+
+.re-add-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.re-add-hint {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
 }
 </style>

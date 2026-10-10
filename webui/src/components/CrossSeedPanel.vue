@@ -2763,6 +2763,11 @@ const {
   getValidUrlsCount,
   forceRepublishSite,
   forceRepublishingSite,
+  reAddSiteToDownloader,
+  reAddFailedSitesToDownloader,
+  reAddingSites,
+  isReAddingFailedSites,
+  failedDownloaderSites,
 } = publishFlow
 
 const handleFetchLogProgressClose = () => {
@@ -2847,6 +2852,11 @@ provide(crossSeedPanelContextKey, {
   getValidUrlsCount,
   forceRepublishSite,
   forceRepublishingSite,
+  reAddSiteToDownloader,
+  reAddFailedSitesToDownloader,
+  reAddingSites,
+  isReAddingFailedSites,
+  failedDownloaderSites,
   showCompleteButton,
   isLoading,
   isEnqueueing,
