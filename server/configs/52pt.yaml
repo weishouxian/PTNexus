@@ -1,0 +1,306 @@
+site_name: "52PT"
+
+# 52PT (52pt.site) 发种映射配置
+# 抓取来源: https://52pt.site/upload.php (2026-10-10，带登录态 cookie)
+# 表单: action=takeupload.php method=post enctype=multipart/form-data；文件字段 file
+# 关键差异:
+#   1) 六维度里**没有 source_sel / processing_sel**（站点不区分产地/来源性质），
+#      故 form_fields 不配 source/processing，mappings 也不配 source。
+#   2) `type` 只有一个 select(id=browsecat)，不存在双套 mode 字段。
+#   3) 标签是裸名数组 `tags[]`（不是 tags[4][]），且 **value 是中文词**而非数字 ID。
+#   4) `url` 字段标签就是「IMDb链接」（吃完整链接），无 dburl / pt_gen / technical_info。
+#   5) medium_sel 把「分辨率」与「原盘是否带中文」编码进了选项（见 sites/pt52.go 的细分逻辑）。
+# 匿名: NexusPHP 标准 uplver（anonymous.go 默认兜底，无需配置）
+
+upload_file_field: "file"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel"
+  video_codec: "codec_sel"
+  audio_codec: "audiocodec_sel"
+  resolution: "standard_sel"
+  team: "team_sel"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"                 # 页面标签即「IMDb链接」，提交完整链接
+  "tags[]": "tags[]"
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    audio_codec:
+      source_key: "音频编码"
+    resolution:
+      source_key: "分辨率"
+    team:
+      source_key: "制作组"
+
+  # 52PT 详情页「基本信息」里的原文 → PTNexus 标准化值
+  standard_keys:
+    type:
+      "Movies/电影": "category.movie"
+      "TV Series/剧集": "category.tv_series"
+      "TV Shows/综艺": "category.tv_shows"
+      "Documentaries/纪录片": "category.documentaries"
+      "Animations/动漫(画)": "category.animation"
+      "Music Videos/音乐MV(演唱会)": "category.mv"
+      "Sports/运体": "category.sports"
+      "HQ Audio/无损音乐": "category.music"
+      "Opera/戏曲 曲艺": "category.drama"
+      "Misc/其他": "category.other"
+
+    medium:
+      "Blu-ray DIY": "medium.bluray_diy"
+      "Blu-ray原盘无中文": "medium.bluray"
+      "4K UHD无中文": "medium.uhd_bluray"
+      "Blu-ray Remux": "medium.remux"
+      "4K UHD Remux": "medium.remux"
+      "2K原盘中字（国粤语）": "medium.bluray"
+      "4K原盘中字（国粤语）": "medium.uhd_bluray"
+      "HDTV": "medium.hdtv"
+      "4K UHD DIY": "medium.uhd_diy"
+      "Encode(MKV/MP4)": "medium.encode"
+      "DVD/DVDR": "medium.dvd"
+      "CD/HDCD": "medium.cd"
+      "WEB-DL": "medium.webdl"
+      "Others": "medium.other"
+      "8K UHD": "medium.uhd_bluray"
+
+    video_codec:
+      "H.264/AVC": "video.h264"
+      "H.265(HEVC)": "video.h265"
+      "H.265": "video.h265"
+      "X264": "video.x264"
+      "X265": "video.x265"
+      "MPEG-2": "video.mpeg2"
+      "VC-1": "video.vc1"
+      "Xvid": "video.xvid"
+      "Other": "video.other"
+
+    audio_codec:
+      "DTS.HDMA": "audio.dts_hd_ma"
+      "DTS:X": "audio.dtsx"
+      "DTS": "audio.dts"
+      "TRUE.HD Atmos": "audio.truehd_atmos"
+      "True.HD": "audio.truehd"
+      "AC3/DD": "audio.ac3"
+      "LPCM": "audio.lpcm"
+      "AAC": "audio.aac"
+      "FLAC": "audio.flac"
+      "APE": "audio.ape"
+      "WAV": "audio.wav"
+      "Other": "audio.other"
+
+    resolution:
+      "2K/1080p": "resolution.r1080p"
+      "4K/2160P": "resolution.r2160p"
+      "1080i": "resolution.r1080i"
+      "1080P-3D": "resolution.r1080p"
+      "720p": "resolution.r720p"
+      "8K/4320": "resolution.r4320p"
+      "others": "resolution.other"
+
+    team:
+      "52PT DIY/原盘小组": "team.pt52"
+      "52PT REMUX/重编码小组": "team.pt52"
+      "BeyondHD": "team.beyondhd"
+      "HDSKY": "team.hds"
+      "TTG": "team.ttg"
+      "MTeam": "team.mteam"
+      "CHDBits": "team.chdbits"
+      "OurBits": "team.ourbits"
+      "HDHome": "team.hdhome"
+      "CMCT": "team.cmct"
+      "HDChina": "team.hdchina"
+      "Audies": "team.audies"
+      "Other/其他制作组或者转发": "team.other"
+
+mappings:
+  # type: 401=Movies/电影 402=TV Series/剧集 403=TV Shows/综艺 404=Documentaries/纪录片
+  #       405=Animations/动漫(画) 406=Music Videos/音乐MV(演唱会) 407=Sports/运体
+  #       408=HQ Audio/无损音乐 409=Misc/其他 410=Opera/戏曲曲艺 411=Erotic/18+
+  type:
+    "category.movie": "401"
+    "category.movie_3d": "401"
+    "category.tv_series": "402"
+    "category.tv_pack": "402"
+    "category.tv_shows": "403"
+    "category.documentaries": "404"
+    "category.animation": "405"
+    "category.mv": "406"
+    "category.stage": "406"
+    "category.music": "408"
+    "category.drama": "410"
+    "category.sports": "407"
+    "category.study": "409"
+    "category.audiobook": "409"
+    "category.ebook": "409"
+    "category.game": "409"
+    "category.software": "409"
+    "category.other": "409"
+    "default": "401"
+
+  # medium_sel: 2=Blu-ray DIY 11=Blu-ray原盘无中文 1=4K UHD无中文 4=Blu-ray Remux 5=4K UHD Remux
+  #             14=2K原盘中字（国粤语） 15=4K原盘中字（国粤语） 3=HDTV 12=4K UHD DIY
+  #             7=Encode(MKV/MP4) 6=DVD/DVDR 8=CD/HDCD 10=WEB-DL 9=Others 13=8K UHD
+  # ⚠️ 11/1 与 14/15 的区分（原盘是否带中文）、4 与 5 的区分（Remux 分辨率）由
+  #    sites/pt52.go 按标准分辨率与标签二次判定，本表只给出保守落点。
+  medium:
+    "medium.bluray": "11"
+    "medium.bluray_diy": "2"
+    "medium.uhd_bluray": "1"
+    "medium.uhd_diy": "12"
+    "medium.remux": "4"
+    "medium.uhd_remux": "4"
+    "medium.bluray_remux": "4"
+    "medium.uhd_bluray_remux": "4"
+    "medium.remux_tv": "4"
+    "medium.uhd_remux_tv": "4"
+    "medium.encode": "7"
+    "medium.encode_2160p": "7"
+    "medium.encode_1080p": "7"
+    "medium.encode_720p": "7"
+    "medium.bdrip": "7"
+    "medium.tvrip": "7"
+    "medium.webrip": "7"
+    "medium.hdtv": "3"
+    "medium.uhdtv": "3"
+    "medium.webdl": "10"
+    "medium.dvd": "6"
+    "medium.dvdr": "6"
+    "medium.cd": "8"
+    "medium.track": "8"
+    "medium.other": "9"
+    "default": "9"
+
+  # codec_sel: 13=H.264/AVC 11=X264 1=H.265(HEVC) 14=H.265 12=X265 4=MPEG-2 2=VC-1 3=Xvid 5=Other
+  video_codec:
+    "video.h264": "13"
+    "video.x264": "11"
+    "video.h265": "1"
+    "video.hevc": "1"
+    "video.x265": "12"
+    "video.mpeg2": "4"
+    "video.mpeg4": "4"
+    "video.vc1": "2"
+    "video.xvid": "3"
+    "video.av1": "5"
+    "video.avs2": "5"
+    "video.divx": "5"
+    "video.vp8": "5"
+    "video.vp9": "5"
+    "video.other": "5"
+    "default": "5"
+
+  # audiocodec_sel: 4=DTS.HDMA 3=DTS:X 15=DTS 12=True.HD 10=TRUE.HD Atmos 6=AC3/DD
+  #                 14=LPCM 13=AAC 1=FLAC 2=APE 11=WAV 7=Other
+  audio_codec:
+    "audio.dts_hd_ma": "4"
+    "audio.dts_hd": "4"
+    "audio.dts_hd_hr": "4"
+    "audio.dtsx": "3"
+    "audio.dts": "15"
+    "audio.truehd_atmos": "10"
+    "audio.truehd": "12"
+    "audio.ac3": "6"
+    "audio.ddp": "6"
+    "audio.ddp_atmos": "6"
+    "audio.lpcm": "14"
+    "audio.aac": "13"
+    "audio.flac": "1"
+    "audio.ape": "2"
+    "audio.wav": "11"
+    "audio.dsd": "7"
+    "audio.alac": "7"
+    "audio.ogg": "7"
+    "audio.opus": "7"
+    "audio.mp3": "7"
+    "audio.mpeg": "7"
+    "audio.other": "7"
+    "default": "7"
+
+  # standard_sel: 1=2K/1080p 5=4K/2160P 2=1080i 4=1080P-3D 3=720p 6=others 7=8K/4320
+  resolution:
+    "resolution.r1080p": "1"
+    "resolution.r1080i": "2"
+    "resolution.r2160p": "5"
+    "resolution.r720p": "3"
+    "resolution.r4320p": "7"
+    "resolution.sd": "6"
+    "resolution.other": "6"
+    "default": "6"
+
+  # team_sel: 6=52PT DIY/原盘小组 7=52PT REMUX/重编码小组 1=BeyondHD 2=HDSKY 3=TTG 8=MTeam
+  #           4=COASTER 9=CHDBits 10=OurBits 11=HDHome 12=CMCT 14=HDChina 16=Audies
+  #           5=Other/其他制作组或者转发
+  # ⚠️ 站内选项 4=COASTER 无对应标准制作组（global_mappings 无 team.coaster），不映射。
+  team:
+    "team.beyondhd": "1"
+    "team.hds": "2"
+    "team.ttg": "3"
+    "team.mteam": "8"
+    "team.chdbits": "9"
+    "team.ourbits": "10"
+    "team.hdhome": "11"
+    "team.cmct": "12"
+    "team.hdchina": "14"
+    "team.hdc": "14"
+    "team.audies": "16"
+    "team.pt52": "6"
+    "team.52pt": "6"
+    "team.other": "5"
+    "default": "5"
+
+  # tags[]（裸名数组，value 即站点中文标签原文）: 官组 原盘 DIY Remux 国语 粤语
+  #                                              简中 繁中 简繁 双语字幕 杜比视界 HDR 3D
+  # ⚠️ tag.官组 被 global_mappings.excluded_tags 全局丢弃，本站选项「官组」因此拿不到值。
+  # ⚠️ 此处同时写入「标准键」与「原文键」：52PT 自身作为源站时原文标签会直接进候选列表。
+  # ⚠️ 泛化的「中字」默认落「简中」（内站中字多为简体），简繁/双语等只有源站明确标注才落对应项。
+  tag:
+    "tag.原盘": "原盘"
+    "原盘": "原盘"
+    "tag.DIY": "DIY"
+    "DIY": "DIY"
+    "tag.Remux": "Remux"
+    "Remux": "Remux"
+    "tag.国语": "国语"
+    "国语": "国语"
+    "tag.粤语": "粤语"
+    "粤语": "粤语"
+    "tag.中字": "简中"
+    "中字": "简中"
+    "简中": "简中"
+    "tag.简中": "简中"
+    "繁中": "繁中"
+    "tag.繁中": "繁中"
+    "tag.简繁中字": "简繁"
+    "简繁": "简繁"
+    "tag.双语字幕": "双语字幕"
+    "双语字幕": "双语字幕"
+    "tag.中英双语": "双语字幕"
+    "tag.杜比": "杜比视界"
+    "tag.杜比视界": "杜比视界"
+    "杜比视界": "杜比视界"
+    "Dolby Vision": "杜比视界"
+    "tag.HDR": "HDR"
+    "tag.HDR10": "HDR"
+    "tag.HDR10+": "HDR"
+    "HDR": "HDR"
+    "HDR10": "HDR"
+    "tag.3d": "3D"
+    "tag.3D": "3D"
+    "3D": "3D"
+    "default": null
+
+# 标签决定分类：带"动画/动漫"标签的种子归入 405=Animations/动漫(画)
+# （覆盖按来源文本解析出的类型，值为标准类型值，经上面 mappings.type 换算）
+type_by_tag:
+  "tag.动画": "category.animation"
+  "tag.动漫": "category.animation"

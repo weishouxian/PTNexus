@@ -63,6 +63,8 @@ func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 		return publishsites.PublishYemaPT(input)
 	case "tjupt":
 		return publishsites.PublishTJUPT(input)
+	case "52pt":
+		return publishsites.PublishPT52(input)
 	case "m-team", "mteam", "m_team":
 		return publishsites.PublishMTeam(input)
 	default:
