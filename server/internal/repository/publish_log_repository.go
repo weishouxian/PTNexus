@@ -1,0 +1,558 @@
+package repository
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const publishLogTimeLayout = "2006-01-02 15:04:05"
+
+// PublishLogStatusInvalidated 表示该发种记录已作废：
+// 对应种子已被「一种多站」删除（含下载器任务与文件），原「发布成功」不再代表当前有效状态。
+const PublishLogStatusInvalidated = "invalidated"
+
+// publishedPublishLogStatuses 定义「已发布」家族状态：
+// success（发布成功）、edited（发布后经编辑）、exists（站点已存在该种子，等效已发布）。
+var publishedPublishLogStatuses = []string{"success", "edited", "exists"}
+
+// IsPublishedPublishLogStatus 判断发种日志状态是否属于「已发布」家族。
+// 参数/返回：status 为 publish_logs.status；返回 true 表示该种子已成功落在目标站点。
+// 失败场景：无（仅字符串比较）。
+// 副作用：无。
+func IsPublishedPublishLogStatus(status string) bool {
+	trimmed := strings.TrimSpace(status)
+	for _, item := range publishedPublishLogStatuses {
+		if trimmed == item {
+			return true
+		}
+	}
+	return false
+}
+
+// PublishedPublishLogStatuses 返回「已发布」家族状态的副本，供外部拼装查询条件。
+// 参数/返回：返回状态字符串切片副本；调用方可安全修改。
+// 失败场景：无。
+// 副作用：无。
+func PublishedPublishLogStatuses() []string {
+	result := make([]string, len(publishedPublishLogStatuses))
+	copy(result, publishedPublishLogStatuses)
+	return result
+}
+
+// PublishLogEntry 表示一条发种（发布）记录，通常按“单站点发布一次”为一条。
+type PublishLogEntry struct {
+	ID uint64 `json:"id" gorm:"column:id;primaryKey"`
+
+	Trigger      string `json:"trigger" gorm:"column:publish_trigger"`
+	Scene        string `json:"scene" gorm:"column:scene"`
+	QueueTaskID  *int64 `json:"queue_task_id" gorm:"column:queue_task_id"`
+	QueueGroupID string `json:"queue_group_id" gorm:"column:queue_group_id"`
+
+	TaskID     string `json:"task_id" gorm:"column:task_id"`
+	TorrentID  string `json:"torrent_id" gorm:"column:torrent_id"`
+	SourceSite string `json:"source_site" gorm:"column:source_site"`
+	TargetSite string `json:"target_site" gorm:"column:target_site"`
+
+	DownloaderID string `json:"downloader_id" gorm:"column:downloader_id"`
+	Title        string `json:"title" gorm:"column:title"`
+	Subtitle     string `json:"subtitle" gorm:"column:subtitle"`
+
+	Status    string `json:"status" gorm:"column:status"`
+	ResultURL string `json:"result_url" gorm:"column:result_url"`
+	Logs      string `json:"logs" gorm:"column:logs"`
+
+	AutoAddResult string `json:"auto_add_result" gorm:"column:auto_add_result"`
+	CostMS        int64  `json:"cost_ms" gorm:"column:cost_ms"`
+
+	CreatedAt string `json:"created_at" gorm:"column:created_at"`
+	UpdatedAt string `json:"updated_at" gorm:"column:updated_at"`
+
+	// Size / SizeFormatted 为展示用派生字段（不落库）：该条日志对应种子的体积。
+	// 由服务层按 torrent_id 关联 seed_parameters.hash → torrents.size 回填，原始单位为字节；关联不到时为 0。
+	Size          int64  `json:"size" gorm:"-"`
+	SizeFormatted string `json:"size_formatted" gorm:"-"`
+}
+
+func (PublishLogEntry) TableName() string { return "publish_logs" }
+
+// PublishLogQuery 定义发种日志列表查询条件（分页 + 搜索 + 筛选）。
+type PublishLogQuery struct {
+	Page     int
+	PageSize int
+
+	Search string
+
+	Status       string
+	Trigger      string
+	Scene        string
+	QueueGroupID string
+	TargetSite   string
+	SourceSite   string
+	TorrentID    string
+}
+
+// PublishLogRepository 负责发种日志的写入与分页查询。
+// 参数/返回：依赖 Store 访问数据库；方法返回 error 表示失败原因。
+// 失败场景：DB 未初始化、写库/读库失败等。
+// 副作用：写入/读取 publish_logs 表。
+type PublishLogRepository struct {
+	store *Store
+}
+
+// FindLatestByQueueTaskID 按 queue_task_id 查询最新的一条日志记录。
+// 参数/返回：queueTaskID 为队列任务自增 ID；返回日志记录、是否命中与 error。
+// 失败场景：DB 未初始化或查询失败返回 error。
+// 副作用：读取 publish_logs。
+func (r *PublishLogRepository) FindLatestByQueueTaskID(queueTaskID int64) (*PublishLogEntry, bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, false, errors.New("publish log repo is nil")
+	}
+	if queueTaskID <= 0 {
+		return nil, false, nil
+	}
+
+	row := PublishLogEntry{}
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Where("queue_task_id = ?", queueTaskID).
+		Order("id DESC").
+		Limit(1).
+		Find(&row).Error; err != nil {
+		return nil, false, err
+	}
+	if row.ID == 0 {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// FindLatestByTaskAndSite 按 task_id + target_site 查询最新的一条日志记录。
+// 参数/返回：taskID 为转种上下文任务标识；targetSite 为目标站点；返回日志记录、是否命中与 error。
+// 失败场景：DB 未初始化或查询失败返回 error；taskID/targetSite 为空时直接返回未命中。
+// 副作用：读取 publish_logs。
+//
+// 说明：用于兜底匹配「早期批次发布（batch_live）」写入的日志——那批记录没有回填 queue_task_id/queue_group_id，
+// 只能靠 task_id + 目标站点定位；同一上下文重复发布到同一站点时取最新一条（id DESC）。
+func (r *PublishLogRepository) FindLatestByTaskAndSite(taskID string, targetSite string) (*PublishLogEntry, bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, false, errors.New("publish log repo is nil")
+	}
+	trimmedTaskID := strings.TrimSpace(taskID)
+	trimmedSite := strings.TrimSpace(targetSite)
+	if trimmedTaskID == "" || trimmedSite == "" {
+		return nil, false, nil
+	}
+
+	row := PublishLogEntry{}
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Where("task_id = ?", trimmedTaskID).
+		Where("target_site = ?", trimmedSite).
+		Order("id DESC").
+		Limit(1).
+		Find(&row).Error; err != nil {
+		return nil, false, err
+	}
+	if row.ID == 0 {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// GetByID 按主键查询一条发种日志。
+// 参数/返回：id 为 publish_logs 主键；返回日志记录、是否命中与 error。
+// 失败场景：DB 未初始化或查询失败返回 error；id 非法时返回未命中。
+// 副作用：读取 publish_logs。
+func (r *PublishLogRepository) GetByID(id uint64) (*PublishLogEntry, bool, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, false, errors.New("publish log repo is nil")
+	}
+	if id == 0 {
+		return nil, false, nil
+	}
+
+	row := PublishLogEntry{}
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Where("id = ?", id).
+		Limit(1).
+		Find(&row).Error; err != nil {
+		return nil, false, err
+	}
+	if row.ID == 0 {
+		return nil, false, nil
+	}
+	return &row, true, nil
+}
+
+// UpdateDownloaderResultByID 回写某条日志的「添加到下载器」结果。
+// 参数/返回：id 为 publish_logs 主键；downloaderID 为本次实际生效的下载器（为空则不覆盖原值）；
+// autoAddResult 为新的结果 JSON 文本；返回 error。
+// 失败场景：DB 未初始化或更新失败返回 error；id 非法时返回 nil（无操作）。
+// 副作用：更新 publish_logs 的 downloader_id / auto_add_result / updated_at。
+// 说明：供「重新添加到下载器」重试后刷新页面展示，否则刷新后仍显示旧的失败结果。
+func (r *PublishLogRepository) UpdateDownloaderResultByID(id uint64, downloaderID string, autoAddResult string) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish log repo is nil")
+	}
+	if id == 0 {
+		return nil
+	}
+
+	updates := map[string]any{
+		"auto_add_result": strings.TrimSpace(autoAddResult),
+		"updated_at":      time.Now().Format(publishLogTimeLayout),
+	}
+	if trimmedDownloaderID := strings.TrimSpace(downloaderID); trimmedDownloaderID != "" {
+		updates["downloader_id"] = trimmedDownloaderID
+	}
+	return r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// NewPublishLogRepository 创建发种日志仓储实例。
+// 参数/返回：store 为数据库连接容器；返回可复用的仓储对象。
+// 失败场景：无直接失败场景（store 为 nil 时由调用方处理）。
+// 副作用：无。
+func NewPublishLogRepository(store *Store) *PublishLogRepository {
+	return &PublishLogRepository{store: store}
+}
+
+// Insert 写入一条发种日志并返回自增 ID。
+// 参数/返回：entry 为日志内容；返回 id 与 error。
+// 失败场景：仓储/DB 未初始化、写库失败时返回 error。
+// 副作用：INSERT publish_logs。
+func (r *PublishLogRepository) Insert(entry *PublishLogEntry) (uint64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish log repo is nil")
+	}
+	if entry == nil {
+		return 0, errors.New("entry is nil")
+	}
+	if strings.TrimSpace(entry.Trigger) == "" {
+		entry.Trigger = "manual"
+	}
+	if strings.TrimSpace(entry.Status) == "" {
+		entry.Status = "unknown"
+	}
+
+	now := time.Now().Format(publishLogTimeLayout)
+	if strings.TrimSpace(entry.CreatedAt) == "" {
+		entry.CreatedAt = now
+	}
+	entry.UpdatedAt = now
+
+	if err := r.store.DB.Create(entry).Error; err != nil {
+		return 0, err
+	}
+	return entry.ID, nil
+}
+
+// UpsertByQueueTaskID 按 queue_task_id 更新日志（若不存在则插入）。
+// 参数/返回：entry 必须包含 QueueTaskID；返回 error 表示失败原因。
+// 失败场景：DB 未初始化、查询/更新/插入失败时返回 error。
+// 副作用：写入/更新 publish_logs。
+func (r *PublishLogRepository) UpsertByQueueTaskID(entry *PublishLogEntry) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish log repo is nil")
+	}
+	if entry == nil {
+		return errors.New("entry is nil")
+	}
+	if entry.QueueTaskID == nil || *entry.QueueTaskID <= 0 {
+		return errors.New("queue_task_id is required")
+	}
+	if strings.TrimSpace(entry.Trigger) == "" {
+		entry.Trigger = "manual"
+	}
+	if strings.TrimSpace(entry.Status) == "" {
+		entry.Status = "unknown"
+	}
+
+	now := time.Now().Format(publishLogTimeLayout)
+	entry.UpdatedAt = now
+	if strings.TrimSpace(entry.CreatedAt) == "" {
+		entry.CreatedAt = now
+	}
+
+	existing, ok, err := r.FindLatestByQueueTaskID(*entry.QueueTaskID)
+	if err != nil {
+		return err
+	}
+	if !ok || existing == nil || existing.ID == 0 {
+		_, err := r.Insert(entry)
+		return err
+	}
+
+	updates := map[string]any{
+		"publish_trigger": entry.Trigger,
+		"scene":           entry.Scene,
+		"queue_group_id":  entry.QueueGroupID,
+		"task_id":         entry.TaskID,
+		"torrent_id":      entry.TorrentID,
+		"source_site":     entry.SourceSite,
+		"target_site":     entry.TargetSite,
+		"downloader_id":   entry.DownloaderID,
+		"title":           entry.Title,
+		"subtitle":        entry.Subtitle,
+		"status":          entry.Status,
+		"result_url":      entry.ResultURL,
+		"logs":            entry.Logs,
+		"auto_add_result": entry.AutoAddResult,
+		"cost_ms":         entry.CostMS,
+		"updated_at":      entry.UpdatedAt,
+	}
+
+	return r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", existing.ID).Updates(updates).Error
+}
+
+// UpdateStatusAndLogsByQueueTaskID 更新队列日志的状态与文本（若不存在则插入最小记录）。
+// 参数/返回：queueTaskID 为队列任务 ID；status/logs 为新状态与日志文本；返回 error。
+// 失败场景：DB 未初始化、查询/更新/插入失败返回 error。
+// 副作用：写入/更新 publish_logs。
+func (r *PublishLogRepository) UpdateStatusAndLogsByQueueTaskID(queueTaskID int64, status string, logs string) error {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return errors.New("publish log repo is nil")
+	}
+	if queueTaskID <= 0 {
+		return nil
+	}
+
+	trimmedStatus := strings.TrimSpace(status)
+	if trimmedStatus == "" {
+		trimmedStatus = "unknown"
+	}
+
+	now := time.Now().Format(publishLogTimeLayout)
+	existing, ok, err := r.FindLatestByQueueTaskID(queueTaskID)
+	if err != nil {
+		return err
+	}
+	if !ok || existing == nil || existing.ID == 0 {
+		entry := PublishLogEntry{
+			Trigger:     "queue",
+			QueueTaskID: &queueTaskID,
+			Status:      trimmedStatus,
+			Logs:        strings.TrimSpace(logs),
+			CostMS:      0,
+			CreatedAt:   now,
+			UpdatedAt:   now,
+		}
+		_, err := r.Insert(&entry)
+		return err
+	}
+
+	updates := map[string]any{
+		"status":     trimmedStatus,
+		"logs":       strings.TrimSpace(logs),
+		"updated_at": now,
+	}
+	return r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", existing.ID).Updates(updates).Error
+}
+
+// List 分页查询发种日志。
+// 参数/返回：query 为筛选与分页条件；返回 rows、total 与 error。
+// 失败场景：查询失败时返回 error。
+// 副作用：无（只读）。
+func (r *PublishLogRepository) List(query PublishLogQuery) ([]PublishLogEntry, int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, 0, errors.New("publish log repo is nil")
+	}
+
+	page := query.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := query.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 200 {
+		pageSize = 200
+	}
+	offset := (page - 1) * pageSize
+
+	db := r.store.DB.Model(&PublishLogEntry{})
+	if value := strings.TrimSpace(query.Status); value != "" {
+		db = db.Where("status = ?", value)
+	}
+	if value := strings.TrimSpace(query.Trigger); value != "" {
+		db = db.Where("publish_trigger = ?", value)
+	}
+	if value := strings.TrimSpace(query.Scene); value != "" {
+		db = db.Where("scene = ?", value)
+	}
+	if value := strings.TrimSpace(query.QueueGroupID); value != "" {
+		db = db.Where("queue_group_id = ?", value)
+	}
+	if value := strings.TrimSpace(query.TargetSite); value != "" {
+		db = db.Where("target_site = ?", value)
+	}
+	if value := strings.TrimSpace(query.SourceSite); value != "" {
+		db = db.Where("source_site = ?", value)
+	}
+	if value := strings.TrimSpace(query.TorrentID); value != "" {
+		db = db.Where("torrent_id = ?", value)
+	}
+	if value := strings.TrimSpace(query.Search); value != "" {
+		like := "%" + value + "%"
+		if r.store.DBType == "postgresql" {
+			db = db.Where(
+				"(title ILIKE ? OR subtitle ILIKE ? OR torrent_id ILIKE ? OR target_site ILIKE ? OR source_site ILIKE ? OR task_id ILIKE ? OR publish_trigger ILIKE ? OR scene ILIKE ? OR queue_group_id ILIKE ?)",
+				like, like, like, like, like, like, like, like, like,
+			)
+		} else {
+			db = db.Where(
+				"(title LIKE ? OR subtitle LIKE ? OR torrent_id LIKE ? OR target_site LIKE ? OR source_site LIKE ? OR task_id LIKE ? OR publish_trigger LIKE ? OR scene LIKE ? OR queue_group_id LIKE ?)",
+				like, like, like, like, like, like, like, like, like,
+			)
+		}
+	}
+
+	var total int64
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	rows := make([]PublishLogEntry, 0)
+	if err := db.Order("id DESC").Offset(offset).Limit(pageSize).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	return rows, total, nil
+}
+
+// DeleteByIDs 按主键列表批量删除发种日志记录。
+// 参数/返回：ids 为日志主键列表；返回实际删除行数与 error。
+// 失败场景：DB 未初始化或批量删除失败返回 error。
+// 副作用：DELETE publish_logs。
+func (r *PublishLogRepository) DeleteByIDs(ids []uint64) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish log repo is nil")
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+
+	result := r.store.DB.Where("id IN ?", ids).Delete(&PublishLogEntry{})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// InvalidatePublishedByTorrentIDs 把指定种子在 publish_logs 中的「已发布」记录批量标记为已作废。
+// 参数/返回：torrentIDs 为种子标识（seed_parameters.torrent_id，大小写与首尾空格不敏感、自动去重）；
+// reason 为作废原因，会追加到 logs 末尾便于追溯；返回被作废的记录条数与 error。
+// 失败场景：仓储/DB 未初始化或读写失败时返回 error；入参无有效值时直接返回 0，不执行 SQL。
+// 副作用：更新 publish_logs 的 status（invalidated）与 logs/updated_at；不删除记录，保留追溯信息。
+//
+// 语义说明：作废只表示「这条历史发布记录不再有效」，并不解除去重：
+// 定时发种查重把 invalidated 也视为已处理，避免删种后反而被重新发一遍。
+func (r *PublishLogRepository) InvalidatePublishedByTorrentIDs(torrentIDs []string, reason string) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish log repo is nil")
+	}
+
+	lowered := compactLowerStrings(torrentIDs)
+	if len(lowered) == 0 {
+		return 0, nil
+	}
+
+	// 先取出待作废记录的 id 与 logs：避免依赖各数据库方言的字符串拼接函数。
+	rows := make([]PublishLogEntry, 0)
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Select("id, logs").
+		Where("LOWER(TRIM(torrent_id)) IN ?", lowered).
+		Where("status IN ?", publishedPublishLogStatuses).
+		Find(&rows).Error; err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+
+	now := time.Now().Format(publishLogTimeLayout)
+	suffix := "\n[" + now + "] 种子已删除，该发布记录作废"
+	if trimmed := strings.TrimSpace(reason); trimmed != "" {
+		suffix = "\n[" + now + "] 种子已删除（" + trimmed + "），该发布记录作废"
+	}
+
+	affected := int64(0)
+	for _, row := range rows {
+		updates := map[string]any{
+			"status":     PublishLogStatusInvalidated,
+			"logs":       strings.TrimSpace(row.Logs) + suffix,
+			"updated_at": now,
+		}
+		result := r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", row.ID).Updates(updates)
+		if result.Error != nil {
+			return affected, result.Error
+		}
+		affected += result.RowsAffected
+	}
+	return affected, nil
+}
+
+// FindByIDs 按主键列表批量查询发种日志记录（仅返回 ID/Status/QueueTaskID）。
+// 参数/返回：ids 为日志主键列表；返回匹配的日志列表与 error。
+// 失败场景：DB 未初始化或查询失败返回 error。
+// 副作用：无（只读）。
+func (r *PublishLogRepository) FindByIDs(ids []uint64) ([]PublishLogEntry, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, errors.New("publish log repo is nil")
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	rows := make([]PublishLogEntry, 0)
+	if err := r.store.DB.
+		Select("id, status, queue_task_id").
+		Where("id IN ?", ids).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// MaxNumericTriggerSuffix 计算 publish_trigger 以指定前缀开头的最大数字后缀。
+// 参数/返回：prefix 为触发前缀（例如：批量转种-）；返回最大数字（不存在则为 0）与 error。
+// 失败场景：DB 未初始化或查询失败返回 error；解析失败的触发会被忽略。
+// 副作用：读取 publish_logs。
+func (r *PublishLogRepository) MaxNumericTriggerSuffix(prefix string) (int, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish log repo is nil")
+	}
+
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return 0, nil
+	}
+
+	triggers := make([]string, 0)
+	if err := r.store.DB.Model(&PublishLogEntry{}).
+		Distinct("publish_trigger").
+		Where("publish_trigger LIKE ?", prefix+"%").
+		Pluck("publish_trigger", &triggers).Error; err != nil {
+		return 0, err
+	}
+
+	maxNumber := 0
+	for _, trigger := range triggers {
+		value := strings.TrimSpace(trigger)
+		if !strings.HasPrefix(value, prefix) {
+			continue
+		}
+		suffix := strings.TrimSpace(strings.TrimPrefix(value, prefix))
+		if suffix == "" {
+			continue
+		}
+		number, err := strconv.Atoi(suffix)
+		if err != nil || number <= 0 {
+			continue
+		}
+		if number > maxNumber {
+			maxNumber = number
+		}
+	}
+
+	return maxNumber, nil
+}

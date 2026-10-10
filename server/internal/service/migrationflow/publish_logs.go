@@ -1,0 +1,648 @@
+package migrationflow
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/repository"
+	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
+	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
+	publishdownloader "github.com/pt-nexus/server/internal/service/publish/downloader"
+)
+
+const (
+	publishLogModule               = "发布-日志"
+	batchCrossSeedTriggerPrefix    = "批量转种-"
+	batchCrossSeedDefaultSceneName = "multi_torrent"
+)
+
+// ExternalPublishLogInput 表示“外部流程”直接写入 publish_logs 的最小字段集合。
+// 说明：用于无法走标准 Publish 工作流，但仍希望在“发种日志”页面中留痕的场景（例如：批量转种前置过滤、抓取失败等）。
+type ExternalPublishLogInput struct {
+	Trigger      string
+	Scene        string
+	QueueGroupID string
+
+	TaskID    string
+	TorrentID string
+	Hash      string
+	Name      string
+
+	SourceSite   string
+	TargetSite   string
+	DownloaderID string
+
+	Title    string
+	Subtitle string
+
+	Status    string
+	ResultURL string
+	Logs      string
+
+	AutoAddResult string
+	CostMS        int64
+}
+
+// NextBatchCrossSeedTrigger 计算下一次“批量转种”的触发标识（批量转种-<序号>）。
+// 参数/返回：无参数；返回 trigger 字符串、批次序号与 error。
+// 失败场景：发种日志仓储未初始化或查询失败返回 error。
+// 副作用：读取 publish_logs。
+func (s *MigrateService) NextBatchCrossSeedTrigger() (string, int, error) {
+	if s == nil || s.publishLogRepo == nil {
+		return "", 0, errors.New("发种日志未初始化")
+	}
+
+	maxNumber, err := s.publishLogRepo.MaxNumericTriggerSuffix(batchCrossSeedTriggerPrefix)
+	if err != nil {
+		return "", 0, err
+	}
+
+	next := maxNumber + 1
+	if next < 1 {
+		next = 1
+	}
+	return fmt.Sprintf("%s%d", batchCrossSeedTriggerPrefix, next), next, nil
+}
+
+// InsertExternalPublishLog 直接插入一条发种日志记录（不经过 Publish 工作流）。
+// 参数/返回：input 为日志内容；返回 error 表示写入失败原因。
+// 失败场景：发种日志仓储未初始化、写库失败返回 error。
+// 副作用：写入 publish_logs，成功状态且带 hash 时回写 seed_parameters.last_publish_at。
+func (s *MigrateService) InsertExternalPublishLog(input ExternalPublishLogInput) error {
+	if s == nil || s.publishLogRepo == nil {
+		return errors.New("发种日志未初始化")
+	}
+
+	scene := strings.TrimSpace(input.Scene)
+	if scene == "" {
+		scene = batchCrossSeedDefaultSceneName
+	}
+
+	entry := repository.PublishLogEntry{
+		Trigger:       strings.TrimSpace(input.Trigger),
+		Scene:         scene,
+		QueueGroupID:  strings.TrimSpace(input.QueueGroupID),
+		TaskID:        strings.TrimSpace(input.TaskID),
+		TorrentID:     strings.TrimSpace(input.TorrentID),
+		SourceSite:    s.normalizePublishLogSourceSite(input.SourceSite),
+		TargetSite:    strings.TrimSpace(input.TargetSite),
+		DownloaderID:  strings.TrimSpace(input.DownloaderID),
+		Title:         strings.TrimSpace(input.Title),
+		Subtitle:      strings.TrimSpace(input.Subtitle),
+		Status:        strings.TrimSpace(input.Status),
+		ResultURL:     strings.TrimSpace(input.ResultURL),
+		Logs:          strings.TrimSpace(input.Logs),
+		AutoAddResult: strings.TrimSpace(input.AutoAddResult),
+		CostMS:        input.CostMS,
+	}
+
+	_, insertErr := s.publishLogRepo.Insert(&entry)
+	if insertErr != nil {
+		return insertErr
+	}
+	if isSuccessfulPublishLogStatus(entry.Status) && s.repo != nil {
+		name := strings.TrimSpace(firstNonEmptyString(input.Name, entry.Title))
+		affected, err := s.repo.UpdateSeedParameterLastPublishAt(name, input.Hash, entry.TorrentID, entry.SourceSite, entry.UpdatedAt)
+		if err != nil {
+			logx.Warnf(publishLogModule, "外部日志回写最后发布时间失败 hash=%s status=%s err=%v", strings.TrimSpace(input.Hash), entry.Status, err)
+		}
+		if err == nil && affected == 0 {
+			s.updateSeedParameterLastPublishAtByTorrentID(name, input.Hash, entry.TorrentID, entry.SourceSite, entry.Status, entry.UpdatedAt)
+		}
+	}
+	return nil
+}
+
+// InitPublishLogs 初始化发种日志依赖。
+// 参数/返回：repo 用于写入与查询 publish_logs；无返回值。
+// 失败场景：repo 为空时仅记录日志并跳过初始化，避免启动阶段 panic。
+// 副作用：无。
+func (s *MigrateService) InitPublishLogs(repo *repository.PublishLogRepository) {
+	if s == nil {
+		return
+	}
+	if repo == nil {
+		logx.Warnf(publishLogModule, "初始化发种日志失败：repo 为空")
+		return
+	}
+	s.publishLogRepo = repo
+}
+
+// ListPublishLogs 分页查询发种日志（供 UI “发种日志”页面使用）。
+// 参数/返回：query 为筛选与分页条件；返回 success/data/total 等结构。
+// 失败场景：日志仓储未初始化或查询失败时返回 5xx。
+// 副作用：无（只读）。
+func (s *MigrateService) ListPublishLogs(query repository.PublishLogQuery) (map[string]any, int) {
+	if s == nil || s.publishLogRepo == nil {
+		return map[string]any{"success": false, "message": "发种日志未初始化"}, 500
+	}
+	rows, total, err := s.publishLogRepo.List(query)
+	if err != nil {
+		return map[string]any{"success": false, "message": "查询发种日志失败: " + err.Error()}, 500
+	}
+
+	// 回填展示用派生字段：种子体积（按 torrent_id → seed_parameters.hash → torrents.size 关联）。
+	s.fillPublishLogSizes(rows)
+
+	pageSize := query.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+
+	return map[string]any{
+		"success":    true,
+		"data":       rows,
+		"total":      total,
+		"page":       query.Page,
+		"page_size":  pageSize,
+		"pageSize":   pageSize,
+		"page_total": (total + int64(pageSize) - 1) / int64(pageSize),
+	}, 200
+}
+
+// GetPublishLogByQueueTask 查询指定队列任务（下载器发布进度页的一行）对应的实际发种日志。
+// 优先按 queue_task_id 精确匹配（队列发布与立即发布都会把 queue_task_id 写入 publish_logs）；
+// 若未命中则回退到 queue_group_id + target_site，兼容历史日志未回填 queue_task_id 的情况；
+// 仍未命中时再按队列任务的 task_id + target_site 兜底，兼容早期「批量立即发布」日志既无
+// queue_task_id 也无 queue_group_id 的情况。
+// 参数/返回：queueTaskID 为 publish_queue_tasks.id；fallbackGroupID/fallbackTargetSite 为兜底筛选；
+// 返回 success/data（命中为 PublishLogEntry，未命中为 nil）/matched_by 与状态码。
+// 失败场景：日志仓储未初始化返回 500。
+// 副作用：无（只读）。
+func (s *MigrateService) GetPublishLogByQueueTask(queueTaskID int64, fallbackGroupID, fallbackTargetSite string) (map[string]any, int) {
+	if s == nil || s.publishLogRepo == nil {
+		return map[string]any{"success": false, "message": "发种日志未初始化"}, 500
+	}
+	if queueTaskID > 0 {
+		if entry, ok, err := s.publishLogRepo.FindLatestByQueueTaskID(queueTaskID); err == nil && ok && entry != nil {
+			return map[string]any{
+				"success":    true,
+				"data":       entry,
+				"matched_by": "queue_task_id",
+			}, 200
+		}
+	}
+	if strings.TrimSpace(fallbackGroupID) != "" && strings.TrimSpace(fallbackTargetSite) != "" {
+		rows, _, err := s.publishLogRepo.List(repository.PublishLogQuery{
+			QueueGroupID: strings.TrimSpace(fallbackGroupID),
+			TargetSite:   strings.TrimSpace(fallbackTargetSite),
+			Page:         1,
+			PageSize:     1,
+		})
+		if err == nil && len(rows) > 0 {
+			return map[string]any{
+				"success":    true,
+				"data":       rows[0],
+				"matched_by": "queue_group_target",
+			}, 200
+		}
+	}
+	// 最后兜底：早期「批量立即发布」（batch_live）落库的日志没有 queue_task_id/queue_group_id，
+	// 只能用队列任务自身的 task_id + target_site 反查（同一上下文重复发同一站取最新一条）。
+	if queueTaskID > 0 && s.queueRepo != nil {
+		if task, ok, err := s.queueRepo.FindTaskByID(queueTaskID); err == nil && ok && task != nil {
+			if entry, hit, findErr := s.publishLogRepo.FindLatestByTaskAndSite(task.TaskID, task.TargetSite); findErr == nil && hit && entry != nil {
+				return map[string]any{
+					"success":    true,
+					"data":       entry,
+					"matched_by": "task_id_target_site",
+				}, 200
+			}
+		}
+	}
+	return map[string]any{
+		"success": true,
+		"data":    nil,
+		"message": "暂无发布日志",
+	}, 200
+}
+
+// BatchDeletePublishLogs 批量删除发种日志（同时处理关联的发种队列任务）。
+// 参数/返回：ids 为发种日志主键列表；返回删除统计与状态码。
+// 失败场景：日志仓储未初始化返回 500；无有效 ID 返回 400。
+// 副作用：取消关联的 queued 队列任务；删除 publish_logs 记录。
+func (s *MigrateService) BatchDeletePublishLogs(ids []uint64) (map[string]any, int) {
+	if s == nil || s.publishLogRepo == nil {
+		return map[string]any{"success": false, "message": "发种日志未初始化"}, 500
+	}
+	if len(ids) == 0 {
+		return map[string]any{"success": false, "message": "未选择任何日志"}, 400
+	}
+
+	// 查询选中日志的状态与 queue_task_id，区分队列与非队列记录
+	entries, err := s.publishLogRepo.FindByIDs(ids)
+	if err != nil {
+		return map[string]any{"success": false, "message": "查询日志失败: " + err.Error()}, 500
+	}
+	if len(entries) == 0 {
+		return map[string]any{"success": false, "message": "未找到匹配的日志"}, 404
+	}
+
+	// 收集 queued 任务的 queue_task_id，批量取消
+	var queueTaskIDs []int64
+	for _, e := range entries {
+		if strings.TrimSpace(e.Status) == "queued" && e.QueueTaskID != nil && *e.QueueTaskID > 0 {
+			queueTaskIDs = append(queueTaskIDs, *e.QueueTaskID)
+		}
+	}
+
+	cancelledCount := int64(0)
+	if len(queueTaskIDs) > 0 && s.queueRepo != nil {
+		cancelled, cancelErr := s.queueRepo.BatchCancelByTaskIDs(queueTaskIDs, "批量删除")
+		if cancelErr != nil {
+			logx.Warnf(publishLogModule, "批量取消队列任务失败 err=%v", cancelErr)
+		} else {
+			cancelledCount = cancelled
+		}
+	}
+
+	// 删除所有选中的日志记录
+	deletedCount, err := s.publishLogRepo.DeleteByIDs(ids)
+	if err != nil {
+		return map[string]any{"success": false, "message": "删除日志失败: " + err.Error()}, 500
+	}
+
+	logx.Infof(publishLogModule, "批量删除发种日志 requested=%d deleted=%d cancelled_queue=%d", len(ids), deletedCount, cancelledCount)
+	return map[string]any{
+		"success":         true,
+		"message":         fmt.Sprintf("已删除 %d 条日志", deletedCount),
+		"deleted_count":   deletedCount,
+		"cancelled_count": cancelledCount,
+	}, 200
+}
+
+func (s *MigrateService) appendPublishLog(payload map[string]any, ctxTaskID string, ctxTorrentID string, result map[string]any, statusCode int, cost time.Duration) {
+	if s == nil || s.publishLogRepo == nil {
+		return
+	}
+
+	trigger := strings.TrimSpace(processingshared.ToString(payload["publish_trigger"], "manual"))
+	scene := strings.TrimSpace(processingshared.ToString(payload["publish_scene"], ""))
+
+	targetSite := strings.TrimSpace(processingshared.ToString(payload["targetSite"], ""))
+	sourceSite := s.normalizePublishLogSourceSite(processingshared.ToString(payload["sourceSite"], processingshared.ToString(payload["source_site"], "")))
+	fallbackSavePath := ""
+	fallbackDownloaderID := ""
+	if ctxTaskID != "" && s.contextState != nil {
+		if ctx, ok := s.contextState.Get(ctxTaskID); ok {
+			fallbackSavePath = strings.TrimSpace(ctx.SavePath)
+			fallbackDownloaderID = strings.TrimSpace(ctx.DownloaderID)
+		}
+	}
+	_, downloaderID := publishdownloader.ResolveEffectiveTarget(payload, fallbackSavePath, fallbackDownloaderID, s.resolveDefaultPublishDownloaderID())
+
+	uploadData, _ := payload["upload_data"].(map[string]any)
+	if uploadData == nil {
+		uploadData = map[string]any{}
+	}
+
+	torrentID := strings.TrimSpace(ctxTorrentID)
+	if torrentID == "" {
+		torrentID = strings.TrimSpace(processingshared.ToString(payload["torrent_id"], processingshared.ToString(payload["torrentId"], "")))
+	}
+	if torrentID == "" {
+		torrentID = strings.TrimSpace(processingshared.ToString(uploadData["torrent_id"], processingshared.ToString(uploadData["torrentId"], "")))
+	}
+	title, subtitle := resolvePublishLogTitleFromUploadData(uploadData, torrentID)
+	if title == "" {
+		title = torrentID
+	}
+
+	queueTaskID := (*int64)(nil)
+	if rawQueueID := processingshared.ToFloat(payload["queue_task_id"]); rawQueueID > 0 {
+		value := int64(rawQueueID)
+		queueTaskID = &value
+	}
+	queueGroupID := strings.TrimSpace(processingshared.ToString(payload["queue_group_id"], ""))
+
+	logStatus := "failed"
+	if result != nil {
+		preCheck := processingshared.ToBool(result["pre_check"])
+		limitReached := processingshared.ToBool(result["limit_reached"])
+		if preCheck && limitReached {
+			logStatus = "pre_check_limit"
+		} else if statusCode == 200 && processingshared.ToBool(result["success"]) {
+			autoEdited := false
+			if processingshared.ToBool(result["auto_edit_executed"]) {
+				if autoEditResult, ok := result["auto_edit_result"].(map[string]any); ok && autoEditResult != nil {
+					autoEdited = processingshared.ToBool(autoEditResult["success"])
+				}
+			}
+
+			if autoEdited {
+				logStatus = "edited"
+			} else if processingshared.ToBool(result["is_existing_torrent"]) {
+				logStatus = "exists"
+			} else {
+				logStatus = "success"
+			}
+		}
+	} else if statusCode == 200 {
+		logStatus = "success"
+	}
+
+	if result == nil {
+		result = map[string]any{}
+	}
+	resultURL := strings.TrimSpace(processingshared.ToString(result["url"], ""))
+	logsText := strings.TrimSpace(processingshared.ToString(result["logs"], ""))
+
+	autoAddJSON := ""
+	if raw := result["auto_add_result"]; raw != nil {
+		if encoded, err := json.Marshal(raw); err == nil {
+			autoAddJSON = string(encoded)
+		}
+	}
+
+	entry := repository.PublishLogEntry{
+		Trigger:       trigger,
+		Scene:         scene,
+		QueueTaskID:   queueTaskID,
+		QueueGroupID:  queueGroupID,
+		TaskID:        ctxTaskID,
+		TorrentID:     torrentID,
+		SourceSite:    sourceSite,
+		TargetSite:    targetSite,
+		DownloaderID:  downloaderID,
+		Title:         title,
+		Subtitle:      subtitle,
+		Status:        logStatus,
+		ResultURL:     resultURL,
+		Logs:          logsText,
+		AutoAddResult: autoAddJSON,
+		CostMS:        cost.Milliseconds(),
+	}
+	if queueTaskID != nil && *queueTaskID > 0 {
+		if existing, ok, err := s.publishLogRepo.FindLatestByQueueTaskID(*queueTaskID); err == nil && ok && existing != nil {
+			if strings.TrimSpace(entry.Title) == "" && strings.TrimSpace(existing.Title) != "" {
+				entry.Title = existing.Title
+			}
+			if strings.TrimSpace(entry.Subtitle) == "" && strings.TrimSpace(existing.Subtitle) != "" {
+				entry.Subtitle = existing.Subtitle
+			}
+		}
+		upsertOK := true
+		if err := s.publishLogRepo.UpsertByQueueTaskID(&entry); err != nil {
+			upsertOK = false
+			logx.Warnf(publishLogModule, "更新发种日志失败 queue_task_id=%d trigger=%s scene=%s target=%s err=%v", *queueTaskID, trigger, scene, targetSite, err)
+		}
+		if upsertOK {
+			s.updateSeedParameterLastPublishAtFromEntry(&entry, payload, uploadData, result)
+		}
+		return
+	}
+
+	insertedID, err := s.publishLogRepo.Insert(&entry)
+	if err != nil {
+		logx.Warnf(publishLogModule, "写入发种日志失败 trigger=%s scene=%s target=%s err=%v", trigger, scene, targetSite, err)
+	}
+	if insertedID > 0 {
+		s.updateSeedParameterLastPublishAtFromEntry(&entry, payload, uploadData, result)
+	}
+}
+
+func resolvePublishLogTitleFromUploadData(uploadData map[string]any, fallbackTitle string) (string, string) {
+	subtitle := strings.TrimSpace(processingshared.ToString(uploadData["subtitle"], ""))
+
+	title := resolvePreviewTitleFromFinalParams(uploadData["final_publish_parameters"])
+	baseTitle := strings.TrimSpace(firstNonEmptyString(
+		processingshared.ToString(uploadData["title"], ""),
+		processingshared.ToString(uploadData["original_main_title"], ""),
+		processingshared.ToString(uploadData["name"], ""),
+		fallbackTitle,
+	))
+
+	if title == "" {
+		titleComponents := parseUploadTitleComponents(uploadData["title_components"])
+		if len(titleComponents) > 0 {
+			completed := processingtitle.CompleteTitleComponents(titleComponents, baseTitle)
+			rebuilt := strings.TrimSpace(processingtitle.BuildPreviewTitleFromTitleComponents(completed, baseTitle))
+			if rebuilt != "" && rebuilt != "-NOGROUP" {
+				title = rebuilt
+			}
+		}
+	}
+
+	if title == "" {
+		title = baseTitle
+	}
+	return strings.TrimSpace(title), subtitle
+}
+
+func resolvePublishLogSeedName(payload map[string]any, uploadData map[string]any) string {
+	for _, source := range []map[string]any{uploadData, payload} {
+		if source == nil {
+			continue
+		}
+		if value := strings.TrimSpace(processingshared.ToString(source["name"], "")); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(processingshared.ToString(source["torrent_name"], "")); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(processingshared.ToString(source["torrentName"], "")); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func (s *MigrateService) updateSeedParameterLastPublishAtFromEntry(entry *repository.PublishLogEntry, payload map[string]any, uploadData map[string]any, result map[string]any) {
+	if s == nil || s.repo == nil || entry == nil || !isSuccessfulPublishLogStatus(entry.Status) {
+		return
+	}
+	hash := resolvePublishedTorrentHash(payload, uploadData, result)
+	torrentID := strings.TrimSpace(entry.TorrentID)
+	sourceSite := strings.TrimSpace(entry.SourceSite)
+	name := resolvePublishLogSeedName(payload, uploadData)
+	if entry.TaskID != "" && s.contextState != nil {
+		if ctx, ok := s.contextState.Get(entry.TaskID); ok {
+			if hash == "" {
+				hash = strings.TrimSpace(ctx.Hash)
+			}
+			if name == "" {
+				name = strings.TrimSpace(ctx.Name)
+			}
+			if torrentID == "" {
+				torrentID = strings.TrimSpace(ctx.TorrentID)
+			}
+			if sourceSite == "" {
+				sourceSite = strings.TrimSpace(firstNonEmptyString(ctx.SourceNickname, ctx.SiteName))
+			}
+		}
+	}
+	if name == "" {
+		name = strings.TrimSpace(entry.Title)
+	}
+	if name == "" && hash == "" && (torrentID == "" || sourceSite == "") {
+		return
+	}
+	publishAt := strings.TrimSpace(entry.UpdatedAt)
+	if publishAt == "" {
+		publishAt = time.Now().Format(repository.PublishQueueTimeLayout)
+	}
+	affected, err := s.repo.UpdateSeedParameterLastPublishAt(name, hash, torrentID, sourceSite, publishAt)
+	if err != nil {
+		logx.Warnf(publishLogModule, "回写最后发布时间失败 hash=%s status=%s err=%v", hash, entry.Status, err)
+		return
+	}
+	if affected == 0 && s.updateSeedParameterLastPublishAtByTorrentID(name, hash, torrentID, sourceSite, entry.Status, publishAt) > 0 {
+		return
+	}
+	if affected == 0 {
+		logx.Warnf(publishLogModule, "回写最后发布时间未命中 seed_parameters hash=%s status=%s", hash, entry.Status)
+	}
+}
+
+// isSuccessfulPublishLogStatus 判断发种日志状态是否属于「已发布」家族（success/edited/exists）。
+// 参数/返回：status 为 publish_logs.status；返回 true 表示该种子已落在目标站点。
+// 失败场景：无。
+// 副作用：无。
+// 说明：口径统一收敛到 repository.IsPublishedPublishLogStatus，避免多处维护同一份状态列表。
+func isSuccessfulPublishLogStatus(status string) bool {
+	return repository.IsPublishedPublishLogStatus(status)
+}
+
+func (s *MigrateService) updateSeedParameterLastPublishAtByTorrentID(name, hash, torrentID, sourceSite, status, publishAt string) int64 {
+	if s == nil || s.repo == nil {
+		return 0
+	}
+	torrentID = strings.TrimSpace(torrentID)
+	if torrentID == "" {
+		return 0
+	}
+	seedName, ok, err := s.repo.FindSeedParameterNameByTorrentID(torrentID)
+	if err != nil {
+		logx.Warnf(publishLogModule, "last_publish_at fallback lookup name failed torrent_id=%s status=%s err=%v", torrentID, status, err)
+		return 0
+	}
+	if !ok {
+		return 0
+	}
+	affected, err := s.repo.UpdateSeedParameterLastPublishAt(seedName, hash, torrentID, sourceSite, publishAt)
+	if err != nil {
+		logx.Warnf(publishLogModule, "last_publish_at fallback update failed name=%s torrent_id=%s status=%s err=%v", seedName, torrentID, status, err)
+		return 0
+	}
+	if affected > 0 {
+		return affected
+	}
+	if strings.TrimSpace(name) != "" && strings.TrimSpace(name) != seedName {
+		logx.Warnf(publishLogModule, "last_publish_at fallback missed log_name=%s seed_name=%s torrent_id=%s source_site=%s status=%s", name, seedName, torrentID, sourceSite, status)
+	}
+	return 0
+}
+
+func resolvePublishedTorrentHash(payload map[string]any, uploadData map[string]any, result map[string]any) string {
+	keys := []string{"hash", "torrent_hash", "info_hash", "infoHash", "downloader_hash", "downloaderHash"}
+	for _, source := range []map[string]any{uploadData, payload, result} {
+		for _, key := range keys {
+			if value := strings.TrimSpace(processingshared.ToString(source[key], "")); value != "" {
+				return value
+			}
+		}
+	}
+	if result != nil {
+		if autoAdd, ok := result["auto_add_result"].(map[string]any); ok {
+			for _, key := range keys {
+				if value := strings.TrimSpace(processingshared.ToString(autoAdd[key], "")); value != "" {
+					return value
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func resolvePreviewTitleFromFinalParams(raw any) string {
+	parseMap := func(values map[string]any) string {
+		return strings.TrimSpace(firstNonEmptyString(
+			processingshared.ToString(values["主标题 (预览)"], ""),
+			processingshared.ToString(values["final_main_title"], ""),
+			processingshared.ToString(values["title"], ""),
+		))
+	}
+
+	switch typed := raw.(type) {
+	case map[string]any:
+		return parseMap(typed)
+	case map[string]string:
+		return strings.TrimSpace(firstNonEmptyString(
+			typed["主标题 (预览)"],
+			typed["final_main_title"],
+			typed["title"],
+		))
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return ""
+		}
+		decoded := map[string]any{}
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+			return ""
+		}
+		return parseMap(decoded)
+	default:
+		return ""
+	}
+}
+
+func parseUploadTitleComponents(raw any) []any {
+	switch typed := raw.(type) {
+	case []any:
+		return typed
+	case []map[string]any:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			items = append(items, item)
+		}
+		return items
+	case []map[string]string:
+		items := make([]any, 0, len(typed))
+		for _, item := range typed {
+			converted := map[string]any{}
+			for key, value := range item {
+				converted[key] = value
+			}
+			items = append(items, converted)
+		}
+		return items
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" {
+			return []any{}
+		}
+		decoded := []any{}
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err == nil {
+			return decoded
+		}
+		return []any{}
+	default:
+		return []any{}
+	}
+}
+
+func (s *MigrateService) normalizePublishLogSourceSite(value string) string {
+	sourceSite := strings.TrimSpace(value)
+	if sourceSite == "" {
+		return ""
+	}
+	if s == nil || s.repo == nil {
+		return sourceSite
+	}
+
+	siteInfo, err := s.repo.GetSiteByName(sourceSite)
+	if err != nil || siteInfo == nil {
+		return sourceSite
+	}
+
+	nickname := strings.TrimSpace(processingshared.ToString(siteInfo["nickname"], ""))
+	if nickname == "" {
+		return sourceSite
+	}
+	return nickname
+}

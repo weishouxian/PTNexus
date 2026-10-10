@@ -1,0 +1,18 @@
+# Build outputs
+build/bin/
+build/.package-cache/
+build/windows/installer/tmp/
+build/windows/installer/wails_tools.nsh
+build/windows/sidecar/
+tools/windows/
+
+# Root dependencies
+node_modules/
+
+# Frontend generated files
+frontend/dist/**
+!frontend/dist/placeholder.txt
+frontend/node_modules/
+frontend/package-lock.json
+frontend/package.json.md5
+frontend/wailsjs/

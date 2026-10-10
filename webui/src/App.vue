@@ -1,0 +1,1019 @@
+<!-- src/App.vue -->
+<template>
+  <div
+    v-if="showDesktopCompactTitleBar"
+    class="desktop-titlebar glass-nav desktop-drag-region"
+    @dblclick="handleWindowMaximiseToggle"
+  >
+    <div class="desktop-titlebar__brand">
+      <img src="/favicon.ico" alt="Logo" height="24" class="brand-logo desktop-titlebar__logo" />
+      <div class="desktop-titlebar__text">
+        <span class="desktop-titlebar__title">PT Nexus</span>
+        <span class="desktop-titlebar__subtitle">{{ desktopCompactSubtitle }}</span>
+      </div>
+    </div>
+    <div class="desktop-titlebar__spacer" />
+    <DesktopWindowControls
+      class="desktop-titlebar__controls desktop-no-drag"
+      compact
+      :is-maximised="isMaximised"
+      @minimise="minimiseWindow"
+      @toggle-maximise="handleWindowMaximiseToggle"
+      @close="hideWindowToTray"
+    />
+  </div>
+
+  <div v-if="!isLoginPage" class="app-nav-wrapper">
+    <div v-if="!showMobileNav" class="desktop-main-nav">
+      <el-menu
+        :default-active="activeRoute"
+        class="main-nav glass-nav desktop-drag-region"
+        mode="horizontal"
+        :ellipsis="false"
+        router
+        @dblclick="handleDesktopNavDoubleClick"
+      >
+        <div class="brand-block desktop-no-drag">
+          <img src="/favicon.ico" alt="Logo" height="32" class="brand-logo" />
+          PT Nexus
+        </div>
+        <el-menu-item index="/">首页</el-menu-item>
+        <el-menu-item index="/info">流量统计</el-menu-item>
+        <el-menu-item index="/torrents">一种多站</el-menu-item>
+        <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
+        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
+        <el-menu-item index="/publish-logs">发种日志</el-menu-item>
+        <el-menu-item index="/sites">做种检索</el-menu-item>
+        <el-menu-item index="/resource-info">资源信息</el-menu-item>
+        <el-menu-item index="/bangumi">番组数据</el-menu-item>
+        <el-menu-item index="/settings">设置</el-menu-item>
+      </el-menu>
+      <div
+        class="right-buttons-container desktop-no-drag"
+        :class="{ 'right-buttons-container--with-window-controls': showDesktopWindowControlsInNav }"
+      >
+<!--        <el-link
+          href="https://ptn-wiki.sqing33.dpdns.org"
+          target="_blank"
+          :underline="false"
+          class="desktop-link-action"
+        >
+          <el-icon><Link /></el-icon>
+          Wiki
+        </el-link>-->
+        <el-link
+          href="https://github.com/weishouxian/PTNexus"
+          target="_blank"
+          :underline="false"
+          class="desktop-link-action"
+        >
+          <el-icon><Link /></el-icon>
+          GitHub
+        </el-link>
+        <el-tag size="small" class="version-tag" @click="showVersionDialog">{{
+          currentVersion
+        }}</el-tag>
+        <el-button
+          type="primary"
+          plain
+          :icon="Download"
+          :loading="exportingLogs"
+          @click="handleExportLogs"
+        >
+          导出后端日志
+        </el-button>
+        <el-link
+          href="https://github.com/weishouxian/PTNexus/issues"
+          target="_blank"
+          :underline="false"
+        >
+          <el-button type="primary" plain>反馈</el-button>
+        </el-link>
+        <el-select
+          v-model="selectedDownloaderIdProxy"
+          class="global-downloader-select"
+          placeholder="全部下载器"
+          clearable
+          :disabled="globalDownloaderOptions.length === 0"
+          :title="globalDownloaderTitle"
+        >
+          <el-option
+            v-for="item in globalDownloaderOptions"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </el-select>
+        <el-button
+          type="success"
+          @click="handleGlobalRefresh"
+          :loading="isRefreshing"
+          :disabled="isRefreshing"
+          plain
+        >
+          刷新
+        </el-button>
+      </div>
+      <DesktopWindowControls
+        v-if="showDesktopWindowControlsInNav"
+        class="main-nav__window-controls desktop-no-drag"
+        :is-maximised="isMaximised"
+        @minimise="minimiseWindow"
+        @toggle-maximise="handleWindowMaximiseToggle"
+        @close="hideWindowToTray"
+      />
+    </div>
+
+    <div v-else class="mobile-nav glass-nav">
+      <div class="mobile-brand">
+        <img src="/favicon.ico" alt="Logo" height="26" class="brand-logo" />
+        <div class="mobile-brand-text">
+          <span class="mobile-brand-title">PT Nexus</span>
+          <span class="mobile-brand-subtitle">{{ currentRouteTitle }}</span>
+        </div>
+      </div>
+      <div class="mobile-top-actions">
+        <el-button
+          type="success"
+          plain
+          @click="handleGlobalRefresh"
+          :loading="isRefreshing"
+          :disabled="isRefreshing"
+          size="small"
+        >
+          刷新
+        </el-button>
+        <el-button type="primary" plain :icon="Menu" @click="mobileMenuVisible = true" size="small">
+          菜单
+        </el-button>
+      </div>
+    </div>
+
+    <el-drawer
+      v-model="mobileMenuVisible"
+      direction="ltr"
+      size="82%"
+      :with-header="false"
+      append-to-body
+      class="mobile-nav-drawer"
+    >
+      <div class="drawer-header">
+        <div class="drawer-title">PT Nexus 导航</div>
+        <el-tag size="small" style="cursor: pointer" @click="showVersionDialog">{{
+          currentVersion
+        }}</el-tag>
+      </div>
+
+      <div class="drawer-downloader">
+        <span class="drawer-downloader__label">下载器</span>
+        <el-select
+          v-model="selectedDownloaderIdProxy"
+          class="drawer-downloader__select"
+          size="small"
+          placeholder="全部下载器"
+          clearable
+          :disabled="globalDownloaderOptions.length === 0"
+        >
+          <el-option
+            v-for="item in globalDownloaderOptions"
+            :key="item.id"
+            :label="item.name"
+            :value="item.id"
+          />
+        </el-select>
+      </div>
+
+      <el-menu
+        :default-active="activeRoute"
+        class="mobile-nav-menu"
+        router
+        @select="mobileMenuVisible = false"
+      >
+        <el-menu-item index="/">首页</el-menu-item>
+        <el-menu-item index="/info">流量统计</el-menu-item>
+        <el-menu-item index="/torrents">一种多站</el-menu-item>
+        <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
+        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
+        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
+        <el-menu-item index="/publish-logs">发种日志</el-menu-item>
+        <el-menu-item index="/sites">做种检索</el-menu-item>
+        <el-menu-item index="/resource-info">资源信息</el-menu-item>
+        <el-menu-item index="/bangumi">番组数据</el-menu-item>
+        <el-menu-item index="/settings">设置</el-menu-item>
+        <el-menu-item index="/settings/general" class="mobile-settings-sub-item">
+          基础设置
+        </el-menu-item>
+        <el-menu-item index="/settings/downloader" class="mobile-settings-sub-item">
+          下载器设置
+        </el-menu-item>
+        <el-menu-item index="/settings/cookie" class="mobile-settings-sub-item">
+          站点管理
+        </el-menu-item>
+      </el-menu>
+
+      <div class="drawer-actions">
+        <el-button
+          type="primary"
+          plain
+          :icon="Download"
+          :loading="exportingLogs"
+          @click="handleExportLogs"
+        >
+          导出后端日志
+        </el-button>
+        <el-button
+          type="success"
+          plain
+          @click="handleGlobalRefresh"
+          :loading="isRefreshing"
+          :disabled="isRefreshing"
+        >
+          刷新缓存
+        </el-button>
+        <el-link href="https://ptn-wiki.sqing33.dpdns.org" target="_blank" :underline="false">
+          <el-icon><Link /></el-icon>
+          Wiki
+        </el-link>
+        <el-link href="https://github.com/weishouxian/PTNexus" target="_blank" :underline="false">
+          <el-icon><Link /></el-icon>
+          GitHub
+        </el-link>
+        <el-link
+          href="https://github.com/weishouxian/PTNexus/issues"
+          target="_blank"
+          :underline="false"
+        >
+          <el-button type="primary" plain>反馈</el-button>
+        </el-link>
+      </div>
+    </el-drawer>
+  </div>
+
+  <main
+    :class="[
+      'main-content',
+      isLoginPage ? 'no-nav' : '',
+      showMobileNav && !isLoginPage ? 'mobile-nav-content' : '',
+    ]"
+  >
+    <router-view v-slot="{ Component }">
+      <component :is="Component" @ready="handleComponentReady" />
+    </router-view>
+  </main>
+
+  <!-- Version Update Component (outside navigation bar) -->
+  <VersionUpdate @version-loaded="(version) => (currentVersion = version)" ref="versionUpdateRef" />
+</template>
+
+<script setup lang="ts">
+import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
+import { Download, Link, Menu } from '@element-plus/icons-vue'
+import axios from 'axios'
+import DesktopWindowControls from '@/components/desktop/DesktopWindowControls.vue'
+import { useDesktopWindowControls } from '@/desktop/windowControls'
+import VersionUpdate from '@/components/VersionUpdate.vue'
+import { ElMessage } from '@/utils/uiNotify'
+import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
+
+const route = useRoute()
+const globalDownloader = useGlobalDownloaderStore()
+const {
+  hideWindowToTray,
+  isDesktopShell,
+  isMaximised,
+  isWindowsDesktop,
+  minimiseWindow,
+  toggleWindowMaximise,
+} = useDesktopWindowControls()
+
+// 背景图片
+const backgroundUrl = ref('https://pic.pting.club/i/2025/10/07/68e4fbfe9be93.jpg')
+
+// 版本信息
+const currentVersion = ref('加载中...')
+
+const mobileMenuVisible = ref(false)
+const isMobile = ref(false)
+const MOBILE_BREAKPOINT = 768
+
+const routeTitleMap: Record<string, string> = {
+  '/': '首页',
+  '/info': '流量统计',
+  '/torrents': '一种多站',
+  '/data': '一站多种',
+  '/scheduled-seeding': '定时发种',
+  '/auto-seed': '自动发种',
+  '/publish-progress': '下载器发布进度',
+  '/publish-logs': '发种日志',
+  '/sites': '做种检索',
+  '/resource-info': '资源信息',
+  '/bangumi': '番组数据',
+  '/settings': '设置',
+}
+
+const isLoginPage = computed(() => route.path === '/login')
+
+const activeRoute = computed(() => {
+  if (route.matched.length > 0) {
+    return route.matched[0].path
+  }
+  return route.path
+})
+
+const currentRouteTitle = computed(() => routeTitleMap[activeRoute.value] || '导航')
+const desktopCompactSubtitle = computed(() =>
+  isLoginPage.value ? '登录' : currentRouteTitle.value,
+)
+const showMobileNav = computed(() => isMobile.value && !isDesktopShell.value)
+const showDesktopCompactTitleBar = computed(() => isWindowsDesktop.value && isLoginPage.value)
+const showDesktopWindowControlsInNav = computed(() => isWindowsDesktop.value && !isLoginPage.value)
+
+const isRefreshing = ref(false)
+const exportingLogs = ref(false)
+
+// 顶部全局下载器选择：只列出已启用的下载器（停用下载器无法刷新数据）。
+const globalDownloaderOptions = computed(() =>
+  globalDownloader.downloaders.filter((item) => item.enabled !== false),
+)
+
+const globalDownloaderTitle = computed(() =>
+  globalDownloader.selectedDownloaderId
+    ? '当前只显示与刷新该下载器，切换后各页面筛选会同步跟随'
+    : '当前为全部下载器，选择后各页面筛选与刷新范围会收窄到该下载器',
+)
+
+// 下拉框双向绑定：写入时先本地生效再持久化到服务端，失败时由 store 回滚。
+const selectedDownloaderIdProxy = computed<string>({
+  get: () => globalDownloader.selectedDownloaderId,
+  set: (value) => {
+    void applyGlobalDownloader(value)
+  },
+})
+
+const applyGlobalDownloader = async (value: string | null | undefined) => {
+  try {
+    await globalDownloader.setSelectedDownloaderId(value ?? '')
+  } catch (error) {
+    console.error('保存全局下载器选择失败:', error)
+    ElMessage.error('保存下载器选择失败，请重试')
+  }
+}
+
+const isRefreshSupportedRoute = (path: string) => {
+  return (
+    path.startsWith('/torrents') ||
+    path.startsWith('/sites') ||
+    path.startsWith('/data') ||
+    path.startsWith('/auto-seed') ||
+    path.startsWith('/publish-logs') ||
+    path.startsWith('/batch-fetch')
+  )
+}
+
+// VersionUpdate组件引用
+const versionUpdateRef = ref()
+
+// 页面注册的刷新回调可接收刷新范围参数；不使用该参数的页面保持原有签名即可。
+type ComponentRefreshOptions = { downloaderId?: string }
+// 刷新结果：refresh_data 在任务互斥等情况会返回 HTTP 200 + success=false，
+// 页面回调需把它回传上来，顶部按钮才能给出真实提示而不是误报成功。
+type RefreshOutcome = { success?: boolean; message?: string }
+const activeComponentRefresher = ref<
+  ((options?: ComponentRefreshOptions) => Promise<RefreshOutcome | void>) | null
+>(null)
+
+const handleComponentReady = (
+  refreshMethod: (options?: ComponentRefreshOptions) => Promise<RefreshOutcome | void>,
+) => {
+  activeComponentRefresher.value = refreshMethod
+}
+
+const shouldDelegateRefreshToComponent = (path: string) => {
+  return path.startsWith('/torrents')
+}
+
+const currentGlobalDownloaderName = computed(() => {
+  const id = globalDownloader.selectedDownloaderId
+  if (!id) return '全部下载器'
+  return globalDownloaderOptions.value.find((item) => item.id === id)?.name || id
+})
+
+const handleGlobalRefresh = async () => {
+  if (isRefreshing.value) return
+
+  if (!isRefreshSupportedRoute(route.path)) {
+    ElMessage.warning('当前页面不支持刷新操作。')
+    return
+  }
+
+  isRefreshing.value = true
+  // 顶部选中下载器后只刷新该下载器的数据，未选中时保持全量刷新。
+  const downloaderId = globalDownloader.selectedDownloaderId
+  const scopeLabel = downloaderId ? `下载器「${currentGlobalDownloaderName.value}」` : '全部下载器'
+  ElMessage.info(`后台正在刷新${scopeLabel}的缓存...`)
+
+  try {
+    let outcome: RefreshOutcome | void
+    if (shouldDelegateRefreshToComponent(route.path) && activeComponentRefresher.value) {
+      outcome = await activeComponentRefresher.value({ downloaderId })
+    } else {
+      const response = await axios.post('/api/refresh_data', { downloader_id: downloaderId })
+      outcome = response.data as RefreshOutcome
+      if (activeComponentRefresher.value) {
+        await activeComponentRefresher.value({ downloaderId })
+      }
+    }
+
+    // 后台已有刷新任务时接口返回 HTTP 200 + success=false，必须显式判断，
+    // 否则会出现「提示已刷新、数据其实没动」的假成功。
+    if (outcome && outcome.success === false) {
+      ElMessage.warning(outcome.message || '后台刷新未执行，请稍后再试。')
+      return
+    }
+
+    ElMessage.success(`${scopeLabel}数据已刷新！`)
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data as { message?: string } | undefined)?.message || error.message
+      : error instanceof Error
+        ? error.message
+        : '数据更新失败'
+    ElMessage.error(message || '数据更新失败')
+  } finally {
+    isRefreshing.value = false
+  }
+}
+
+// handleExportLogs 调用后端导出接口并触发浏览器下载日志文件。
+const handleExportLogs = async () => {
+  if (exportingLogs.value) {
+    return
+  }
+  exportingLogs.value = true
+  try {
+    const response = await axios.get('/api/logs/export', {
+      responseType: 'blob',
+      timeout: 120000,
+    })
+
+    const rawContentType = response.headers['content-type']
+    const contentType =
+      typeof rawContentType === 'string' ? rawContentType : 'text/plain; charset=utf-8'
+    const blob = new Blob([response.data], { type: contentType })
+    const fileName = parseFileName(response.headers['content-disposition'])
+
+    const fileUrl = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = fileUrl
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(fileUrl)
+
+    ElMessage.success('最近24小时日志导出成功，请将文件发送给维护者')
+  } catch (error) {
+    const message = await resolveExportErrorMessage(error)
+    ElMessage.error(`日志导出失败：${message}`)
+  } finally {
+    exportingLogs.value = false
+  }
+}
+
+// parseFileName 从响应头中提取导出文件名，失败时回退默认名称。
+const parseFileName = (contentDisposition?: string) => {
+  const fallback = 'ptnexus-go-日志-24h.txt'
+  if (!contentDisposition || typeof contentDisposition !== 'string') {
+    return fallback
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1])
+    } catch {
+      return utf8Match[1]
+    }
+  }
+
+  const normalMatch = contentDisposition.match(/filename="?([^";]+)"?/i)
+  if (normalMatch?.[1]) {
+    return normalMatch[1]
+  }
+  return fallback
+}
+
+// resolveExportErrorMessage 兼容 blob/json 文本，提取后端返回的中文错误原因。
+const resolveExportErrorMessage = async (error: unknown) => {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data
+
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text()
+        if (!text) return '未知错误'
+        try {
+          const payload: unknown = JSON.parse(text)
+          if (
+            typeof payload === 'object' &&
+            payload !== null &&
+            'message' in payload &&
+            typeof payload.message === 'string' &&
+            payload.message.trim()
+          ) {
+            return payload.message
+          }
+        } catch {
+          return text
+        }
+        return text
+      } catch {
+        return '无法读取错误详情'
+      }
+    }
+
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'message' in data &&
+      typeof data.message === 'string' &&
+      data.message.trim()
+    ) {
+      return data.message
+    }
+
+    return error.message || '未知错误'
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message
+  }
+  return '未知错误'
+}
+
+const handleRefreshLoadingChange = (event: Event) => {
+  const customEvent = event as CustomEvent<{ refreshing?: boolean }>
+  isRefreshing.value = !!customEvent.detail?.refreshing
+}
+
+// 菜单显隐：由后端环境变量控制（默认隐藏「自动发种」）。
+// 仅影响导航菜单渲染，路由与后端接口保持可用，直接访问链接仍能打开页面。
+const showAutoSeedMenu = ref(false)
+let menuVisibilityLoaded = false
+
+const loadMenuVisibility = async () => {
+  if (menuVisibilityLoaded) return
+  // 未登录时请求会被 401 拦截，等登录完成后再拉取。
+  if (!localStorage.getItem('token')) return
+  menuVisibilityLoaded = true
+  try {
+    const response = await axios.get('/api/config/menu_visibility')
+    showAutoSeedMenu.value = response.data?.data?.auto_seed === true
+  } catch (error) {
+    menuVisibilityLoaded = false
+    console.error('加载菜单显隐配置失败:', error)
+  }
+}
+
+// 加载背景设置
+const loadBackgroundSettings = async () => {
+  try {
+    const response = await axios.get('/api/settings')
+    if (response.data?.ui_settings?.background_url) {
+      backgroundUrl.value = response.data.ui_settings.background_url
+      updateBackground(backgroundUrl.value)
+    }
+  } catch (error) {
+    console.error('加载背景设置失败:', error)
+  }
+}
+
+// 更新背景图片
+const updateBackground = (url: string) => {
+  const appElement = document.getElementById('app')
+  if (appElement) {
+    if (url) {
+      appElement.style.backgroundImage = `url('${url}')`
+    } else {
+      appElement.style.backgroundImage = `url('${backgroundUrl.value}')`
+    }
+  }
+}
+
+// 监听背景更新事件
+type BackgroundUpdateDetail = { backgroundUrl: string }
+const handleBackgroundUpdate = (event: Event) => {
+  const customEvent = event as CustomEvent<BackgroundUpdateDetail>
+  const newUrl = customEvent.detail?.backgroundUrl
+  if (typeof newUrl !== 'string') return
+  backgroundUrl.value = newUrl
+  updateBackground(newUrl)
+}
+
+// 显示版本更新对话框
+const showVersionDialog = () => {
+  if (versionUpdateRef.value) {
+    versionUpdateRef.value.show()
+  }
+}
+
+const handleWindowMaximiseToggle = () => {
+  void toggleWindowMaximise()
+}
+
+const handleDesktopNavDoubleClick = (event: MouseEvent) => {
+  if (!showDesktopWindowControlsInNav.value) {
+    return
+  }
+
+  if (event.target !== event.currentTarget) {
+    return
+  }
+
+  handleWindowMaximiseToggle()
+}
+
+const updateIsMobile = () => {
+  isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT
+}
+
+watch(
+  () => route.path,
+  () => {
+    mobileMenuVisible.value = false
+    // 登录后首次进入业务页面时拉取菜单显隐配置。
+    void loadMenuVisibility()
+  },
+  { immediate: true },
+)
+
+// 全局监听 Esc 键：关闭当前最上层的弹框（el-dialog / el-drawer）。
+// 通过点击弹框自带的关闭按钮来触发关闭，从而复用其 before-close / @close 逻辑；
+// 没有关闭按钮的弹框（如强制更新阻塞弹框 :show-close="false"）不会被关闭，符合预期。
+function handleGlobalEscClose(event: KeyboardEvent): void {
+  if (event.key !== 'Escape') return
+
+  const overlays = Array.from(
+    document.querySelectorAll<HTMLElement>('.el-overlay'),
+  ).filter((el) => {
+    const style = getComputedStyle(el)
+    return (
+      style.display !== 'none' &&
+      style.visibility !== 'hidden' &&
+      Number(style.opacity) > 0
+    )
+  })
+  if (overlays.length === 0) return
+
+  overlays.sort((a, b) => {
+    const za = Number(getComputedStyle(a).zIndex) || 0
+    const zb = Number(getComputedStyle(b).zIndex) || 0
+    return zb - za
+  })
+
+  const top = overlays[0]
+  const dialogClose = top.querySelector<HTMLElement>('.el-dialog__headerbtn')
+  if (dialogClose) {
+    dialogClose.click()
+    return
+  }
+  const drawerClose = top.querySelector<HTMLElement>('.el-drawer__close')
+  if (drawerClose) {
+    drawerClose.click()
+  }
+}
+
+onMounted(() => {
+  updateIsMobile()
+  loadBackgroundSettings()
+  // 顶部下载器选择与候选列表：选择结果由服务端持久化，页面侧会 await 同一份缓存。
+  void globalDownloader.loadSelection()
+  void globalDownloader.fetchDownloaders()
+  window.addEventListener('background-updated', handleBackgroundUpdate)
+  window.addEventListener('app-global-refresh-loading', handleRefreshLoadingChange as EventListener)
+  window.addEventListener('resize', updateIsMobile)
+  window.addEventListener('keydown', handleGlobalEscClose)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('background-updated', handleBackgroundUpdate)
+  window.removeEventListener('resize', updateIsMobile)
+  window.removeEventListener(
+    'app-global-refresh-loading',
+    handleRefreshLoadingChange as EventListener,
+  )
+  window.removeEventListener('keydown', handleGlobalEscClose)
+})
+</script>
+
+<style>
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 100vh;
+  overflow: hidden;
+  position: relative;
+  background-image: url('https://pic.pting.club/i/2025/10/07/68e4fbfe9be93.jpg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+}
+
+#app::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+  z-index: 0;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+}
+
+/* 禁止 Element Plus 对话框滚动 */
+.el-overlay-dialog {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  overflow: hidden;
+}
+
+.el-overlay-dialog .el-dialog {
+  margin: 0;
+}
+</style>
+
+<style scoped>
+.app-nav-wrapper {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.desktop-main-nav {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.main-nav {
+  border-bottom: solid 1px var(--el-menu-border-color);
+  flex-shrink: 0;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+.main-nav :deep(.el-menu-item),
+.main-nav :deep(.el-sub-menu) {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  --wails-draggable: no-drag;
+}
+
+.brand-block {
+  padding: 5px 15px;
+  line-height: 32px;
+  display: flex;
+  align-items: center;
+}
+
+.brand-logo {
+  margin-right: 8px;
+  vertical-align: middle;
+}
+
+.right-buttons-container {
+  position: absolute;
+  right: 20px;
+  top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  z-index: 2;
+}
+
+.right-buttons-container--with-window-controls {
+  right: 150px;
+}
+
+.global-downloader-select {
+  width: 150px;
+  flex-shrink: 0;
+}
+
+.desktop-link-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.version-tag {
+  cursor: pointer;
+}
+
+.main-nav__window-controls {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  z-index: 3;
+}
+
+.desktop-titlebar {
+  flex-shrink: 0;
+  height: 38px;
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid rgba(209, 218, 229, 0.8);
+  position: relative;
+  z-index: 1;
+}
+
+.desktop-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 12px;
+}
+
+.desktop-titlebar__logo {
+  margin-right: 0;
+}
+
+.desktop-titlebar__text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.05;
+}
+
+.desktop-titlebar__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #243347;
+}
+
+.desktop-titlebar__subtitle {
+  font-size: 11px;
+  color: #6f8094;
+}
+
+.desktop-titlebar__spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.desktop-titlebar__controls {
+  margin-left: auto;
+}
+
+.desktop-drag-region {
+  --wails-draggable: drag;
+}
+
+.desktop-no-drag {
+  --wails-draggable: no-drag;
+}
+
+.mobile-nav {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--el-menu-border-color);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.mobile-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.mobile-brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 0;
+}
+
+.mobile-brand-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.mobile-brand-subtitle {
+  font-size: 12px;
+  color: #606266;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-nav-content {
+  overflow: auto;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.drawer-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.drawer-downloader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.drawer-downloader__label {
+  font-size: 13px;
+  color: #606266;
+  flex-shrink: 0;
+}
+
+.drawer-downloader__select {
+  flex: 1 1 auto;
+}
+
+.mobile-nav-menu {
+  border-right: none;
+  margin-bottom: 16px;
+}
+
+.mobile-nav-menu :deep(.mobile-settings-sub-item) {
+  padding-left: 38px !important;
+  color: #606266;
+  font-size: 13px;
+}
+
+.drawer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.drawer-actions :deep(.el-button + .el-button) {
+  margin-left: 0 !important;
+}
+
+.drawer-actions .el-link {
+  width: fit-content;
+}
+
+.main-content {
+  flex: 1 1 auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.main-content.no-nav {
+  overflow: auto;
+}
+
+@media (max-width: 768px) {
+  #app {
+    background-attachment: scroll;
+  }
+
+  .main-content {
+    overflow: auto;
+  }
+}
+</style>

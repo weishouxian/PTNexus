@@ -1,0 +1,228 @@
+package title
+
+import (
+	"regexp"
+	"strings"
+
+	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
+)
+
+// titleComponentOrder 记录标准标题组件的展示顺序，供组件插入时定位。
+var titleComponentOrder = func() map[string]int {
+	order := make(map[string]int, len(defaultTitleComponentKeys))
+	for idx, key := range defaultTitleComponentKeys {
+		order[key] = idx
+	}
+	return order
+}()
+
+// BuildResult 表示标题组件构建结果。
+type BuildResult struct {
+	NormalizedTitle string
+	Components      []map[string]any
+	IsMediainfo     bool
+	IsBDInfo        bool
+	Reason          string
+}
+
+// BuildTitleComponentsForStorage 构建标题组件，并按媒体文本类型执行纠偏与覆盖。
+// 参数/返回：buildSimpleComponents 用于注入标题拆分实现（与现有解析逻辑保持兼容）。
+// 失败场景：不返回错误，无法识别时输出尽量完整的组件。
+// 副作用：无。
+func BuildTitleComponentsForStorage(
+	title string,
+	mediainfoText string,
+	buildSimpleComponents func(title string, releaseGroup string, mediaInfo string) []map[string]any,
+) BuildResult {
+	trimmedTitle := strings.TrimSpace(title)
+	trimmedMedia := strings.TrimSpace(mediainfoText)
+
+	isMediainfo, isBDInfo, reason := processingmedia.ValidateMediaInfoFormat(trimmedMedia)
+	normalizedTitle := trimmedTitle
+	if isMediainfo || isBDInfo {
+		normalizedTitle = processingmedia.NormalizeBlurayTokenByMediaType(trimmedTitle, isMediainfo, isBDInfo)
+	}
+
+	components := []map[string]any{}
+	if buildSimpleComponents != nil {
+		components = buildSimpleComponents(normalizedTitle, "", trimmedMedia)
+	}
+
+	// 对齐 Python：在标题解析后，用 MediaInfo/BDInfo 的标准标签覆盖 HDR/音频。
+	if isMediainfo || isBDInfo {
+		hdr := processingmedia.ExtractHDRInfoFromMediaText(trimmedMedia, isBDInfo)
+		audio := processingmedia.ExtractAudioInfoFromMediaText(trimmedMedia, isBDInfo)
+		// BDInfo 源以 AUDIO 段首轨为权威（preferMediaAudio=true），MediaInfo 源保持标题优先。
+		components = processingmedia.ApplyMediaInfoOverrides(components, hdr, audio, isBDInfo)
+	}
+
+	// 对齐 Python：再次根据 MediaInfo/BDInfo 类型修正所有组件值中的 Blu-ray/BluRay 写法。
+	if isMediainfo || isBDInfo {
+		for idx := range components {
+			value := strings.TrimSpace(toStringAny(components[idx]["value"], ""))
+			if value == "" {
+				continue
+			}
+			components[idx]["value"] = processingmedia.NormalizeBlurayTokenByMediaType(value, isMediainfo, isBDInfo)
+		}
+	}
+
+	if isMediainfo || isBDInfo {
+		for idx := range components {
+			if strings.TrimSpace(toStringAny(components[idx]["key"], "")) != "媒介" {
+				continue
+			}
+			value := strings.TrimSpace(toStringAny(components[idx]["value"], ""))
+			if value == "" {
+				continue
+			}
+			components[idx]["value"] = processingmedia.NormalizeBlurayTokenByMediaType(value, isMediainfo, isBDInfo)
+		}
+	} else {
+		// 当无法判断媒体文本类型时，优先保持标题中出现的 BluRay/Blu-ray 写法，避免强制统一为 Blu-ray。
+		preferred := PreferredBlurayTokenFromTitle(trimmedTitle)
+		if preferred != "" {
+			for idx := range components {
+				if strings.TrimSpace(toStringAny(components[idx]["key"], "")) != "媒介" {
+					continue
+				}
+				value := strings.TrimSpace(toStringAny(components[idx]["value"], ""))
+				if value == "" {
+					continue
+				}
+				// 仅在媒介已被识别为蓝光时覆盖，避免误改其他媒介类型。
+				if strings.EqualFold(value, "Blu-ray") || strings.EqualFold(value, "BluRay") || strings.EqualFold(value, "Bluray") || strings.EqualFold(value, "BluRay") {
+					components[idx]["value"] = preferred
+				}
+			}
+		}
+	}
+
+	return BuildResult{
+		NormalizedTitle: normalizedTitle,
+		Components:      components,
+		IsMediainfo:     isMediainfo,
+		IsBDInfo:        isBDInfo,
+		Reason:          reason,
+	}
+}
+
+// StandardizedVideoCodecFromTitleComponents 从标题组件提取并标准化视频编码。
+func StandardizedVideoCodecFromTitleComponents(components []map[string]any) string {
+	if len(components) == 0 {
+		return ""
+	}
+
+	for _, component := range components {
+		if strings.TrimSpace(toStringAny(component["key"], "")) != "视频编码" {
+			continue
+		}
+
+		raw := strings.TrimSpace(toStringAny(component["value"], ""))
+		if raw == "" || strings.EqualFold(raw, "N/A") {
+			return ""
+		}
+
+		switch strings.ToUpper(raw) {
+		case "AV1":
+			return "video.av1"
+		case "X265":
+			return "video.x265"
+		case "HEVC", "H.265", "H265":
+			return "video.h265"
+		case "X264":
+			return "video.x264"
+		case "AVC", "H.264", "H264":
+			return "video.h264"
+		case "VC-1", "VC1":
+			return "video.vc1"
+		case "MPEG-2", "MPEG2":
+			return "video.mpeg2"
+		default:
+			return ""
+		}
+	}
+	return ""
+}
+
+var (
+	reTokenBluRay  = regexp.MustCompile(`\bBluRay\b`)
+	reTokenBluDash = regexp.MustCompile(`\bBlu-ray\b`)
+	reTokenBluray  = regexp.MustCompile(`\bBluray\b`)
+	reTokenBLURAY  = regexp.MustCompile(`\bBLURAY\b`)
+	reTokenBLUDASH = regexp.MustCompile(`\bBLU-RAY\b`)
+)
+
+// PreferredBlurayTokenFromTitle 返回标题里原始出现的 BluRay/Blu-ray 变体。
+func PreferredBlurayTokenFromTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ""
+	}
+	switch {
+	case reTokenBluRay.FindStringIndex(trimmed) != nil:
+		return "BluRay"
+	case reTokenBluDash.FindStringIndex(trimmed) != nil:
+		return "Blu-ray"
+	case reTokenBluray.FindStringIndex(trimmed) != nil:
+		return "Bluray"
+	case reTokenBLUDASH.FindStringIndex(trimmed) != nil:
+		return "BLU-RAY"
+	case reTokenBLURAY.FindStringIndex(trimmed) != nil:
+		return "BLURAY"
+	default:
+		return ""
+	}
+}
+
+// OverrideTitleComponentValue 覆盖标题组件中指定 key 的值；key 不存在时按标准组件顺序插入。
+// 参数/返回：components 为现有组件切片；key 或 value 去空白后为空时原样返回。
+// 失败场景：不返回错误；key 不在标准顺序中时追加到末尾。
+// 副作用：无；返回新切片，不修改入参中的 map。
+// 用途：简介“年代”行等外部更权威的值需要回填到标题组件（如年份）时使用。
+func OverrideTitleComponentValue(components []map[string]any, key string, value string) []map[string]any {
+	trimmedKey := strings.TrimSpace(key)
+	trimmedValue := strings.TrimSpace(value)
+	if trimmedKey == "" || trimmedValue == "" {
+		return components
+	}
+
+	result := make([]map[string]any, 0, len(components)+1)
+	replaced := false
+	for _, component := range components {
+		cloned := make(map[string]any, len(component)+1)
+		for field, fieldValue := range component {
+			cloned[field] = fieldValue
+		}
+		if !replaced && strings.TrimSpace(toStringAny(cloned["key"], "")) == trimmedKey {
+			cloned["value"] = trimmedValue
+			replaced = true
+		}
+		result = append(result, cloned)
+	}
+	if replaced {
+		return result
+	}
+
+	insertAt := len(result)
+	targetOrder, hasTargetOrder := titleComponentOrder[trimmedKey]
+	if hasTargetOrder {
+		for idx, component := range result {
+			currentKey := strings.TrimSpace(toStringAny(component["key"], ""))
+			currentOrder, ok := titleComponentOrder[currentKey]
+			// 未在标准顺序中的组件视为排在所有标准组件之后。
+			if !ok || currentOrder > targetOrder {
+				insertAt = idx
+				break
+			}
+		}
+	}
+	inserted := map[string]any{"key": trimmedKey, "value": trimmedValue}
+	if insertAt >= len(result) {
+		return append(result, inserted)
+	}
+	result = append(result, nil)
+	copy(result[insertAt+1:], result[insertAt:])
+	result[insertAt] = inserted
+	return result
+}

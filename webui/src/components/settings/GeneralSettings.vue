@@ -1,0 +1,2520 @@
+<template>
+  <div class="settings-container">
+    <div class="settings-grid">
+      <!-- 用户信息设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+        :class="{ 'temp-password-highlight': mustChange }"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <User />
+            </el-icon>
+            <h3>账户信息</h3>
+            <el-tag type="danger" v-if="mustChange" size="small" effect="dark">
+              <el-icon style="vertical-align: middle; margin-right: 4px">
+                <Warning />
+              </el-icon>
+              临时密码-请立即修改
+            </el-tag>
+          </div>
+          <el-button type="primary" :loading="loading" @click="onSubmit" size="small">
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="form" label-position="top" class="settings-form">
+            <el-form-item label="用户名" class="form-item">
+              <el-input v-model="form.username" placeholder="请输入用户名" clearable>
+                <template #prefix>
+                  <el-icon>
+                    <User />
+                  </el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item label="当前密码" required class="form-item">
+              <el-input
+                v-model="form.old_password"
+                type="password"
+                placeholder="请输入当前密码"
+                show-password
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Lock />
+                  </el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item label="新密码" class="form-item">
+              <el-input
+                v-model="form.password"
+                type="password"
+                placeholder="至少 6 位"
+                show-password
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Key />
+                  </el-icon>
+                </template>
+              </el-input>
+              <div class="password-hint">
+                <el-text type="info" size="small">留空表示不修改密码</el-text>
+              </div>
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-text v-if="mustChange" type="warning" size="small" class="security-hint">
+              <el-icon size="12">
+                <Warning />
+              </el-icon>
+              为确保安全，请立即设置新用户名与密码
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- 背景设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Picture />
+            </el-icon>
+            <h3>其他设置</h3>
+          </div>
+          <el-button
+            type="primary"
+            :loading="savingBackground"
+            @click="saveBackgroundSettings"
+            size="small"
+          >
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="backgroundForm" label-position="top" class="settings-form">
+            <el-form-item label="背景图片URL" class="form-item">
+              <el-input
+                v-model="backgroundForm.background_url"
+                placeholder="请输入背景图片的URL地址"
+                clearable
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Picture />
+                  </el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item v-if="isDesktopRuntime" label="数据库配置文件" class="form-item">
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <el-button type="primary" plain @click="openDatabaseConfigFile">
+                  <el-icon style="margin-right: 6px">
+                    <FolderOpened />
+                  </el-icon>
+                  打开数据库配置文件
+                </el-button>
+                <el-text v-if="databaseConfigFilePath" type="info" size="small" class="proxy-hint">
+                  {{ databaseConfigFilePath }}
+                </el-text>
+                <el-text type="info" size="small" class="proxy-hint"> 修改后请重启应用 </el-text>
+              </div>
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              设置应用程序的背景图片，支持在线图片URL
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Link />
+            </el-icon>
+            <h3>网络代理</h3>
+          </div>
+          <el-button
+            type="primary"
+            :loading="savingNetworkProxy"
+            @click="saveNetworkProxySettings"
+            size="small"
+          >
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="networkProxyForm" label-position="top" class="settings-form">
+            <el-form-item label="代理 URL" class="form-item">
+              <el-input
+                v-model="networkProxyForm.proxy_url"
+                placeholder="例如 http://127.0.0.1:7890"
+                clearable
+              />
+            </el-form-item>
+
+            <el-form-item label="NO_PROXY" class="form-item">
+              <el-input
+                v-model="networkProxyForm.no_proxy"
+                placeholder="例如 localhost,127.0.0.1,::1,192.168.0.0/16"
+                clearable
+              />
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              填写后后续新请求立即使用该代理；留空则回退 HTTP_PROXY / HTTPS_PROXY / NO_PROXY 环境变量；qB/TR/NAS 等内网地址请写入 NO_PROXY。
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- IYUU设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Setting />
+            </el-icon>
+            <h3>IYUU设置</h3>
+          </div>
+          <el-button type="primary" :loading="savingIyuu" @click="saveIyuuSettings" size="small">
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="iyuuForm" label-position="top" class="settings-form">
+            <el-form-item label="IYUU Token" class="form-item">
+              <el-input
+                v-model="displayIyuuToken"
+                :type="showIyuuToken ? 'text' : 'password'"
+                placeholder="请输入IYUU Token"
+                @input="onIyuuTokenInput"
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Key />
+                  </el-icon>
+                </template>
+                <template #suffix>
+                  <el-icon
+                    @click="toggleShowIyuuToken"
+                    style="cursor: pointer"
+                    :class="{ 'is-active': showIyuuToken }"
+                  >
+                    <View v-if="!showIyuuToken" />
+                    <Hide v-else />
+                  </el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+
+            <el-form-item label="查询路径限制" class="form-item">
+              <div style="display: flex; align-items: center; gap: 15px">
+                <el-switch
+                  v-model="iyuuForm.path_filter_enabled"
+                  active-text="启用路径过滤"
+                  inactive-text="禁用路径过滤"
+                  @change="handlePathFilterToggle"
+                />
+                <el-button
+                  v-if="iyuuForm.path_filter_enabled"
+                  type="primary"
+                  size="small"
+                  @click="openPathSelector"
+                >
+                  选择路径 ({{ iyuuForm.selected_paths.length }})
+                </el-button>
+              </div>
+            </el-form-item>
+
+            <div style="flex: 1; display: flex; flex-direction: column; justify-content: center">
+              <el-form-item label class="form-item">
+                <div
+                  style="
+                    display: flex;
+                    margin: auto;
+                    gap: 20px;
+                    justify-content: center;
+                    padding: 15px 0;
+                  "
+                >
+                  <el-button
+                    type="success"
+                    @click="triggerIyuuQuery"
+                    size="default"
+                    style="font-size: 14px; padding: 12px 24px"
+                  >
+                    手动触发查询
+                  </el-button>
+                  <el-button
+                    type="primary"
+                    @click="showIyuuLogs"
+                    size="default"
+                    style="font-size: 14px; padding: 12px 24px"
+                  >
+                    查看日志
+                  </el-button>
+                </div>
+              </el-form-item>
+
+              <el-text
+                type="info"
+                size="small"
+                style="display: block; text-align: center; margin: 10px 0"
+              >
+                <el-icon size="12">
+                  <InfoFilled />
+                </el-icon>
+                种子查询页面的红色表示可辅种但未在做种
+              </el-text>
+            </div>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              用于与IYUU平台进行数据同步和通信的身份验证令牌
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- IYUU日志对话框 -->
+      <el-dialog v-model="iyuuLogsDialogVisible" title="IYUU 查询日志" width="800px" top="50px">
+        <div v-loading="loadingLogs" style="height: 500px; overflow-y: auto">
+          <div v-if="iyuuLogs.length === 0" style="text-align: center; padding: 20px; color: #999">
+            暂无日志记录
+          </div>
+          <div v-else>
+            <div
+              v-for="(log, index) in iyuuLogs"
+              :key="index"
+              style="padding: 8px 0; border-bottom: 1px solid #eee; font-size: 12px"
+            >
+              <span style="color: #999; margin-right: 10px">[{{ log.timestamp }}]</span>
+              <span
+                :style="{
+                  color:
+                    log.level === 'ERROR'
+                      ? '#F56C6C'
+                      : log.level === 'WARNING'
+                        ? '#E6A23C'
+                        : log.level === 'INFO'
+                          ? '#409EFF'
+                          : '#67C23A',
+                }"
+                >[{{ log.level }}]</span
+              >
+              <span style="margin-left: 10px">{{ log.message }}</span>
+            </div>
+          </div>
+        </div>
+        <template #footer>
+          <div style="text-align: right">
+            <el-button @click="iyuuLogsDialogVisible = false">关闭</el-button>
+            <el-button type="primary" @click="showIyuuLogs">刷新</el-button>
+          </div>
+        </template>
+      </el-dialog>
+
+      <!-- 图床设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Picture />
+            </el-icon>
+            <h3>图床设置</h3>
+          </div>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="settingsForm" label-position="top" class="settings-form">
+            <el-form-item label="截图图床" class="form-item">
+              <el-select
+                v-model="settingsForm.image_hoster"
+                placeholder="请选择图床服务"
+                @change="autoSaveCrossSeedSettings"
+              >
+                <el-option
+                  v-for="item in imageHosterOptions"
+                  :key="item.value"
+                  :label="item.label"
+                  :value="item.value"
+                />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item label="获取图片数量" class="form-item">
+              <el-input-number
+                v-model="settingsForm.screenshot_count"
+                :min="1"
+                :max="10"
+                :step="1"
+                controls-position="right"
+                @change="autoSaveCrossSeedSettings"
+              />
+              <el-text type="info" size="small" style="display: block; margin-top: 8px">
+                获取种子信息或自动生成截图时使用的默认数量
+              </el-text>
+            </el-form-item>
+
+            <el-form-item
+              v-if="settingsForm.image_hoster === 'pixhost'"
+              label="Pixhost 域名"
+              class="form-item"
+            >
+              <el-input
+                v-model="settingsForm.pixhost_domain"
+                placeholder="img3.pixhost.to"
+                @blur="autoSaveCrossSeedSettings"
+              />
+            </el-form-item>
+
+            <!-- 当选择末日图床时，显示登录凭据输入框 -->
+            <transition name="slide" mode="out-in">
+              <div
+                v-if="settingsForm.image_hoster === 'agsv'"
+                key="agsv"
+                class="credential-section"
+              >
+                <div class="credential-header">
+                  <el-icon class="credential-icon">
+                    <Lock />
+                  </el-icon>
+                  <span class="credential-title">末日图床账号凭据</span>
+                </div>
+
+                <div class="credential-form">
+                  <el-form-item label="邮箱" class="form-item compact">
+                    <el-input
+                      v-model="settingsForm.agsv_email"
+                      placeholder="请输入邮箱"
+                      size="small"
+                      @blur="autoSaveCrossSeedSettings"
+                    />
+                  </el-form-item>
+
+                  <el-form-item label="密码" class="form-item compact">
+                    <el-input
+                      v-model="settingsForm.agsv_password"
+                      type="password"
+                      placeholder="请输入密码"
+                      show-password
+                      size="small"
+                      @blur="autoSaveCrossSeedSettings"
+                    />
+                  </el-form-item>
+                </div>
+              </div>
+
+              <div v-else key="other" class="placeholder-section">
+                <el-text type="info" size="small"
+                  >当前图床无需额外配置，但是需要代理才能上传</el-text
+                >
+              </div>
+            </transition>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- 上传设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Setting />
+            </el-icon>
+            <h3>转种设置</h3>
+          </div>
+          <el-button
+            type="primary"
+            @click="saveUploadSettings"
+            :loading="savingUpload"
+            size="small"
+          >
+            保存
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="uploadForm" label-position="top" class="settings-form">
+            <el-form-item label="" class="form-item">
+              <div style="display: flex; align-items: center; gap: 20px; padding: 15px 0">
+                <el-switch
+                  v-model="uploadForm.anonymous_upload"
+                  active-text="启用匿名"
+                  inactive-text="禁用匿名"
+                />
+              </div>
+              <el-text type="info" size="small" style="display: block">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                启用后，发布种子时将使用匿名模式，不显示上传者信息
+              </el-text>
+            </el-form-item>
+            <div class="form-item" style="margin-bottom: 16px">
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  margin-bottom: 6px;
+                "
+              >
+                <span
+                  style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px"
+                >
+                  财神 PTGen API Token（每日100次）
+                </span>
+                <el-button
+                  type="primary"
+                  link
+                  @click="openCsptPtgenPage"
+                  style="white-space: nowrap"
+                >
+                  <el-icon style="margin-right: 4px">
+                    <Link />
+                  </el-icon>
+                  获取Token
+                </el-button>
+              </div>
+              <el-input
+                v-model="uploadForm.cspt_ptgen_token"
+                type="password"
+                placeholder="请输入财神 PTGen API Token"
+                show-password
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Key />
+                  </el-icon>
+                </template>
+              </el-input>
+              <el-text type="info" size="small" style="display: block; margin-top: 8px">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                配置后优先使用该 API 获取影片信息，每日限量 100+
+                次，上限随等级提升，使用完会自动切换内置的其他 PTGen API
+              </el-text>
+            </div>
+
+            <div class="form-item" style="margin-bottom: 16px">
+              <div style="display: flex; align-items: center; gap: 12px">
+                <span
+                  style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px"
+                >
+                  出种后分享率检测间隔
+                </span>
+                <el-input-number
+                  v-model="ratioLimiterIntervalMinutes"
+                  :min="10"
+                  :max="1440"
+                  size="small"
+                  style="width: 120px"
+                  :controls="true"
+                />
+                <span style="color: var(--el-text-color-regular); font-size: 13px">分钟</span>
+              </div>
+              <el-text type="info" size="small" style="display: block; margin-top: 8px">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                分享率阈值和限速设置请在「站点设置」中为每个站点单独配置
+              </el-text>
+            </div>
+
+            <div class="form-spacer"></div>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- PTGen 检测卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Connection />
+            </el-icon>
+            <h3>PTGen 检测</h3>
+          </div>
+          <el-button
+            type="primary"
+            size="small"
+            :loading="savingPtgenNodes"
+            @click="savePtgenNodes"
+          >
+            保存节点配置
+          </el-button>
+        </div>
+
+        <div class="card-content">
+          <div class="form-item" style="margin-bottom: 16px">
+            <span style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px">
+              豆瓣 ID / 链接
+            </span>
+            <div style="display: flex; gap: 12px; margin-top: 6px">
+              <el-input
+                v-model="ptgenTestForm.douban_id"
+                placeholder="例如 1292052 或 https://movie.douban.com/subject/1292052/"
+                clearable
+                @keyup.enter="runPtgenTest"
+              />
+              <el-button type="primary" :loading="ptgenTesting" @click="runPtgenTest">
+                开始检测
+              </el-button>
+            </div>
+            <el-text type="info" size="small" style="display: block; margin-top: 8px">
+              <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                <InfoFilled />
+              </el-icon>
+              检测会对每个节点发起真实请求，已停用的节点也会一并检测，便于确认是否已恢复可用
+            </el-text>
+          </div>
+
+          <div
+            v-if="ptgenTestSummary"
+            class="ptgen-test-summary"
+            :class="ptgenSuccessCount > 0 ? 'is-success' : 'is-warning'"
+          >
+            {{ ptgenTestSummary }}
+          </div>
+
+          <el-table
+            v-if="ptgenTestResults.length"
+            :data="ptgenTestResults"
+            size="small"
+            border
+            style="margin-bottom: 20px"
+          >
+            <el-table-column type="expand">
+              <template #default="{ row }">
+                <div class="ptgen-detail">
+                  <div v-if="row.url" class="ptgen-detail-line">
+                    请求地址：<span class="ptgen-detail-mono">{{ row.url }}</span>
+                  </div>
+                  <div v-if="row.poster_url" class="ptgen-detail-line">
+                    海报：
+                    <el-link type="primary" :href="row.poster_url" target="_blank" rel="noopener">
+                      {{ row.poster_url }}
+                    </el-link>
+                    <div>
+                      <img :src="row.poster_url" class="ptgen-poster-preview" alt="海报预览" />
+                    </div>
+                  </div>
+                  <div v-if="row.intro_preview" class="ptgen-detail-line ptgen-detail-pre">
+                    简介预览：{{ row.intro_preview }}
+                  </div>
+                  <div v-if="row.imdb || row.douban || row.tmdb" class="ptgen-detail-line">
+                    外链：{{ [row.imdb, row.douban, row.tmdb].filter(Boolean).join(' | ') }}
+                  </div>
+                  <div v-if="row.response_preview" class="ptgen-detail-line ptgen-detail-pre">
+                    响应预览：{{ row.response_preview }}
+                  </div>
+                  <div v-if="row.error" class="ptgen-detail-line ptgen-detail-error">
+                    错误：{{ row.error }}
+                  </div>
+                  <div v-if="!row.url && !row.error" class="ptgen-detail-line">
+                    该节点未被执行
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column label="节点" min-width="170">
+              <template #default="{ row }">
+                <div class="ptgen-node-name">{{ row.name }}</div>
+                <div class="ptgen-node-id">{{ row.id }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="ptgenStatusMeta(row.status).type" size="small" effect="light">
+                  {{ ptgenStatusMeta(row.status).text }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="节点开关" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.enabled ? 'success' : 'info'" size="small" effect="plain">
+                  {{ row.enabled ? '启用' : '停用' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="HTTP" width="110" align="center">
+              <template #default="{ row }">
+                <span v-if="row.http_status">
+                  {{ row.method }} {{ row.http_status }}
+                </span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="耗时" width="90" align="center">
+              <template #default="{ row }">
+                {{ row.status === 'success' || row.status === 'failed' ? formatPtgenElapsed(row.elapsed_ms) : '—' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="详情" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.status === 'success'">
+                  格式 {{ row.format_length }} 字 · 海报{{ row.poster_url ? ' ✓' : ' ✗' }} · 简介{{
+                    row.intro_preview ? ' ✓' : ' ✗'
+                  }}
+                </span>
+                <span v-else-if="row.error" class="ptgen-detail-error">{{ row.error }}</span>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <div class="ptgen-section-title">节点优先级与开关（顺序即请求优先级，靠前优先）</div>
+          <div class="ptgen-node-list">
+            <div v-for="(node, index) in ptgenNodes" :key="node.id" class="ptgen-node-row">
+              <span class="ptgen-node-order">{{ index + 1 }}</span>
+              <div class="ptgen-node-info">
+                <div class="ptgen-node-title">
+                  {{ node.name }}
+                  <el-tag v-if="node.need_token" type="warning" size="small" effect="plain">
+                    需 Token
+                  </el-tag>
+                  <el-tag v-if="index === 0 && node.enabled" type="success" size="small" effect="plain">
+                    首选
+                  </el-tag>
+                </div>
+                <div class="ptgen-node-desc">{{ node.description }}</div>
+              </div>
+              <el-switch
+                v-model="node.enabled"
+                inline-prompt
+                width="46"
+                active-text="开"
+                inactive-text="关"
+                style="flex-shrink: 0"
+              />
+              <div class="ptgen-node-actions">
+                <el-button size="small" :disabled="index === 0" @click="movePtgenNode(index, -1)">
+                  上移
+                </el-button>
+                <el-button
+                  size="small"
+                  :disabled="index === ptgenNodes.length - 1"
+                  @click="movePtgenNode(index, 1)"
+                >
+                  下移
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 发种设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Document />
+            </el-icon>
+            <h3>发种设置</h3>
+          </div>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="settingsForm" label-position="top" class="settings-form">
+            <el-form-item class="form-item">
+              <div style="display: flex; align-items: center; gap: 12px; width: 100%">
+                <span
+                  style="
+                    font-weight: 500;
+                    color: var(--el-text-color-regular);
+                    font-size: 13px;
+                    white-space: nowrap;
+                  "
+                >
+                  默认下载器
+                </span>
+                <el-select
+                  v-model="settingsForm.default_downloader"
+                  placeholder="使用源种子所在的下载器"
+                  clearable
+                  @change="autoSaveCrossSeedSettings"
+                  style="flex: 1; min-width: 0"
+                >
+                  <el-option label="使用源种子所在的下载器" value="" />
+                  <el-option
+                    v-for="item in downloaderOptions"
+                    :key="item.id"
+                    :label="item.name"
+                    :value="item.id"
+                  />
+                </el-select>
+              </div>
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              发种完成后自动将种子添加到指定的下载器。选择"使用源种子所在的下载器"或不选择任何下载器，则添加到源种子所在的下载器。
+            </el-text>
+
+            <el-form-item class="form-item">
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  padding: 6px 0;
+                "
+              >
+                <span
+                  style="
+                    font-weight: 500;
+                    color: var(--el-text-color-regular);
+                    font-size: 13px;
+                    margin-right: 10px;
+                  "
+                >
+                  目标站点已存在时是否添加到下载器
+                </span>
+                <el-switch
+                  v-model="settingsForm.auto_add_existing_to_downloader"
+                  @change="autoSaveCrossSeedSettings"
+                />
+              </div>
+              <el-text type="info" size="small" style="display: block">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                当目标站点"种子已存在"时，可选择是否继续添加到下载器。
+              </el-text>
+            </el-form-item>
+
+            <div class="form-spacer"></div>
+
+            <el-form-item label="批量发布并发策略" class="form-item">
+              <el-radio-group
+                v-model="settingsForm.publish_batch_concurrency_mode"
+                @change="onPublishConcurrencyModeChange"
+              >
+                <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap">
+                  <el-radio label="cpu">自动（CPU线程数×2）</el-radio>
+                  <el-radio label="all">所有站点同时发布</el-radio>
+                </div>
+
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    gap: 12px;
+                    flex-wrap: nowrap;
+                    width: 100%;
+                    margin-top: 8px;
+                  "
+                >
+                  <el-radio label="manual" style="white-space: nowrap">手动设置并发数</el-radio>
+                  <el-input-number
+                    v-if="settingsForm.publish_batch_concurrency_mode === 'manual'"
+                    v-model="settingsForm.publish_batch_concurrency_manual"
+                    size="small"
+                    :min="1"
+                    :max="publishConcurrencyInfo?.max_concurrency || 200"
+                    style="width: 150px; height: 25px"
+                    @change="onManualConcurrencyChange"
+                  />
+                </div>
+              </el-radio-group>
+
+              <div style="margin-top: 8px" v-loading="loadingPublishConcurrencyInfo">
+                <el-text
+                  v-if="settingsForm.publish_batch_concurrency_mode === 'cpu'"
+                  type="info"
+                  size="small"
+                >
+                  当前服务器 CPU 线程数 {{ publishConcurrencyInfo?.cpu_threads ?? '-' }}，推荐并发
+                  {{ publishConcurrencyInfo?.suggested_concurrency ?? '-' }}
+                  <template
+                    v-if="
+                      publishConcurrencyInfo &&
+                      publishConcurrencyInfo.effective_suggested_concurrency !==
+                        publishConcurrencyInfo.suggested_concurrency
+                    "
+                  >
+                    （受上限 {{ publishConcurrencyInfo.max_concurrency }} 影响，实际将使用
+                    {{ publishConcurrencyInfo.effective_suggested_concurrency }}）
+                  </template>
+                </el-text>
+                <el-text
+                  v-else-if="settingsForm.publish_batch_concurrency_mode === 'all'"
+                  type="info"
+                  size="small"
+                >
+                  将并发等于“本次选择的目标站点数量”（上限
+                  {{ publishConcurrencyInfo?.max_concurrency ?? '-' }}）。
+                </el-text>
+                <el-text v-else type="info" size="small">
+                  手动并发数将在发布时生效（上限
+                  {{ publishConcurrencyInfo?.max_concurrency ?? '-' }}）。
+                </el-text>
+                <el-text type="info" size="small" style="display: block; margin-top: 4px">
+                  注：若某台下载器在「设置 → 下载器」里配置了发布节奏（分钟间隔 &gt;
+                  0），由该下载器发起的「一种多站」转种会按下载器的节奏执行，并发数也取下载器设置，上面的策略对这类转种不生效。
+                </el-text>
+              </div>
+            </el-form-item>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- 下载器标签/分类设置卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Collection />
+            </el-icon>
+            <h3>下载器标签/分类设置</h3>
+          </div>
+        </div>
+
+        <div class="card-content">
+          <el-form :model="tagsForm" label-position="top" class="settings-form">
+            <!-- 第一行：标签开关 + 站点名开关 + 分类开关 -->
+            <el-form-item label="" class="form-item">
+              <div style="display: flex; align-items: center; gap: 30px">
+                <div style="display: flex; align-items: center; gap: 12px">
+                  <el-icon size="20">
+                    <Collection />
+                  </el-icon>
+                  <span style="font-weight: 500; font-size: 14px">标签</span>
+                  <el-switch v-model="tagsForm.tags.enabled" @change="autoSaveTagsSettings" />
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px">
+                  <el-icon size="20">
+                    <LocationFilled />
+                  </el-icon>
+                  <span style="font-weight: 500; font-size: 14px">站点名</span>
+                  <el-switch
+                    v-model="siteNameTagEnabled"
+                    @change="onSiteNameTagChange"
+                  />
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px">
+                  <el-icon size="20">
+                    <FolderOpened />
+                  </el-icon>
+                  <span style="font-weight: 500; font-size: 14px">分类</span>
+                  <el-switch v-model="tagsForm.category.enabled" @change="autoSaveTagsSettings" />
+                </div>
+              </div>
+            </el-form-item>
+
+            <template v-if="tagsForm.tags.enabled">
+              <!-- 第二行：自定义标签文字 -->
+              <el-form-item label="自定义标签" class="form-item" style="margin: 0"> </el-form-item>
+
+              <!-- 第三行：输入框 + 添加标签按钮 -->
+              <el-form-item label="" class="form-item">
+                <div style="display: flex; align-items: center; gap: 10px">
+                  <el-input
+                    v-model="newTagInput"
+                    placeholder="输入新标签"
+                    style="height: 32px; width: 200px"
+                    @keyup.enter="addCustomTag"
+                  />
+                  <el-button type="primary" size="small" @click="addCustomTag">
+                    添加标签
+                  </el-button>
+                </div>
+              </el-form-item>
+
+              <!-- 第四行：标签列表（不包含站点名占位标签） -->
+
+              <el-form-item label="" class="form-item">
+                <div
+                  v-if="displayTags.length > 0"
+                  style="display: flex; flex-wrap: wrap; gap: 8px"
+                >
+                  <el-tag
+                    v-for="(tag, index) in displayTags"
+                    :key="index"
+                    closable
+                    @close="removeCustomTag(index)"
+                    size="small"
+                  >
+                    {{ tag }}
+                  </el-tag>
+                </div>
+              </el-form-item>
+            </template>
+
+            <template v-if="tagsForm.category.enabled">
+              <!-- 第五行：自定义分类文字 -->
+              <el-form-item label="自定义分类" class="form-item" style="margin: 0"> </el-form-item>
+
+              <!-- 第七行：分类选择 -->
+              <el-form-item class="form-item">
+                <div style="display: flex; align-items: center; gap: 10px">
+                  <el-input
+                    v-model="tagsForm.category.category"
+                    placeholder="输入分类名称"
+                    size="small"
+                    clearable
+                    style="height: 32px; width: 200px"
+                  />
+                  <el-button type="primary" size="small" @click="autoSaveTagsSettings">
+                    保存
+                  </el-button>
+                </div>
+              </el-form-item>
+            </template>
+
+            <div class="form-spacer"></div>
+
+            <el-text type="info" size="small" class="proxy-hint">
+              <el-icon size="12">
+                <InfoFilled />
+              </el-icon>
+              启用标签与分类功能后，会自动为种子添加标签与分类<br />
+              开启“站点名”后，会为种子添加“站点/{站点名称}”标签<br />
+              自定义标签：可以为转种的种子添加自定义标签
+            </el-text>
+          </el-form>
+        </div>
+      </div>
+
+      <!-- 功能扩展卡片 -->
+      <div
+        class="settings-card glass-card glass-rounded glass-transparent-header glass-transparent-body"
+      >
+        <div class="card-header">
+          <div class="header-content">
+            <el-icon class="header-icon">
+              <Setting />
+            </el-icon>
+            <h3>功能扩展</h3>
+          </div>
+        </div>
+
+        <div class="card-content placeholder-content">
+          <el-icon class="placeholder-icon">
+            <Setting />
+          </el-icon>
+          <p class="placeholder-text">功能扩展中</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- 路径选择弹窗 -->
+  <div>
+    <div>
+      <el-dialog v-model="pathSelectorVisible" title="选择IYUU查询路径" width="600px" top="50px">
+        <div v-loading="loadingPaths" style="min-height: 300px">
+          <div
+            v-if="!loadingPaths && availablePaths.length === 0"
+            style="text-align: center; padding: 40px; color: var(--el-text-color-secondary)"
+          >
+            <el-icon style="font-size: 48px; margin-bottom: 16px; opacity: 0.5">
+              <FolderOpened />
+            </el-icon>
+            <p>暂无可用的保存路径</p>
+            <el-button type="primary" @click="refreshPaths" style="margin-top: 16px">
+              刷新路径列表
+            </el-button>
+          </div>
+
+          <div v-else-if="availablePaths.length > 0">
+            <div
+              style="
+                margin-bottom: 16px;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+              "
+            >
+              <span style="color: var(--el-text-color-regular)">
+                已选择 {{ getSelectedLeafPaths().length }} / {{ availablePaths.length }} 个路径
+              </span>
+              <div>
+                <el-button size="small" @click="selectAllPaths">全选</el-button>
+                <el-button size="small" @click="clearAllPaths">清空</el-button>
+                <el-button size="small" @click="refreshPaths" :loading="loadingPaths"
+                  >刷新</el-button
+                >
+              </div>
+            </div>
+
+            <div class="path-tree-container">
+              <el-tree
+                ref="pathTreeRef"
+                :data="pathTreeData"
+                show-checkbox
+                node-key="path"
+                default-expand-all
+                :expand-on-click-node="false"
+                check-on-click-node
+                :check-strictly="true"
+                :props="{ class: 'path-tree-node' }"
+                @check="handlePathCheck"
+              />
+            </div>
+          </div>
+        </div>
+
+        <template #footer>
+          <div style="text-align: right">
+            <el-button @click="pathSelectorVisible = false">取消</el-button>
+            <el-button
+              type="primary"
+              @click="saveSelectedPaths"
+              :disabled="tempSelectedPaths.length === 0"
+            >
+              确定选择 ({{ tempSelectedPaths.length }})
+            </el-button>
+          </div>
+        </template>
+      </el-dialog>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, onMounted, reactive, nextTick, computed } from 'vue'
+import { useRouter } from 'vue-router'
+import axios from 'axios'
+import {
+  User,
+  Lock,
+  Key,
+  Warning,
+  Setting,
+  Document,
+  InfoFilled,
+  Picture,
+  Link,
+  View,
+  Hide,
+  FolderOpened,
+  Collection,
+  LocationFilled,
+  Connection,
+} from '@element-plus/icons-vue'
+import { ElMessage } from '@/utils/uiNotify'
+const router = useRouter()
+
+const getErrorMessage = (error: unknown, fallback: string): string => {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data as { message?: string; error?: string } | undefined
+    return data?.message || data?.error || error.message || fallback
+  }
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return fallback
+}
+
+// 用户设置相关
+const loading = ref(false)
+const savingIyuu = ref(false)
+const currentUsername = ref('admin')
+const mustChange = ref(false)
+const form = ref({ old_password: '', username: '', password: '' })
+
+// IYUU设置相关
+const iyuuForm = reactive({
+  token: '',
+  path_filter_enabled: false,
+  selected_paths: [] as string[],
+})
+
+// 路径选择相关
+const availablePaths = ref<string[]>([])
+const loadingPaths = ref(false)
+const pathSelectorVisible = ref(false)
+const tempSelectedPaths = ref<string[]>([])
+
+// 路径树节点接口
+interface PathNode {
+  path: string
+  label: string
+  children?: PathNode[]
+}
+
+type PathTreeRef = {
+  getCheckedNodes: () => PathNode[]
+  setCheckedKeys: (keys: string[]) => void
+}
+
+const pathTreeRef = ref<PathTreeRef | null>(null)
+const pathTreeData = ref<PathNode[]>([])
+
+// IYUU日志接口
+interface IYUULog {
+  timestamp: string
+  level: string
+  message: string
+}
+
+// 转种设置相关
+type PublishBatchConcurrencyMode = 'cpu' | 'manual' | 'all'
+
+interface CrossSeedSettings {
+  image_hoster: string
+  screenshot_count?: number
+  pixhost_domain?: string
+  agsv_email?: string
+  agsv_password?: string
+  default_downloader?: string
+  auto_add_existing_to_downloader?: boolean
+  publish_batch_concurrency_mode?: PublishBatchConcurrencyMode
+  publish_batch_concurrency_manual?: number
+}
+
+const savingCrossSeed = ref(false)
+
+const settingsForm = reactive<CrossSeedSettings>({
+  image_hoster: 'pixhost',
+  screenshot_count: 3,
+  pixhost_domain: 'img2.pixhost.cc',
+  agsv_email: '',
+  agsv_password: '',
+  default_downloader: '',
+  auto_add_existing_to_downloader: true,
+  publish_batch_concurrency_mode: 'cpu',
+  publish_batch_concurrency_manual: 5,
+})
+
+const imageHosterOptions = [
+  { value: 'pixhost', label: 'Pixhost (免费)' },
+  { value: 'agsv', label: '末日图床 (需账号)' },
+]
+
+// 批量发布并发策略展示信息（来自后端服务器）
+const loadingPublishConcurrencyInfo = ref(false)
+const publishConcurrencyInfo = ref<{
+  cpu_threads: number
+  suggested_concurrency: number
+  effective_suggested_concurrency: number
+  max_concurrency: number
+  default_concurrency: number
+} | null>(null)
+
+// 下载器选项
+const downloaderOptions = ref<{ id: string; name: string }[]>([])
+
+// 实际的 token 值，用于在保存时判断是否需要更新
+const actualIyuuToken = ref('')
+
+// IYUU Token 显示相关
+const showIyuuToken = ref(false)
+const displayIyuuToken = ref('')
+
+// 切换 token 显示/隐藏
+const toggleShowIyuuToken = () => {
+  showIyuuToken.value = !showIyuuToken.value
+  if (showIyuuToken.value) {
+    // 显示真实token
+    displayIyuuToken.value = actualIyuuToken.value
+  } else {
+    // 显示星号，长度与真实token一致
+    displayIyuuToken.value = actualIyuuToken.value ? '*'.repeat(actualIyuuToken.value.length) : ''
+  }
+}
+
+// 当输入框内容改变时
+const onIyuuTokenInput = (value: string) => {
+  // 如果用户修改了内容，更新实际的token值
+  // 检查是否全是星号（不管多少个）
+  const isAllStars = value.length > 0 && value.split('').every((char) => char === '*')
+  if (!isAllStars) {
+    actualIyuuToken.value = value
+    iyuuForm.token = value
+  }
+}
+
+// IYUU日志相关
+const iyuuLogsDialogVisible = ref(false)
+const iyuuLogs = ref<IYUULog[]>([])
+const loadingLogs = ref(false)
+
+// 背景设置相关
+const savingBackground = ref(false)
+const backgroundForm = reactive({
+  background_url: '',
+})
+const savingNetworkProxy = ref(false)
+const networkProxyForm = reactive<{
+  proxy_url: string
+  no_proxy: string
+}>({
+  proxy_url: '',
+  no_proxy: '',
+})
+const isDesktopRuntime = ref(false)
+const databaseConfigFilePath = ref('')
+
+interface DesktopAppBridge {
+  OpenDatabaseConfigFile?: () => Promise<void>
+  GetDatabaseConfigFilePath?: () => Promise<string>
+}
+
+type DesktopRuntimeWindow = Window & {
+  go?: { main?: { App?: DesktopAppBridge } }
+}
+
+// 上传设置相关
+const savingUpload = ref(false)
+const uploadForm = reactive({
+  anonymous_upload: true, // 默认启用匿名上传
+  cspt_ptgen_token: '', // 财神ptgen token
+  ratio_limiter_interval_seconds: 1800,
+})
+
+// 分享率检测间隔（分钟），用于UI显示和输入
+const ratioLimiterIntervalMinutes = computed({
+  get: () => Math.round(uploadForm.ratio_limiter_interval_seconds / 60),
+  set: (val: number) => {
+    uploadForm.ratio_limiter_interval_seconds = val * 60
+  },
+})
+
+// 打开财神PTGen网页获取Token
+const openCsptPtgenPage = () => {
+  window.open('https://cspt.top/ptgen.php', '_blank')
+}
+
+// ===== PTGen 节点检测 =====
+interface PtgenNodeItem {
+  id: string
+  name: string
+  description: string
+  need_token: boolean
+  default_enabled: boolean
+  enabled: boolean
+  order?: number
+}
+
+interface PtgenTestResult {
+  id: string
+  name: string
+  description: string
+  need_token: boolean
+  enabled: boolean
+  status: string
+  url: string
+  http_status: number
+  method: string
+  elapsed_ms: number
+  error: string
+  response_preview: string
+  format_length: number
+  poster_url: string
+  intro_preview: string
+  imdb: string
+  douban: string
+  tmdb: string
+}
+
+type PtgenTagType = 'success' | 'danger' | 'warning' | 'info'
+
+const ptgenNodes = ref<PtgenNodeItem[]>([])
+const ptgenTestForm = reactive({ douban_id: '' })
+const ptgenTesting = ref(false)
+const ptgenTestResults = ref<PtgenTestResult[]>([])
+const ptgenTestSummary = ref('')
+const ptgenSuccessCount = ref(0)
+const savingPtgenNodes = ref(false)
+
+const loadPtgenNodes = async () => {
+  try {
+    const { data } = await axios.get('/api/settings/cross_seed')
+    const rawNodes = Array.isArray(data?.ptgen_nodes) ? data.ptgen_nodes : []
+    ptgenNodes.value = rawNodes.map((node: Partial<PtgenNodeItem>, index: number) => ({
+      id: String(node.id || ''),
+      name: String(node.name || node.id || ''),
+      description: String(node.description || ''),
+      need_token: Boolean(node.need_token),
+      default_enabled: Boolean(node.default_enabled),
+      enabled: node.enabled !== false,
+      order: typeof node.order === 'number' ? node.order : index + 1,
+    }))
+  } catch (error) {
+    console.warn('加载 PTGen 节点配置失败:', error)
+  }
+}
+
+// 结果按当前节点顺序重排，保证与下方优先级列表一致。
+const sortPtgenResults = (results: PtgenTestResult[]): PtgenTestResult[] => {
+  const orderMap = new Map<string, number>()
+  ptgenNodes.value.forEach((node, index) => orderMap.set(node.id, index))
+  return [...results].sort((a, b) => {
+    const left = orderMap.has(a.id) ? (orderMap.get(a.id) as number) : Number.MAX_SAFE_INTEGER
+    const right = orderMap.has(b.id) ? (orderMap.get(b.id) as number) : Number.MAX_SAFE_INTEGER
+    return left - right
+  })
+}
+
+const movePtgenNode = (index: number, offset: number) => {
+  const target = index + offset
+  if (target < 0 || target >= ptgenNodes.value.length) {
+    return
+  }
+  const list = [...ptgenNodes.value]
+  const [moved] = list.splice(index, 1)
+  list.splice(target, 0, moved)
+  ptgenNodes.value = list
+}
+
+const savePtgenNodes = async () => {
+  savingPtgenNodes.value = true
+  try {
+    await axios.post('/api/settings/cross_seed', {
+      ptgen_nodes: ptgenNodes.value.map((node) => ({ id: node.id, enabled: node.enabled })),
+    })
+    ElMessage.success('PTGen 节点配置已保存！')
+    await loadPtgenNodes()
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, 'PTGen 节点配置保存失败。'))
+  } finally {
+    savingPtgenNodes.value = false
+  }
+}
+
+const runPtgenTest = async () => {
+  const doubanId = ptgenTestForm.douban_id.trim()
+  if (!doubanId) {
+    ElMessage.warning('请输入豆瓣 ID 或豆瓣链接')
+    return
+  }
+  ptgenTesting.value = true
+  try {
+    const { data } = await axios.post('/api/settings/cross_seed/ptgen_test', {
+      douban_id: doubanId,
+    })
+    const nodes = Array.isArray(data?.nodes) ? (data.nodes as PtgenTestResult[]) : []
+    ptgenTestResults.value = sortPtgenResults(nodes)
+    const okCount = Number(data?.success_count) || 0
+    const totalCount = Number(data?.total_count) || ptgenTestResults.value.length
+    ptgenSuccessCount.value = okCount
+    const tokenHint = data?.cspt_configured === false ? '；未配置财神 Token，该节点已跳过' : ''
+    ptgenTestSummary.value = `豆瓣 ${data?.douban_id || doubanId}：${okCount}/${totalCount} 个节点成功返回内容${tokenHint}`
+    if (okCount === 0) {
+      ElMessage.warning('检测完成：所有节点均未成功返回内容')
+    } else {
+      ElMessage.success(`检测完成：${okCount}/${totalCount} 个节点成功`)
+    }
+  } catch (error: unknown) {
+    ElMessage.error(getErrorMessage(error, 'PTGen 检测失败。'))
+  } finally {
+    ptgenTesting.value = false
+  }
+}
+
+const ptgenStatusMeta = (status: string): { type: PtgenTagType; text: string } => {
+  if (status === 'success') {
+    return { type: 'success', text: '成功' }
+  }
+  if (status === 'failed') {
+    return { type: 'danger', text: '失败' }
+  }
+  if (status === 'skipped') {
+    return { type: 'warning', text: '跳过' }
+  }
+  return { type: 'info', text: '未知' }
+}
+
+const formatPtgenElapsed = (elapsedMs: number): string => {
+  const value = Number(elapsedMs) || 0
+  if (value >= 1000) {
+    return `${(value / 1000).toFixed(2)}s`
+  }
+  return `${value}ms`
+}
+
+const getDesktopAppBridge = (): DesktopAppBridge | null => {
+  const bridge = (window as DesktopRuntimeWindow).go?.main?.App
+  if (!bridge) {
+    return null
+  }
+  return bridge
+}
+
+const initDesktopRuntime = async () => {
+  const bridge = getDesktopAppBridge()
+  if (!bridge) {
+    return
+  }
+  if (typeof bridge.OpenDatabaseConfigFile !== 'function') {
+    return
+  }
+  isDesktopRuntime.value = true
+  if (typeof bridge.GetDatabaseConfigFilePath === 'function') {
+    try {
+      const path = await bridge.GetDatabaseConfigFilePath()
+      databaseConfigFilePath.value = path || ''
+    } catch (error) {
+      console.warn('获取数据库配置文件路径失败:', error)
+    }
+  }
+}
+
+const openDatabaseConfigFile = async () => {
+  const bridge = getDesktopAppBridge()
+  if (!bridge || typeof bridge.OpenDatabaseConfigFile !== 'function') {
+    ElMessage.warning('该功能仅桌面版可用')
+    return
+  }
+  try {
+    await bridge.OpenDatabaseConfigFile()
+    if (!databaseConfigFilePath.value && typeof bridge.GetDatabaseConfigFilePath === 'function') {
+      databaseConfigFilePath.value = (await bridge.GetDatabaseConfigFilePath()) || ''
+    }
+  } catch (error) {
+    console.error('打开数据库配置文件失败:', error)
+    ElMessage.error('打开数据库配置文件失败')
+  }
+}
+
+// 标签设置相关
+const tagsForm = reactive({
+  category: {
+    enabled: true,
+    category: '',
+  },
+  tags: {
+    enabled: true,
+    tags: ['PT Nexus'],
+  },
+})
+
+// 站点名标签开关（控制是否自动打上 "站点/{站点名称}" 标签）
+const SITE_NAME_TAG = '站点/{站点名称}'
+const siteNameTagEnabled = ref(true)
+
+const onSiteNameTagChange = (val: boolean) => {
+  const idx = tagsForm.tags.tags.indexOf(SITE_NAME_TAG)
+  if (val && idx === -1) {
+    tagsForm.tags.tags.push(SITE_NAME_TAG)
+  } else if (!val && idx !== -1) {
+    tagsForm.tags.tags.splice(idx, 1)
+  }
+  autoSaveTagsSettings()
+}
+
+// 过滤掉站点名占位标签，不在自定义标签列表中显示
+const displayTags = computed(() => tagsForm.tags.tags.filter((t) => t !== SITE_NAME_TAG))
+
+// 新标签输入框的值
+const newTagInput = ref('')
+
+// 添加自定义标签
+const addCustomTag = () => {
+  const newTag = newTagInput.value
+  if (newTag && newTag.trim()) {
+    const trimmedTag = newTag.trim()
+    if (trimmedTag === SITE_NAME_TAG) {
+      ElMessage.warning('请使用“站点名”开关来控制该标签')
+      return
+    }
+    // 检查是否已存在
+    if (!tagsForm.tags.tags.includes(trimmedTag)) {
+      tagsForm.tags.tags.push(trimmedTag)
+      // 自动保存
+      autoSaveTagsSettings()
+      // 清空输入框
+      newTagInput.value = ''
+    } else {
+      ElMessage.warning('该标签已存在')
+    }
+  }
+}
+
+// 删除自定义标签
+const removeCustomTag = (index: number) => {
+  // 使用 displayTags 索引映射到实际 tags 索引
+  const actualIndex = tagsForm.tags.tags.indexOf(displayTags.value[index])
+  if (actualIndex !== -1) {
+    tagsForm.tags.tags.splice(actualIndex, 1)
+    autoSaveTagsSettings()
+  }
+}
+
+// 自动保存标签设置
+const autoSaveTagsSettings = async () => {
+  try {
+    // 保存标签配置
+    const tagsConfig = {
+      category: tagsForm.category,
+      tags: tagsForm.tags,
+    }
+
+    console.log('正在保存标签配置:', tagsConfig)
+    const response = await axios.post('/api/config/tags', tagsConfig)
+    console.log('保存结果:', response.data)
+    // 不显示成功消息，避免频繁提示
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    console.error('保存失败:', errorMessage)
+    ElMessage.error(errorMessage)
+  }
+}
+
+// 自动保存转种设置
+const autoSaveCrossSeedSettings = async () => {
+  savingCrossSeed.value = true
+  try {
+    // 保存转种设置
+    const crossSeedSettings = {
+      image_hoster: settingsForm.image_hoster,
+      screenshot_count: settingsForm.screenshot_count,
+      pixhost_domain: settingsForm.pixhost_domain,
+      agsv_email: settingsForm.agsv_email,
+      agsv_password: settingsForm.agsv_password,
+      default_downloader: settingsForm.default_downloader,
+      auto_add_existing_to_downloader: settingsForm.auto_add_existing_to_downloader,
+      publish_batch_concurrency_mode: settingsForm.publish_batch_concurrency_mode,
+      publish_batch_concurrency_manual: settingsForm.publish_batch_concurrency_manual,
+      // 同步带上 ptgen token，避免后端覆盖时丢失（后端已做 merge，但这里也保持完整）
+      cspt_ptgen_token: uploadForm.cspt_ptgen_token,
+    }
+
+    await axios.post('/api/settings/cross_seed', crossSeedSettings)
+    // 不显示成功消息，避免频繁提示
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingCrossSeed.value = false
+  }
+}
+
+const fetchPublishConcurrencyInfo = async () => {
+  loadingPublishConcurrencyInfo.value = true
+  try {
+    const res = await axios.get('/api/settings/cross_seed/publish_concurrency_info')
+    if (res.data?.success) {
+      publishConcurrencyInfo.value = res.data
+    }
+  } catch {
+    // ignore: 仅用于展示，不影响主流程
+  } finally {
+    loadingPublishConcurrencyInfo.value = false
+  }
+}
+
+const onPublishConcurrencyModeChange = () => {
+  if (settingsForm.publish_batch_concurrency_mode === 'manual') {
+    const manualValue = Number(settingsForm.publish_batch_concurrency_manual || 0)
+    if (!Number.isFinite(manualValue) || manualValue < 1) {
+      settingsForm.publish_batch_concurrency_manual =
+        publishConcurrencyInfo.value?.effective_suggested_concurrency || 5
+    }
+  }
+  autoSaveCrossSeedSettings()
+}
+
+const onManualConcurrencyChange = () => {
+  const manualValue = Number(settingsForm.publish_batch_concurrency_manual || 0)
+  settingsForm.publish_batch_concurrency_manual = Math.max(1, Math.floor(manualValue || 1))
+  autoSaveCrossSeedSettings()
+}
+
+// 获取所有设置
+const fetchSettings = async () => {
+  try {
+    // 获取用户认证状态
+    const res = await axios.get('/api/auth/status')
+    if (res.data?.success) {
+      currentUsername.value = res.data.username || 'admin'
+      mustChange.value = !!res.data.must_change_password
+      form.value.username = currentUsername.value
+    }
+
+    // 获取所有设置
+    const settingsRes = await axios.get('/api/settings')
+    const config = settingsRes.data
+
+    // 获取IYUU token设置
+    if (config.iyuu_token) {
+      // 保存实际的 token 值
+      actualIyuuToken.value = config.iyuu_token
+      // 显示为隐藏状态（用星号代替，长度与真实token一致）
+      const maskedToken = '*'.repeat(config.iyuu_token.length)
+      iyuuForm.token = maskedToken
+      displayIyuuToken.value = maskedToken
+    } else {
+      actualIyuuToken.value = ''
+      iyuuForm.token = ''
+      displayIyuuToken.value = ''
+    }
+
+    // 获取IYUU设置
+    if (config.iyuu_settings) {
+      iyuuForm.path_filter_enabled = config.iyuu_settings.path_filter_enabled || false
+      iyuuForm.selected_paths = config.iyuu_settings.selected_paths || []
+    }
+
+    // 获取转种设置
+    Object.assign(settingsForm, config.cross_seed || {})
+
+    // 获取背景设置
+    if (config.ui_settings && config.ui_settings.background_url) {
+      backgroundForm.background_url = config.ui_settings.background_url
+    }
+
+    // 获取网络代理设置
+    if (config.network_proxy) {
+      networkProxyForm.proxy_url =
+        config.network_proxy.proxy_url ||
+        config.network_proxy.http_proxy ||
+        config.network_proxy.https_proxy ||
+        ''
+      networkProxyForm.no_proxy = config.network_proxy.no_proxy || ''
+    }
+
+    // 获取上传设置
+    if (config.upload_settings) {
+      uploadForm.anonymous_upload = config.upload_settings.anonymous_upload !== false // 默认为true
+      uploadForm.ratio_limiter_interval_seconds =
+        Number(config.upload_settings.ratio_limiter_interval_seconds) || 1800
+    }
+
+    // 获取财神ptgen token（从cross_seed配置中读取）
+    if (config.cross_seed && config.cross_seed.cspt_ptgen_token) {
+      uploadForm.cspt_ptgen_token = config.cross_seed.cspt_ptgen_token
+    }
+
+    // 获取标签设置
+    if (config.tags_config) {
+      // 使用深度复制，避免引用问题
+      if (config.tags_config.category) {
+        tagsForm.category.enabled = config.tags_config.category.enabled
+        tagsForm.category.category = config.tags_config.category.category
+      }
+      if (config.tags_config.tags) {
+        tagsForm.tags.enabled = config.tags_config.tags.enabled
+        tagsForm.tags.tags = config.tags_config.tags.tags || []
+      }
+      // 根据标签列表中是否包含站点名占位符来设置开关状态
+      siteNameTagEnabled.value = tagsForm.tags.tags.includes('站点/{站点名称}')
+    }
+
+    // 获取下载器列表
+    const downloaderResponse = await axios.get('/api/downloaders_list')
+    downloaderOptions.value = downloaderResponse.data
+
+    // 获取服务器并发信息（用于“CPU线程数×2”模式提示）
+    await fetchPublishConcurrencyInfo()
+
+    // 如果启用了路径过滤，则加载可用路径
+    if (iyuuForm.path_filter_enabled) {
+      await refreshPaths()
+    }
+  } catch {
+    ElMessage.error('无法加载设置。')
+  }
+}
+
+// 构建路径树
+const buildPathTree = (paths: string[]): PathNode[] => {
+  const root: PathNode[] = []
+  const nodeMap = new Map<string, PathNode>()
+  paths.sort().forEach((fullPath) => {
+    const parts = fullPath.replace(/^\/|\/$/g, '').split('/')
+    let currentPath = ''
+    let parentChildren = root
+    parts.forEach((part, index) => {
+      currentPath = index === 0 ? `/${part}` : `${currentPath}/${part}`
+      if (!nodeMap.has(currentPath)) {
+        const newNode: PathNode = {
+          path: index === parts.length - 1 ? fullPath : currentPath,
+          label: part,
+          children: [],
+        }
+        nodeMap.set(currentPath, newNode)
+        parentChildren.push(newNode)
+      }
+      const currentNode = nodeMap.get(currentPath)!
+      parentChildren = currentNode.children!
+    })
+  })
+  nodeMap.forEach((node) => {
+    if (node.children && node.children.length === 0) {
+      delete node.children
+    }
+  })
+  return root
+}
+
+// 刷新路径列表
+const refreshPaths = async () => {
+  loadingPaths.value = true
+  try {
+    const response = await axios.get('/api/paths')
+    if (response.data.success) {
+      availablePaths.value = response.data.paths || []
+      pathTreeData.value = buildPathTree(availablePaths.value)
+    } else {
+      ElMessage.error(response.data.error || '获取路径列表失败')
+      availablePaths.value = []
+      pathTreeData.value = []
+    }
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '获取路径列表失败')
+    ElMessage.error(errorMessage)
+    availablePaths.value = []
+    pathTreeData.value = []
+  } finally {
+    loadingPaths.value = false
+  }
+}
+
+// 保存IYUU设置
+const saveIyuuSettings = async () => {
+  // 防止重复调用，如果正在保存则直接返回
+  if (savingIyuu.value) return
+
+  savingIyuu.value = true
+  try {
+    // 保存IYUU设置（路径过滤设置）
+    const iyuuSettings = {
+      path_filter_enabled: iyuuForm.path_filter_enabled,
+      selected_paths: iyuuForm.selected_paths,
+    }
+
+    await axios.post('/api/iyuu/settings', iyuuSettings)
+
+    // 保存 iyuu token 设置（如果需要）
+    if (actualIyuuToken.value && iyuuForm.token !== '********') {
+      const tokenSettings = {
+        iyuu_token: actualIyuuToken.value,
+      }
+      await axios.post('/api/settings', tokenSettings)
+      // 保存成功后，重置显示状态
+      showIyuuToken.value = false
+      const maskedToken = actualIyuuToken.value ? '*'.repeat(actualIyuuToken.value.length) : ''
+      displayIyuuToken.value = maskedToken
+      iyuuForm.token = maskedToken
+    } else if (!actualIyuuToken.value && iyuuForm.token) {
+      // 如果之前没有token，现在添加了
+      const tokenSettings = {
+        iyuu_token: iyuuForm.token,
+      }
+      await axios.post('/api/settings', tokenSettings)
+      actualIyuuToken.value = iyuuForm.token
+    }
+
+    ElMessage.success('IYUU 设置已保存！')
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingIyuu.value = false
+  }
+}
+
+// 手动触发IYUU查询
+const triggerIyuuQuery = async () => {
+  try {
+    // 立即显示触发成功的提示
+    ElMessage.success('IYUU 查询已触发，请稍后查看结果。')
+
+    // 异步触发后端查询，不等待结果
+    axios.post('/api/iyuu/trigger_query').catch((error) => {
+      // 如果后台查询失败，记录错误但不显示给用户
+      console.error('IYUU 查询后台执行失败:', error)
+    })
+
+    // 自动打开日志弹窗，方便观察批量查询进度
+    void showIyuuLogs()
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '触发查询失败。')
+    ElMessage.error(errorMessage)
+  }
+}
+
+// 查看IYUU日志
+const showIyuuLogs = async () => {
+  loadingLogs.value = true
+  iyuuLogsDialogVisible.value = true
+
+  try {
+    const response = await axios.get('/api/iyuu/logs')
+    if (response.data.success) {
+      iyuuLogs.value = response.data.logs || []
+    } else {
+      ElMessage.error(response.data.message || '获取日志失败')
+      iyuuLogs.value = []
+    }
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '获取日志失败')
+    ElMessage.error(errorMessage)
+    iyuuLogs.value = []
+  } finally {
+    loadingLogs.value = false
+  }
+}
+
+// 保存用户密码和用户名
+const onSubmit = async () => {
+  if (loading.value) return
+  if (!form.value.old_password) {
+    ElMessage.warning('请填写当前密码')
+    return
+  }
+  if (!form.value.username && !form.value.password) {
+    ElMessage.warning('请输入新用户名或新密码')
+    return
+  }
+  if (form.value.username && form.value.username.trim().length < 3) {
+    ElMessage.warning('用户名至少 3 个字符')
+    return
+  }
+  if (form.value.password && form.value.password.length < 6) {
+    ElMessage.warning('密码至少 6 位')
+    return
+  }
+  loading.value = true
+  try {
+    type ChangePasswordPayload = {
+      old_password: string
+      username?: string
+      password?: string
+    }
+
+    const payload: ChangePasswordPayload = { old_password: form.value.old_password }
+    if (form.value.username) payload.username = form.value.username
+    if (form.value.password) payload.password = form.value.password
+    const res = await axios.post('/api/auth/change_password', payload)
+    if (res.data?.success) {
+      ElMessage.success('保存成功，请重新登录')
+      localStorage.removeItem('token')
+      await router.replace('/login')
+    } else {
+      ElMessage.error(res.data?.message || '保存失败')
+    }
+  } catch (e: unknown) {
+    ElMessage.error(getErrorMessage(e, '保存失败'))
+  } finally {
+    loading.value = false
+  }
+}
+
+// 保存背景设置
+const saveBackgroundSettings = async () => {
+  savingBackground.value = true
+  try {
+    const uiSettings = {
+      ui_settings: {
+        background_url: backgroundForm.background_url,
+      },
+    }
+    await axios.post('/api/settings', uiSettings)
+    ElMessage.success('背景设置已保存！')
+
+    // 立即更新App.vue的背景
+    window.dispatchEvent(
+      new CustomEvent('background-updated', {
+        detail: { backgroundUrl: backgroundForm.background_url },
+      }),
+    )
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingBackground.value = false
+  }
+}
+
+const saveNetworkProxySettings = async () => {
+  if (savingNetworkProxy.value) return
+
+  savingNetworkProxy.value = true
+  try {
+    await axios.post('/api/settings', {
+      network_proxy: {
+        proxy_url: networkProxyForm.proxy_url.trim(),
+        no_proxy: networkProxyForm.no_proxy.trim(),
+      },
+    })
+    ElMessage.success('网络代理设置已保存，后续新请求将使用新配置。')
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingNetworkProxy.value = false
+  }
+}
+
+// 保存上传设置
+const saveUploadSettings = async () => {
+  savingUpload.value = true
+  try {
+    // 保存匿名上传设置
+    const uploadSettings = {
+      anonymous_upload: uploadForm.anonymous_upload,
+      ratio_limiter_interval_seconds: Number(uploadForm.ratio_limiter_interval_seconds) || 1800,
+    }
+    await axios.post('/api/upload_settings', uploadSettings)
+
+    // 保存财神ptgen token到cross_seed配置
+    // 需要包含完整的cross_seed配置，因为后端API要求必须有image_hoster字段
+    const crossSeedSettings = {
+      image_hoster: settingsForm.image_hoster,
+      screenshot_count: settingsForm.screenshot_count,
+      pixhost_domain: settingsForm.pixhost_domain,
+      agsv_email: settingsForm.agsv_email,
+      agsv_password: settingsForm.agsv_password,
+      default_downloader: settingsForm.default_downloader,
+      auto_add_existing_to_downloader: settingsForm.auto_add_existing_to_downloader,
+      cspt_ptgen_token: uploadForm.cspt_ptgen_token,
+      publish_batch_concurrency_mode: settingsForm.publish_batch_concurrency_mode,
+      publish_batch_concurrency_manual: settingsForm.publish_batch_concurrency_manual,
+    }
+    await axios.post('/api/settings/cross_seed', crossSeedSettings)
+
+    ElMessage.success('上传设置已保存！')
+  } catch (error: unknown) {
+    const errorMessage = getErrorMessage(error, '保存失败。')
+    ElMessage.error(errorMessage)
+  } finally {
+    savingUpload.value = false
+  }
+}
+
+// 监听路径过滤开关变化
+const handlePathFilterToggle = async (enabled: boolean) => {
+  if (enabled && availablePaths.value.length === 0) {
+    await refreshPaths()
+  }
+}
+
+// 获取选中的叶子节点路径
+const getSelectedLeafPaths = (): string[] => {
+  if (!pathTreeRef.value) return []
+
+  const checkedNodes = pathTreeRef.value.getCheckedNodes()
+  return checkedNodes
+    .filter((node) => !node.children || node.children.length === 0)
+    .map((node) => node.path)
+}
+
+// 处理路径树选择变化
+const handlePathCheck = () => {
+  tempSelectedPaths.value = getSelectedLeafPaths()
+}
+
+// 打开路径选择弹窗
+const openPathSelector = async () => {
+  if (availablePaths.value.length === 0) {
+    await refreshPaths()
+  }
+  pathSelectorVisible.value = true
+
+  // 等待DOM更新后设置选中状态
+  await nextTick()
+  if (pathTreeRef.value) {
+    // 清除所有选中状态
+    pathTreeRef.value.setCheckedKeys([])
+    // 设置当前选中的路径
+    pathTreeRef.value.setCheckedKeys(iyuuForm.selected_paths)
+  }
+}
+
+// 全选路径
+const selectAllPaths = () => {
+  if (pathTreeRef.value) {
+    // 只选择叶子节点（完整路径）
+    const leafPaths: string[] = []
+    const traverse = (nodes: PathNode[]) => {
+      nodes.forEach((node) => {
+        if (!node.children || node.children.length === 0) {
+          leafPaths.push(node.path)
+        } else if (node.children && node.children.length > 0) {
+          traverse(node.children)
+        }
+      })
+    }
+    traverse(pathTreeData.value)
+    pathTreeRef.value.setCheckedKeys(leafPaths)
+    tempSelectedPaths.value = leafPaths
+  }
+}
+
+// 清空选择
+const clearAllPaths = () => {
+  if (pathTreeRef.value) {
+    pathTreeRef.value.setCheckedKeys([])
+    tempSelectedPaths.value = []
+  }
+}
+
+// 保存选中的路径
+const saveSelectedPaths = () => {
+  iyuuForm.selected_paths = getSelectedLeafPaths()
+  pathSelectorVisible.value = false
+  ElMessage.success(`已选择 ${iyuuForm.selected_paths.length} 个路径`)
+
+  // 立即保存设置
+  saveIyuuSettings()
+}
+
+onMounted(() => {
+  fetchSettings()
+  void initDesktopRuntime()
+  void loadPtgenNodes()
+})
+</script>
+
+<style scoped>
+/* ===== PTGen 检测 ===== */
+.ptgen-test-summary {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  background-color: var(--el-color-success-light-9);
+  color: var(--el-text-color-primary);
+}
+
+.ptgen-test-summary.is-warning {
+  background-color: var(--el-color-warning-light-9);
+  color: var(--el-color-warning);
+}
+
+.ptgen-detail {
+  padding: 4px 12px 8px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.ptgen-detail-line {
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+
+.ptgen-detail-mono {
+  font-family: Consolas, Monaco, monospace;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-detail-pre {
+  white-space: pre-wrap;
+}
+
+.ptgen-detail-error {
+  color: var(--el-color-danger);
+}
+
+.ptgen-poster-preview {
+  margin-top: 6px;
+  max-height: 160px;
+  border-radius: 4px;
+}
+
+.ptgen-node-name {
+  font-weight: 500;
+}
+
+.ptgen-node-id {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-section-title {
+  margin-bottom: 10px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+}
+
+.ptgen-node-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ptgen-node-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  background-color: var(--el-fill-color-blank);
+}
+
+.ptgen-node-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  background-color: var(--el-color-primary-light-9);
+}
+
+.ptgen-node-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ptgen-node-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--el-text-color-primary);
+}
+
+.ptgen-node-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.ptgen-node-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.settings-container {
+  padding: 20px;
+  background-color: transparent;
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+/* 自定义滚动条样式 */
+.settings-container::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-container::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 4px;
+}
+
+.settings-container::-webkit-scrollbar-thumb {
+  background: rgba(144, 147, 153, 0.3);
+  border-radius: 4px;
+  transition: background 0.3s ease;
+}
+
+.settings-container::-webkit-scrollbar-thumb:hover {
+  background: rgba(144, 147, 153, 0.5);
+}
+
+.page-description {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin: 0;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 20px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.header-content {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-content h3 {
+  font-size: 16px;
+  font-weight: 500;
+  margin: 0;
+  color: var(--el-text-color-primary);
+}
+
+.header-icon {
+  font-size: 16px;
+  color: var(--el-color-primary);
+}
+
+.card-content {
+  padding: 16px;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-form {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.form-item {
+  margin-bottom: 16px;
+}
+
+.form-item.compact {
+  margin-bottom: 12px;
+}
+
+.form-item :deep(.el-form-item__label) {
+  font-weight: 500;
+  color: var(--el-text-color-regular);
+  font-size: 13px;
+  margin-bottom: 6px;
+  height: auto;
+}
+
+.password-hint {
+  margin-top: 6px;
+}
+
+.credential-section {
+  border-radius: 4px;
+  padding: 12px;
+  margin-top: 8px;
+}
+
+.credential-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.credential-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--el-text-color-primary);
+}
+
+.credential-icon {
+  color: var(--el-color-warning);
+  font-size: 14px;
+}
+
+.credential-form {
+  padding-left: 20px;
+}
+
+.placeholder-section {
+  margin-top: 8px;
+}
+
+.form-spacer {
+  flex: 1;
+}
+
+.security-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.4;
+  margin-top: auto;
+}
+
+.proxy-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  line-height: 1.4;
+  margin-top: auto;
+}
+
+.placeholder-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  height: 100%;
+}
+
+.placeholder-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+
+.placeholder-text {
+  margin: 0;
+  font-size: 14px;
+}
+
+.slide-enter-active,
+.slide-leave-active {
+  transition: all 0.2s ease;
+}
+
+.slide-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.slide-leave-to {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* 临时密码高亮样式 */
+.temp-password-highlight {
+  position: relative;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+
+.temp-password-highlight::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: linear-gradient(45deg, #ff6b6b, #ff8787, #ff6b6b);
+  border-radius: 12px;
+  z-index: -1;
+  opacity: 0.6;
+  animation: gradient-shift 3s ease infinite;
+}
+
+@keyframes pulse-border {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.01);
+  }
+}
+
+@keyframes gradient-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.temp-password-highlight .card-header {
+  background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(255, 135, 135, 0.05));
+}
+
+/* 路径树样式 */
+.path-tree-container {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+:deep(.path-tree-node .el-tree-node__content) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:deep(.path-tree-node .el-tree-node__content:hover) {
+  background-color: var(--el-fill-color-light);
+}
+
+:deep(.el-input__inner),
+:deep(.el-select .el-input__inner) {
+  height: 36px;
+  font-size: 13px;
+}
+
+:deep(.el-select-dropdown__item) {
+  height: 32px;
+  font-size: 13px;
+}
+
+@media (max-width: 768px) {
+  .settings-container {
+    padding: 16px;
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .card-header {
+    padding: 12px 16px;
+  }
+
+  .card-content {
+    padding: 16px;
+    height: auto;
+    min-height: 320px;
+  }
+}
+</style>

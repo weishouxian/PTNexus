@@ -1,0 +1,34 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# IDE and OS files
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Python cache and venv
+**/__pycache__
+**/*.pyc
+.venv/
+venv/
+
+# Node modules
+webui/node_modules
+webui/dist
+webui/node_modules
+webui/dist
+
+# Backend specific
+server/.env
+server/pt_stats.db
+server/pt_stats.db-journal
+
+# Logs
+*.log

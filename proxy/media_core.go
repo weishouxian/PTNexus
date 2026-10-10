@@ -1,0 +1,1388 @@
+package main
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	"math/rand"
+	"mime/multipart"
+	"net/http"
+	neturl "net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+)
+
+const defaultPixhostDirectHost = "img2.pixhost.cc"
+const defaultPixhostUploadAPIURL = "https://api.pixhost.cc/images"
+
+type pixhostUploadConfig struct {
+	DirectHost   string
+	UploadAPIURL string
+}
+
+func newPixhostUploadConfig(domain string) pixhostUploadConfig {
+	directHost := normalizePixhostDirectDomain(domain)
+	return pixhostUploadConfig{
+		DirectHost:   directHost,
+		UploadAPIURL: buildPixhostUploadAPIURL(directHost),
+	}
+}
+
+func normalizePixhostDirectDomain(domain string) string {
+	trimmed := strings.TrimSpace(domain)
+	if trimmed == "" {
+		return defaultPixhostDirectHost
+	}
+	if parsed, err := neturl.Parse(trimmed); err == nil && parsed != nil && parsed.Host != "" {
+		trimmed = parsed.Host
+	}
+	if i := strings.IndexAny(trimmed, "/?#"); i >= 0 {
+		trimmed = trimmed[:i]
+	}
+	host := strings.ToLower(strings.TrimSpace(trimmed))
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.Trim(host, ". ")
+	if host == "" {
+		return defaultPixhostDirectHost
+	}
+	if strings.HasPrefix(host, "api.") {
+		host = "img2." + strings.TrimPrefix(host, "api.")
+	}
+	if host == "pixhost.to" || host == "pixhost.cc" {
+		host = "img2." + host
+	}
+	return host
+}
+
+func buildPixhostUploadAPIURL(directHost string) string {
+	host := normalizePixhostDirectDomain(directHost)
+	if strings.HasPrefix(host, "api.") {
+		return "https://" + host + "/images"
+	}
+	if strings.HasPrefix(host, "img") {
+		if dot := strings.Index(host, "."); dot >= 0 && dot+1 < len(host) {
+			root := host[dot+1:]
+			if root == "pixhost.to" || root == "pixhost.cc" {
+				return "https://api." + root + "/images"
+			}
+		}
+	}
+	if host == "pixhost.to" || host == "pixhost.cc" {
+		return "https://api." + host + "/images"
+	}
+	return defaultPixhostUploadAPIURL
+}
+
+func normalizePath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return ""
+	}
+	return filepath.Clean(trimmed)
+}
+
+func isISOFileInput(path string) bool {
+	trimmed := strings.TrimSpace(path)
+	if trimmed == "" {
+		return false
+	}
+	return strings.EqualFold(filepath.Ext(trimmed), ".iso")
+}
+
+func withMountedISOIfNeeded(inputPath string, scene string, fn func(resolvedPath string) error) (retErr error) {
+	session, err := OpenMediaSession(inputPath, scene)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := session.Close(); closeErr != nil {
+			if retErr != nil {
+				retErr = fmt.Errorf("%v; %v", retErr, closeErr)
+			} else {
+				retErr = closeErr
+			}
+		}
+	}()
+	return fn(session.ResolvedPath)
+}
+
+func executeCommand(name string, args ...string) (string, error) {
+	resolvedName, err := resolveToolCommandPath(name)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(resolvedName, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("command %q failed: %v, stderr: %s", resolvedName, err, strings.TrimSpace(stderr.String()))
+	}
+	return stdout.String(), nil
+}
+
+func executeCommandWithTimeout(timeout time.Duration, name string, args ...string) (string, error) {
+	resolvedName, err := resolveToolCommandPath(name)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(resolvedName, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("failed to start %q: %v", resolvedName, err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return "", fmt.Errorf("command %q failed: %v, stderr: %s", resolvedName, err, strings.TrimSpace(stderr.String()))
+		}
+		return stdout.String(), nil
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return "", fmt.Errorf("command %q timed out after %.0f seconds", resolvedName, timeout.Seconds())
+	}
+}
+
+func executeCommandWithTimeoutAndStderr(timeout time.Duration, name string, args ...string) (string, string, error) {
+	resolvedName, err := resolveToolCommandPath(name)
+	if err != nil {
+		return "", "", err
+	}
+	cmd := exec.Command(resolvedName, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", "", fmt.Errorf("failed to start %q: %v", resolvedName, err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			return "", stderr.String(), fmt.Errorf("command %q failed: %v, stderr: %s", resolvedName, err, strings.TrimSpace(stderr.String()))
+		}
+		return stdout.String(), stderr.String(), nil
+	case <-time.After(timeout):
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+		return "", "", fmt.Errorf("command %q timed out after %.0f seconds", resolvedName, timeout.Seconds())
+	}
+}
+
+func getVideoDuration(videoPath string) (float64, error) {
+	output, err := executeCommand("ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", videoPath)
+	if err != nil {
+		return 0, err
+	}
+	duration, err := strconv.ParseFloat(strings.TrimSpace(output), 64)
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("failed to parse video duration from %q", strings.TrimSpace(output))
+	}
+	return duration, nil
+}
+
+func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID int) error {
+	args := []string{
+		"--no-audio",
+		fmt.Sprintf("--start=%.2f", timePoint),
+		"--frames=1",
+		"--screenshot-high-bit-depth=yes",
+		"--screenshot-png-compression=0",
+		"--screenshot-tag-colorspace=yes",
+	}
+	if subtitleSID > 0 {
+		args = append(args, fmt.Sprintf("--sid=%d", subtitleSID), "--sub-visibility=yes")
+	} else {
+		args = append(args, "--sid=no")
+	}
+	args = append(args, fmt.Sprintf("--o=%s", outputPath), videoPath)
+
+	_, err := executeCommandWithTimeout(600*time.Second, "mpv", args...)
+	if err != nil {
+		return fmt.Errorf("mpv screenshot failed: %v", err)
+	}
+	if stat, statErr := os.Stat(outputPath); statErr != nil || stat.Size() == 0 {
+		return fmt.Errorf("screenshot output was not generated")
+	}
+	return nil
+}
+
+// detectHDRFromVideo reports whether the video source should be treated as HDR.
+// It also covers Dolby Vision Profile 5 sources whose color metadata is missing: those carry no
+// bt2020/smpte2084 tags, so a tags-only check would classify them as SDR and skip tone mapping.
+func detectHDRFromVideo(videoPath string) bool {
+	output, err := executeCommand("ffprobe", "-v", "error", "-show_streams", videoPath)
+	if err != nil {
+		return false
+	}
+	return isHDRMetadataText(output)
+}
+
+// isHDRMetadataText classifies ffprobe output as HDR. Standard color tags and Dolby Vision
+// keywords win immediately; otherwise a 10-bit-or-higher HEVC/VP9/AV1 stream whose color triple is
+// entirely unannotated is treated as HDR, which is the usual shape of Dolby Vision Profile 5.
+func isHDRMetadataText(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, "smpte2084") || strings.Contains(lower, "bt2020") ||
+		strings.Contains(lower, "dovi") || strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") || containsDolbyVisionToken(lower) {
+		return true
+	}
+	if !hasTenBitOrHigherPixelFormat(lower) {
+		return false
+	}
+	if !hasAnyToken(lower, "hevc", "h265", "vp9", "av1") {
+		return false
+	}
+	return !hasKnownColorMetadata(lower)
+}
+
+// hasTenBitOrHigherPixelFormat reports whether the ffprobe text declares a 10-bit-or-higher format.
+func hasTenBitOrHigherPixelFormat(text string) bool {
+	for _, marker := range []string{"pix_fmt=yuv420p10", "pix_fmt=yuv422p10", "pix_fmt=yuv444p10",
+		"pix_fmt=yuv420p12", "pix_fmt=yuv422p12", "pix_fmt=yuv444p12", "pix_fmt=p010", "pix_fmt=p012"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAnyToken reports whether any of the given keywords occurs in the text.
+func hasAnyToken(text string, tokens ...string) bool {
+	for _, token := range tokens {
+		if strings.Contains(text, token) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasKnownColorMetadata reports whether ffprobe annotated any of the color triple fields.
+// unknown / unspecified / reserved all count as "no metadata".
+func hasKnownColorMetadata(text string) bool {
+	for _, key := range []string{"color_space=", "color_transfer=", "color_primaries="} {
+		index := strings.Index(text, key)
+		if index < 0 {
+			continue
+		}
+		value := text[index+len(key):]
+		if end := strings.IndexAny(value, "\r\n"); end >= 0 {
+			value = value[:end]
+		}
+		switch strings.TrimSpace(value) {
+		case "", "unknown", "unspecified", "reserved":
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// containsDolbyVisionToken reports whether the text (case-insensitive) contains a standalone "dv"
+// marker, as in ".DV." / "[DV]" / "DV-". A plain Contains("dv") would wrongly match dvdr, hence the
+// separator check.
+func containsDolbyVisionToken(value string) bool {
+	lower := strings.ToLower(value)
+	for offset := 0; offset+2 <= len(lower); {
+		index := strings.Index(lower[offset:], "dv")
+		if index < 0 {
+			return false
+		}
+		position := offset + index
+		beforeOK := position == 0 || isTokenSeparator(lower[position-1])
+		after := position + 2
+		afterOK := after >= len(lower) || isTokenSeparator(lower[after])
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = position + 2
+	}
+	return false
+}
+
+// isTokenSeparator reports whether b separates tokens in a release name.
+func isTokenSeparator(b byte) bool {
+	switch b {
+	case ' ', '.', '_', '-', '+', '[', ']', '(', ')', '/', '\\', ',', ':', '~':
+		return true
+	}
+	return false
+}
+
+func hasHDRKeyword(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "hdr") ||
+		strings.Contains(lower, "hdr10") ||
+		strings.Contains(lower, "dovi") ||
+		strings.Contains(lower, "dolby vision") ||
+		containsDolbyVisionToken(lower)
+}
+
+type toneMapFilterCandidate struct {
+	Name   string
+	Filter string
+	// PreArgs are extra ffmpeg options prepended to the command, e.g. creating a Vulkan device up front.
+	PreArgs  []string
+	Degraded bool
+}
+
+type toneMapChainOptions struct {
+	SDRFilter      string
+	HDRTail        string
+	FallbackFilter string
+	OutRange       string
+}
+
+var previewToneMapChainOptions = toneMapChainOptions{
+	SDRFilter:      "scale='min(640,iw)':-2,format=yuv420p",
+	HDRTail:        "scale='min(640,iw)':-2,format=yuv420p",
+	FallbackFilter: "scale='min(640,iw)':-2,format=yuv420p",
+	OutRange:       "tv",
+}
+
+var imageToneMapChainOptions = toneMapChainOptions{
+	SDRFilter:      "format=rgb24",
+	HDRTail:        "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+	FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+	OutRange:       "pc",
+}
+
+// libplaceboHwDeviceArgs makes ffmpeg create a Vulkan device through its own hwcontext and pass it to
+// libplacebo. On CPU-only hosts (lavapipe only, no discrete GPU) libplacebo rejects the CPU device with
+// "Found no suitable device"; a device created by the hwcontext works.
+var libplaceboHwDeviceArgs = []string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"}
+
+// buildToneMapFilterCandidates returns the tone mapping filter chains ordered by priority.
+// libplacebo handles non-standard color spaces such as Dolby Vision Profile 5 (IPTPQc2) and needs a
+// working Vulkan device (libplacebo-hwdevice covers hosts without a discrete GPU by using software
+// Vulkan); the zscale chains rely on frame color metadata and the explicit one supplies BT.2020/PQ
+// input parameters when metadata is missing; the last chain only resamples pixels so that a screenshot
+// is always produced, at the cost of inaccurate colors.
+func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
+	if !isHDR {
+		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
+	}
+	libplaceboFilter := "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + "," + options.HDRTail
+	return []toneMapFilterCandidate{
+		{
+			Name:   "libplacebo",
+			Filter: libplaceboFilter,
+		},
+		{
+			Name:    "libplacebo-hwdevice",
+			Filter:  libplaceboFilter,
+			PreArgs: libplaceboHwDeviceArgs,
+		},
+		{
+			Name:   "zscale",
+			Filter: "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:   "zscale-explicit",
+			Filter: "zscale=pin=bt2020:tin=smpte2084:min=bt2020nc:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:     "passthrough",
+			Filter:   options.FallbackFilter,
+			Degraded: true,
+		},
+	}
+}
+
+// prependToneMapPreArgs puts the candidate's extra ffmpeg options in front of the command arguments.
+func prependToneMapPreArgs(candidate toneMapFilterCandidate, args []string) []string {
+	if len(candidate.PreArgs) == 0 {
+		return args
+	}
+	merged := make([]string, 0, len(candidate.PreArgs)+len(args))
+	merged = append(merged, candidate.PreArgs...)
+	return append(merged, args...)
+}
+
+// runToneMapFilterAttempts tries each candidate chain in order and returns the first one that
+// produced a non-empty output file.
+func runToneMapFilterAttempts(outputPath string, candidates []toneMapFilterCandidate, run func(toneMapFilterCandidate) (string, error)) (toneMapFilterCandidate, string, error) {
+	var lastOutput string
+	var lastErr error
+	for _, candidate := range candidates {
+		output, err := run(candidate)
+		if err == nil {
+			if stat, statErr := os.Stat(outputPath); statErr == nil && stat.Size() > 0 {
+				if candidate.Degraded {
+					log.Printf("tone mapping filters unavailable, converting directly (filter=%s), colors may be off", candidate.Name)
+				} else {
+					log.Printf("tone mapping filter chain selected: %s output=%s", candidate.Name, outputPath)
+				}
+				return candidate, output, nil
+			}
+			err = fmt.Errorf("output file was not generated")
+		}
+		log.Printf("tone mapping filter chain failed: %s err=%v stderr=%s", candidate.Name, err, strings.TrimSpace(output))
+		lastOutput = output
+		lastErr = err
+		_ = os.Remove(outputPath)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no usable tone mapping filter chain")
+	}
+	return toneMapFilterCandidate{}, lastOutput, lastErr
+}
+
+func takePreviewScreenshot(videoPath, outputPath string, timePoint float64, isHDR bool) error {
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, _, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-ss", fmt.Sprintf("%.3f", timePoint),
+			"-i", videoPath,
+			"-frames:v", "1",
+			"-an",
+			"-sn",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(180*time.Second, "ffmpeg", args...)
+		return stderrStr, cmdErr
+	})
+	if err != nil {
+		return fmt.Errorf("ffmpeg preview capture failed: %v", err)
+	}
+	return nil
+}
+
+func takePreviewScreenshotWithSubtitle(videoPath, outputPath string, timePoint float64, subtitleSID int) error {
+	tmpDir, err := os.MkdirTemp("", "ptnexus-proxy-preview-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	rawPNG := filepath.Join(tmpDir, "preview_raw.png")
+	if err := takeScreenshot(videoPath, rawPNG, timePoint, subtitleSID); err != nil {
+		return err
+	}
+
+	isHDR := false
+	if output, probeErr := executeCommand("ffprobe", "-v", "error", "-show_streams", rawPNG); probeErr == nil {
+		text := strings.ToLower(output)
+		isHDR = strings.Contains(text, "smpte2084") || strings.Contains(text, "bt2020")
+	}
+
+	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
+	_, _, err = runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y",
+			"-v", "error",
+			"-i", rawPNG,
+			"-frames:v", "1",
+			"-vf", candidate.Filter,
+			"-q:v", "14",
+			outputPath,
+		})
+		_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(180*time.Second, "ffmpeg", args...)
+		return stderrStr, cmdErr
+	})
+	if err != nil {
+		return fmt.Errorf("ffmpeg preview capture failed: %v", err)
+	}
+	return nil
+}
+
+func convertPngToOptimizedImage(sourcePath, destPath string, isHDR bool) (string, error) {
+	const maxUploadSize = 10 * 1024 * 1024
+
+	if isHDR {
+		jpegPath := strings.TrimSuffix(destPath, filepath.Ext(destPath)) + ".jpg"
+		candidates := buildToneMapFilterCandidates(true, imageToneMapChainOptions)
+		_, output, err := runToneMapFilterAttempts(jpegPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+			args := prependToneMapPreArgs(candidate, []string{
+				"-y", "-v", "error", "-i", sourcePath, "-frames:v", "1",
+				"-vf", candidate.Filter,
+				"-q:v", "2",
+				jpegPath,
+			})
+			_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", args...)
+			return stderrStr, cmdErr
+		})
+		if err != nil {
+			return "", fmt.Errorf("ffmpeg HDR JPEG optimization failed: %v, stderr: %s", err, strings.TrimSpace(output))
+		}
+		log.Printf("HDR screenshot optimized directly as JPEG: %s (%.2f MB)", filepath.Base(jpegPath), fileSizeMB(jpegPath))
+		return jpegPath, nil
+	}
+
+	vfFilter := "format=rgb24"
+	args := []string{
+		"-y", "-v", "error", "-i", sourcePath, "-frames:v", "1",
+		"-vf", vfFilter,
+		"-compression_level", "4",
+		"-pred", "mixed",
+		destPath,
+	}
+	_, stderrStr, err := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", args...)
+	if err != nil {
+		return "", fmt.Errorf("ffmpeg PNG optimization failed: %v, stderr: %s", err, stderrStr)
+	}
+
+	destInfo, err := os.Stat(destPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to stat optimized PNG: %v", err)
+	}
+
+	if destInfo.Size() > maxUploadSize {
+		tempRecompressPath := destPath + ".recompressed.png"
+		recompressArgs := []string{
+			"-y", "-v", "error", "-i", destPath,
+			"-compression_level", "100",
+			tempRecompressPath,
+		}
+		_, recompressStderrStr, err := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", recompressArgs...)
+		if err != nil {
+			return "", fmt.Errorf("ffmpeg second-pass compression failed: %v, stderr: %s", err, recompressStderrStr)
+		}
+		if err := os.Rename(tempRecompressPath, destPath); err != nil {
+			return "", fmt.Errorf("failed to replace optimized PNG: %v", err)
+		}
+	}
+
+	return destPath, nil
+}
+
+func fileSizeMB(path string) float64 {
+	stat, err := os.Stat(path)
+	if err != nil || stat == nil {
+		return 0
+	}
+	return float64(stat.Size()) / 1024 / 1024
+}
+
+func preparePixhostUploadImage(sourcePath string) (string, error) {
+	const maxUploadSize = 8 * 1024 * 1024
+
+	if stat, err := os.Stat(sourcePath); err == nil && stat != nil && stat.Size() > 0 && stat.Size() <= maxUploadSize {
+		return sourcePath, nil
+	}
+
+	type compressionProfile struct {
+		width   int
+		quality int
+	}
+
+	profiles := []compressionProfile{
+		{width: 3840, quality: 2},
+		{width: 3840, quality: 3},
+		{width: 3840, quality: 4},
+		{width: 3200, quality: 3},
+		{width: 3200, quality: 4},
+		{width: 3200, quality: 5},
+		{width: 2560, quality: 3},
+		{width: 2560, quality: 4},
+		{width: 2560, quality: 5},
+		{width: 1920, quality: 4},
+		{width: 1920, quality: 6},
+	}
+
+	for _, profile := range profiles {
+		candidatePath := strings.TrimSuffix(sourcePath, filepath.Ext(sourcePath)) + fmt.Sprintf(".w%d.q%d.jpg", profile.width, profile.quality)
+		vfFilter := fmt.Sprintf("scale='min(%d,iw)':-2:flags=lanczos,unsharp=5:5:0.35:3:3:0.20,format=yuv420p", profile.width)
+		args := []string{
+			"-y", "-v", "error", "-i", sourcePath,
+			"-frames:v", "1",
+			"-vf", vfFilter,
+			"-q:v", strconv.Itoa(profile.quality),
+			candidatePath,
+		}
+		_, stderrStr, err := executeCommandWithTimeoutAndStderr(300*time.Second, "ffmpeg", args...)
+		if err != nil {
+			_ = os.Remove(candidatePath)
+			return "", fmt.Errorf("ffmpeg JPEG compression failed: %v, stderr: %s", err, stderrStr)
+		}
+		stat, statErr := os.Stat(candidatePath)
+		if statErr != nil || stat == nil || stat.Size() == 0 {
+			_ = os.Remove(candidatePath)
+			continue
+		}
+		if stat.Size() <= maxUploadSize || profile == profiles[len(profiles)-1] {
+			log.Printf("prepared screenshot for Pixhost upload: %s -> %s (width<=%d q=%d %.2f MB)", filepath.Base(sourcePath), filepath.Base(candidatePath), profile.width, profile.quality, float64(stat.Size())/1024/1024)
+			return candidatePath, nil
+		}
+		_ = os.Remove(candidatePath)
+	}
+
+	return sourcePath, nil
+}
+
+type subtitleStreamProbe struct {
+	Streams []struct {
+		Index       int               `json:"index"`
+		CodecName   string            `json:"codec_name"`
+		Tags        map[string]string `json:"tags"`
+		Disposition map[string]any    `json:"disposition"`
+	} `json:"streams"`
+}
+
+func normalizeSubtitleLanguage(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func subtitleCodecPriority(codec string) int {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "ass":
+		return 0
+	case "subrip":
+		return 1
+	case "hdmv_pgs_subtitle":
+		return 2
+	default:
+		return 9
+	}
+}
+
+func subtitleChineseScore(language string, title string) int {
+	score := 0
+	lang := strings.ToLower(strings.TrimSpace(language))
+	titleText := strings.ToLower(strings.TrimSpace(title))
+
+	switch {
+	case lang == "chi", lang == "zho", lang == "zh", lang == "cmn":
+		score += 10
+	case strings.HasPrefix(lang, "zh-"), strings.HasPrefix(lang, "zh_"):
+		score += 10
+	}
+
+	switch {
+	case strings.Contains(titleText, "简体"),
+		strings.Contains(titleText, "简中"),
+		strings.Contains(titleText, "chs"),
+		strings.Contains(titleText, "sc"),
+		strings.Contains(titleText, "simplified"):
+		score += 5
+	case strings.Contains(titleText, "繁体"),
+		strings.Contains(titleText, "繁中"),
+		strings.Contains(titleText, "cht"),
+		strings.Contains(titleText, "tc"),
+		strings.Contains(titleText, "traditional"):
+		score += 3
+	case strings.Contains(titleText, "中文"),
+		strings.Contains(titleText, "中字"),
+		strings.Contains(titleText, "chinese"):
+		score += 2
+	}
+
+	if strings.Contains(titleText, "双语") || strings.Contains(titleText, "bilingual") {
+		score++
+	}
+	return score
+}
+
+func isSupportedSubtitleCodec(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "ass", "subrip", "hdmv_pgs_subtitle":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildSubtitleDisplayName(candidate subtitleStreamCandidate) string {
+	parts := make([]string, 0, 6)
+	parts = append(parts, fmt.Sprintf("Subtitle %d", candidate.SubtitleSID))
+	if candidate.IsDefault {
+		parts = append(parts, "default")
+	}
+	if candidate.IsConfidentChinese {
+		parts = append(parts, "zh")
+	}
+	if candidate.CodecName != "" {
+		parts = append(parts, strings.ToUpper(candidate.CodecName))
+	}
+	if candidate.Language != "" {
+		parts = append(parts, candidate.Language)
+	}
+	if candidate.Title != "" {
+		parts = append(parts, candidate.Title)
+	}
+	return strings.Join(parts, " / ")
+}
+
+func inspectSubtitleStreams(videoPath string) (subtitleInspectionResult, error) {
+	ffprobePath, err := resolveToolCommandPath("ffprobe")
+	if err != nil {
+		return subtitleInspectionResult{}, err
+	}
+
+	cmd := exec.Command(ffprobePath, "-v", "quiet", "-print_format", "json", "-show_entries", "stream=index,codec_name,disposition:stream_tags=language,title", "-select_streams", "s", videoPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		text := strings.TrimSpace(string(out))
+		if text == "" {
+			text = err.Error()
+		}
+		return subtitleInspectionResult{}, fmt.Errorf("failed to inspect subtitle streams: %s", text)
+	}
+
+	var probe subtitleStreamProbe
+	if err := json.Unmarshal(out, &probe); err != nil {
+		return subtitleInspectionResult{}, fmt.Errorf("failed to parse subtitle stream JSON: %w", err)
+	}
+
+	candidates := make([]subtitleStreamCandidate, 0, len(probe.Streams))
+	for i, stream := range probe.Streams {
+		language := normalizeSubtitleLanguage(stream.Tags["language"])
+		title := strings.TrimSpace(stream.Tags["title"])
+		score := subtitleChineseScore(language, title)
+		candidate := subtitleStreamCandidate{
+			SubtitleSID:        i + 1,
+			StreamIndex:        stream.Index,
+			StreamOrdinal:      i,
+			CodecName:          strings.ToLower(strings.TrimSpace(stream.CodecName)),
+			Language:           language,
+			Title:              title,
+			ConfidenceScore:    score,
+			IsConfidentChinese: score > 0,
+			IsDefault:          toBoolAny(stream.Disposition["default"]),
+			IsSupported:        isSupportedSubtitleCodec(stream.CodecName),
+		}
+		candidate.DisplayName = buildSubtitleDisplayName(candidate)
+		candidates = append(candidates, candidate)
+	}
+
+	streams := make([]ScreenshotSubtitleStream, 0, len(candidates))
+	for _, candidate := range candidates {
+		streams = append(streams, ScreenshotSubtitleStream{
+			SubtitleSID:        candidate.SubtitleSID,
+			StreamIndex:        candidate.StreamIndex,
+			CodecName:          candidate.CodecName,
+			Language:           candidate.Language,
+			Title:              candidate.Title,
+			DisplayName:        candidate.DisplayName,
+			IsConfidentChinese: candidate.IsConfidentChinese,
+			IsDefault:          candidate.IsDefault,
+		})
+	}
+
+	result := subtitleInspectionResult{
+		State:      ScreenshotSubtitleStateNoUsableSubtitle,
+		Streams:    streams,
+		Candidates: candidates,
+	}
+
+	if best, ok := selectBestChineseSubtitle(candidates); ok {
+		result.State = ScreenshotSubtitleStateConfirmedChinese
+		result.CurrentSubtitleSID = best.SubtitleSID
+		return result, nil
+	}
+	if best, ok := selectDefaultSubtitle(candidates); ok {
+		result.State = ScreenshotSubtitleStateUsableButUnconfirmed
+		result.CurrentSubtitleSID = best.SubtitleSID
+	}
+	return result, nil
+}
+
+func selectBestChineseSubtitle(candidates []subtitleStreamCandidate) (subtitleStreamCandidate, bool) {
+	ranked := make([]subtitleStreamCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		if candidate.ConfidenceScore > 0 {
+			ranked = append(ranked, candidate)
+		}
+	}
+	if len(ranked) == 0 {
+		return subtitleStreamCandidate{}, false
+	}
+
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].ConfidenceScore != ranked[j].ConfidenceScore {
+			return ranked[i].ConfidenceScore > ranked[j].ConfidenceScore
+		}
+		if ranked[i].IsDefault != ranked[j].IsDefault {
+			return ranked[i].IsDefault
+		}
+		if subtitleCodecPriority(ranked[i].CodecName) != subtitleCodecPriority(ranked[j].CodecName) {
+			return subtitleCodecPriority(ranked[i].CodecName) < subtitleCodecPriority(ranked[j].CodecName)
+		}
+		return ranked[i].SubtitleSID < ranked[j].SubtitleSID
+	})
+	return ranked[0], true
+}
+
+func selectDefaultSubtitle(candidates []subtitleStreamCandidate) (subtitleStreamCandidate, bool) {
+	if len(candidates) == 0 {
+		return subtitleStreamCandidate{}, false
+	}
+
+	best := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.IsDefault && !best.IsDefault {
+			best = candidate
+			continue
+		}
+		if candidate.IsDefault == best.IsDefault && subtitleCodecPriority(candidate.CodecName) < subtitleCodecPriority(best.CodecName) {
+			best = candidate
+			continue
+		}
+		if candidate.IsDefault == best.IsDefault && subtitleCodecPriority(candidate.CodecName) == subtitleCodecPriority(best.CodecName) && candidate.SubtitleSID < best.SubtitleSID {
+			best = candidate
+		}
+	}
+	return best, true
+}
+
+func resolveSubtitleCandidate(videoPath string, requestedSID *int) (subtitleInspectionResult, subtitleStreamCandidate, bool, int, error) {
+	inspection, err := inspectSubtitleStreams(videoPath)
+	if err != nil {
+		return subtitleInspectionResult{}, subtitleStreamCandidate{}, false, 0, err
+	}
+
+	if requestedSID != nil {
+		sid := *requestedSID
+		inspection.CurrentSubtitleSID = sid
+		if sid <= 0 {
+			return inspection, subtitleStreamCandidate{}, false, 0, nil
+		}
+		for _, candidate := range inspection.Candidates {
+			if candidate.SubtitleSID == sid {
+				return inspection, candidate, true, sid, nil
+			}
+		}
+		return inspection, subtitleStreamCandidate{}, false, 0, fmt.Errorf("selected subtitle stream does not exist: %d", sid)
+	}
+
+	if inspection.CurrentSubtitleSID <= 0 {
+		return inspection, subtitleStreamCandidate{}, false, 0, nil
+	}
+	for _, candidate := range inspection.Candidates {
+		if candidate.SubtitleSID == inspection.CurrentSubtitleSID {
+			return inspection, candidate, true, inspection.CurrentSubtitleSID, nil
+		}
+	}
+	return inspection, subtitleStreamCandidate{}, false, 0, nil
+}
+
+func buildUniformPreviewPoints(duration float64, count int) []float64 {
+	if duration <= 0 || count <= 0 {
+		return nil
+	}
+	start := duration * 0.12
+	end := duration * 0.88
+	if end <= start {
+		start = math.Max(1, duration*0.10)
+		end = math.Max(start+1, duration*0.90)
+	}
+
+	step := (end - start) / float64(count)
+	if step <= 0 {
+		step = duration / float64(count+1)
+	}
+	points := make([]float64, 0, count)
+	for i := 0; i < count; i++ {
+		point := start + step*(float64(i)+0.5)
+		if point < 1 {
+			point = 1
+		}
+		if point > duration-1 {
+			point = math.Max(1, duration-1)
+		}
+		points = append(points, point)
+	}
+	return points
+}
+
+func buildSmartScreenshotPointsForPreview(videoPath string, duration float64, count int, currentSubtitleSID int, candidate subtitleStreamCandidate, hasCandidate bool) []float64 {
+	_ = videoPath
+	_ = currentSubtitleSID
+	_ = candidate
+	_ = hasCandidate
+	return buildUniformPreviewPoints(duration, count)
+}
+
+func buildRandomScreenshotPointsForDuration(duration float64, count int) []float64 {
+	if count <= 0 {
+		count = 3
+	}
+	if count > 10 {
+		count = 10
+	}
+	if duration <= 1 || count <= 0 {
+		return []float64{}
+	}
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	bucketDuration := duration / float64(count)
+	points := make([]float64, 0, count)
+	for i := 0; i < count; i++ {
+		start := bucketDuration * float64(i)
+		end := bucketDuration * float64(i+1)
+		margin := bucketDuration * 0.2
+		if margin < 1 {
+			margin = bucketDuration * 0.1
+		}
+		lower := start + margin
+		upper := end - margin
+		point := (start + end) / 2
+		if upper > lower {
+			point = lower + rng.Float64()*(upper-lower)
+		}
+		if point < 0.5 {
+			point = 0.5
+		}
+		if point > duration-0.5 {
+			point = duration - 0.5
+		}
+		points = append(points, point)
+	}
+	sort.Float64s(points)
+	return points
+}
+
+func sanitizeSelectedScreenshotTimes(values []float64, duration float64, maxCount int) []float64 {
+	clean := make([]float64, 0, len(values))
+	for _, value := range values {
+		if value <= 0 || value >= duration {
+			continue
+		}
+		duplicate := false
+		for _, existing := range clean {
+			if math.Abs(existing-value) < 0.8 {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		clean = append(clean, value)
+	}
+	sort.Float64s(clean)
+	if maxCount > 0 && len(clean) > maxCount {
+		clean = clean[:maxCount]
+	}
+	return clean
+}
+
+func formatSecondClockValue(value float64) string {
+	totalSeconds := int(math.Round(value))
+	if totalSeconds < 0 {
+		totalSeconds = 0
+	}
+	hours := totalSeconds / 3600
+	minutes := (totalSeconds % 3600) / 60
+	seconds := totalSeconds % 60
+	return fmt.Sprintf("%02d:%02d:%02d", hours, minutes, seconds)
+}
+
+func markRecommendedPreviewCandidates(candidates []ScreenshotPreviewCandidate, want int) {
+	if len(candidates) == 0 || want <= 0 {
+		return
+	}
+	if want >= len(candidates) {
+		for i := range candidates {
+			candidates[i].Recommended = true
+		}
+		return
+	}
+
+	indices := make([]int, 0, want)
+	if want == 1 {
+		indices = append(indices, len(candidates)/2)
+	} else {
+		step := float64(len(candidates)-1) / float64(want-1)
+		seen := map[int]struct{}{}
+		for i := 0; i < want; i++ {
+			idx := int(math.Round(float64(i) * step))
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= len(candidates) {
+				idx = len(candidates) - 1
+			}
+			if _, ok := seen[idx]; ok {
+				continue
+			}
+			seen[idx] = struct{}{}
+			indices = append(indices, idx)
+		}
+	}
+
+	for _, idx := range indices {
+		if idx >= 0 && idx < len(candidates) {
+			candidates[idx].Recommended = true
+		}
+	}
+}
+
+func generatePreviewCandidates(videoPath string, duration float64, count int, currentSubtitleSID int, selectedCandidate subtitleStreamCandidate, hasSelectedCandidate bool) ([]ScreenshotPreviewCandidate, error) {
+	const previewMinCount = 5
+	if count <= 0 {
+		count = 12
+	}
+	if count < previewMinCount {
+		count = previewMinCount
+	}
+
+	points := buildSmartScreenshotPointsForPreview(videoPath, duration, count, currentSubtitleSID, selectedCandidate, hasSelectedCandidate)
+	if len(points) == 0 {
+		points = buildUniformPreviewPoints(duration, count)
+	}
+	if len(points) == 0 {
+		return nil, fmt.Errorf("failed to generate preview timestamps")
+	}
+
+	tempDir, err := os.MkdirTemp("", "ptnexus-preview-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tempDir)
+
+	isHDR := detectHDRFromVideo(videoPath)
+	candidates := make([]ScreenshotPreviewCandidate, 0, len(points))
+	for _, point := range points {
+		outputPath := filepath.Join(tempDir, fmt.Sprintf("preview-%.0f.jpg", point*1000))
+		if currentSubtitleSID > 0 {
+			err = takePreviewScreenshotWithSubtitle(videoPath, outputPath, point, currentSubtitleSID)
+		} else {
+			err = takePreviewScreenshot(videoPath, outputPath, point, isHDR)
+		}
+		if err != nil {
+			log.Printf("preview capture skipped at %.2fs: %v", point, err)
+			continue
+		}
+
+		content, err := os.ReadFile(outputPath)
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, ScreenshotPreviewCandidate{
+			ID:          fmt.Sprintf("candidate-%02d", len(candidates)+1),
+			TimeSeconds: point,
+			TimeLabel:   formatSecondClockValue(point),
+			PreviewData: "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(content),
+		})
+	}
+
+	if len(candidates) < previewMinCount {
+		return nil, fmt.Errorf("not enough preview candidates generated: %d", len(candidates))
+	}
+
+	markRecommendedPreviewCandidates(candidates, 5)
+	return candidates, nil
+}
+
+var seasonEpisodePattern = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}`)
+var seasonOnlyPattern = regexp.MustCompile(`(?i)S\d{1,2}`)
+var multiEpisodePattern = regexp.MustCompile(`(?i)S\d{1,2}E\d{1,3}\s*(?:[-~]\s*(?:S?\d{1,2})?E?\d{1,3}|E\d{1,3})`)
+
+func extractSeasonEpisode(text string) string {
+	if text == "" {
+		return ""
+	}
+	if match := seasonEpisodePattern.FindString(text); match != "" {
+		return strings.ToUpper(match)
+	}
+	if match := seasonOnlyPattern.FindString(text); match != "" {
+		return strings.ToUpper(match)
+	}
+	return ""
+}
+
+func parseSeasonEpisodeNumbers(seasonEpisode string) (int, int, bool) {
+	re := regexp.MustCompile(`(?i)^S(\d{1,2})(?:E(\d{1,3}))?$`)
+	match := re.FindStringSubmatch(strings.TrimSpace(seasonEpisode))
+	if match == nil {
+		return 0, 0, false
+	}
+	season, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	if match[2] == "" {
+		return season, 0, false
+	}
+	episode, err := strconv.Atoi(match[2])
+	if err != nil {
+		return 0, 0, false
+	}
+	return season, episode, true
+}
+
+func findTargetVideoFile(path string, contentName string) (string, error) {
+	videoExtensions := map[string]bool{
+		".mkv": true, ".mp4": true, ".ts": true, ".avi": true,
+		".wmv": true, ".mov": true, ".flv": true, ".m2ts": true,
+	}
+
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return "", fmt.Errorf("path does not exist: %s", path)
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to stat path: %v", err)
+	}
+
+	if !info.IsDir() {
+		if videoExtensions[strings.ToLower(filepath.Ext(path))] {
+			return path, nil
+		}
+		return "", fmt.Errorf("path is not a supported video file: %s", path)
+	}
+
+	type videoFileInfo struct {
+		path string
+		size int64
+	}
+	videoFiles := make([]videoFileInfo, 0)
+	err = filepath.Walk(path, func(filePath string, fileInfo os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			log.Printf("warning: failed to visit %s: %v", filePath, walkErr)
+			return nil
+		}
+		if fileInfo.IsDir() {
+			return nil
+		}
+		if videoExtensions[strings.ToLower(filepath.Ext(filePath))] {
+			videoFiles = append(videoFiles, videoFileInfo{path: filePath, size: fileInfo.Size()})
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to walk directory: %v", err)
+	}
+	if len(videoFiles) == 0 {
+		return "", fmt.Errorf("no video files found in: %s", path)
+	}
+	if len(videoFiles) == 1 {
+		return videoFiles[0].path, nil
+	}
+
+	seasonEpisode := ""
+	if strings.TrimSpace(contentName) != "" {
+		seasonEpisode = extractSeasonEpisode(contentName)
+	}
+	if seasonEpisode == "" {
+		seasonEpisode = extractSeasonEpisode(filepath.Base(path))
+	}
+
+	if seasonEpisode != "" {
+		targetSeason, targetEpisode, hasEpisode := parseSeasonEpisodeNumbers(seasonEpisode)
+		if targetSeason > 0 {
+			if !hasEpisode {
+				targetEpisode = 1
+			}
+
+			type episodeCandidate struct {
+				episode int
+				isMulti bool
+				path    string
+			}
+			episodeMatches := make([]episodeCandidate, 0)
+			seasonCandidates := make([]episodeCandidate, 0)
+
+			for _, file := range videoFiles {
+				baseName := filepath.Base(file.path)
+				candidate := extractSeasonEpisode(baseName)
+				if candidate == "" {
+					continue
+				}
+				candSeason, candEpisode, candHasEpisode := parseSeasonEpisodeNumbers(candidate)
+				if candSeason != targetSeason || !candHasEpisode {
+					continue
+				}
+				item := episodeCandidate{
+					episode: candEpisode,
+					isMulti: multiEpisodePattern.MatchString(baseName),
+					path:    file.path,
+				}
+				seasonCandidates = append(seasonCandidates, item)
+				if candEpisode == targetEpisode {
+					episodeMatches = append(episodeMatches, item)
+				}
+			}
+
+			if len(episodeMatches) > 0 {
+				sort.SliceStable(episodeMatches, func(i, j int) bool {
+					if episodeMatches[i].isMulti != episodeMatches[j].isMulti {
+						return !episodeMatches[i].isMulti
+					}
+					return episodeMatches[i].path < episodeMatches[j].path
+				})
+				return episodeMatches[0].path, nil
+			}
+
+			if len(seasonCandidates) > 0 {
+				sort.SliceStable(seasonCandidates, func(i, j int) bool {
+					if seasonCandidates[i].episode != seasonCandidates[j].episode {
+						return seasonCandidates[i].episode < seasonCandidates[j].episode
+					}
+					if seasonCandidates[i].isMulti != seasonCandidates[j].isMulti {
+						return !seasonCandidates[i].isMulti
+					}
+					return seasonCandidates[i].path < seasonCandidates[j].path
+				})
+				return seasonCandidates[0].path, nil
+			}
+		}
+	}
+
+	sort.SliceStable(videoFiles, func(i, j int) bool {
+		if videoFiles[i].size != videoFiles[j].size {
+			return videoFiles[i].size > videoFiles[j].size
+		}
+		return videoFiles[i].path < videoFiles[j].path
+	})
+	if videoFiles[0].size < 100*1024*1024 {
+		log.Printf("warning: selected largest video file is smaller than 100MB and may not be the main feature")
+	}
+	return videoFiles[0].path, nil
+}
+
+func uploadToPixhost(imagePath string, cfg pixhostUploadConfig) (string, error) {
+	if strings.TrimSpace(cfg.DirectHost) == "" {
+		cfg = newPixhostUploadConfig("")
+	}
+	apiURLs := []string{
+		cfg.UploadAPIURL,
+		"http://pt-nexus-proxy.sqing33.dpdns.org/" + cfg.UploadAPIURL,
+		"http://pt-nexus-proxy.1395251710.workers.dev/" + cfg.UploadAPIURL,
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		for _, apiURL := range apiURLs {
+			showURL, statusCode, err := uploadToPixhostDirectStream(imagePath, apiURL)
+			if err == nil && strings.TrimSpace(showURL) != "" {
+				return strings.TrimSpace(showURL), nil
+			}
+			if err != nil {
+				lastErr = err
+			} else if statusCode > 0 {
+				lastErr = fmt.Errorf("pixhost HTTP %d", statusCode)
+			}
+		}
+		if attempt < 3 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("pixhost upload failed")
+	}
+	return "", lastErr
+}
+
+func uploadToPixhostDirectStream(imagePath string, apiURL string) (string, int, error) {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	var writeErr error
+	go func() {
+		defer func() {
+			if writeErr == nil {
+				_ = pw.Close()
+			}
+		}()
+		defer writer.Close()
+
+		file, err := os.Open(imagePath)
+		if err != nil {
+			writeErr = err
+			_ = pw.CloseWithError(err)
+			return
+		}
+		defer file.Close()
+
+		part, err := writer.CreateFormFile("img", filepath.Base(imagePath))
+		if err != nil {
+			writeErr = err
+			_ = pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, file); err != nil {
+			writeErr = err
+			_ = pw.CloseWithError(err)
+			return
+		}
+		if err := writer.WriteField("content_type", "0"); err != nil {
+			writeErr = err
+			_ = pw.CloseWithError(err)
+			return
+		}
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, apiURL, pr)
+	if err != nil {
+		_ = pr.Close()
+		return "", 0, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	client := &http.Client{Timeout: 180 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		_ = pr.Close()
+		if writeErr != nil {
+			return "", 0, writeErr
+		}
+		return "", 0, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", resp.StatusCode, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", resp.StatusCode, fmt.Errorf("pixhost HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	parsed := map[string]any{}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return "", resp.StatusCode, fmt.Errorf("failed to parse pixhost response: %w body=%s", err, compactResponseBody(string(respBody)))
+	}
+	showURL := strings.TrimSpace(toStringAny(parsed["show_url"], ""))
+	if showURL == "" {
+		if dataMap, ok := parsed["data"].(map[string]any); ok {
+			showURL = strings.TrimSpace(toStringAny(dataMap["show_url"], ""))
+		}
+	}
+	if showURL == "" {
+		return "", resp.StatusCode, fmt.Errorf("pixhost response did not include show_url")
+	}
+	return showURL, resp.StatusCode, nil
+}
+
+func compactResponseBody(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if len([]rune(trimmed)) <= 240 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	return string(runes[:240]) + "..."
+}

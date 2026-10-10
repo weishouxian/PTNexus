@@ -1,0 +1,370 @@
+package dupe
+
+import (
+	"crypto/tls"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/platform/netproxy"
+	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
+)
+
+// 共用检索骨架的默认参数。
+const (
+	sharedRequestTimeout = 60 * time.Second
+	sharedBodyLimit      = 4 * 1024 * 1024
+)
+
+// searchPlan 描述一次站点检索如何发起。
+// 站点差异全部收敛在这里：人人站只有一种检索方式，幸运站需要「IMDb 优先 + 标题兜底」两段。
+type searchPlan struct {
+	// Label 为该段检索的中文说明，用于日志（如「IMDb ID 检索」「标题兜底检索」）。
+	Label string
+	// Search 为搜索关键字；为空表示该段检索不可用。
+	Search string
+	// SearchArea 为站点搜索范围枚举（人人站 2；幸运站 4=IMDb / 0=标题）。
+	SearchArea string
+	// SearchAreaParam 为搜索范围参数名，来自站点 YAML dupe_check.search_area_param（默认 search_area）。
+	SearchAreaParam string
+	// SearchPath 为搜索页路径，来自站点 YAML dupe_check.search_path（默认 torrents.php）。
+	SearchPath string
+	// Filters 为站点筛选参数。
+	Filters map[string]string
+}
+
+// siteFetcher 抽象「抓搜索页 + 解析候选」，供各站点实现。
+type siteFetcher func(query Query, searchURL string) ([]Candidate, error)
+
+// checkOutcome 汇总一次 dupe 校验的结论。
+type checkOutcome struct {
+	Result Result
+	Detail string
+	Err    error
+}
+
+// runSearchPlans 按计划依次执行检索并汇总判定。
+// 参数/返回：siteCode 为站点标识（用于读取检索端点配置）；query 为检索输入；plans 为检索计划；
+// fetch 负责抓取与解析；logModule 为日志模块名。返回命中结论、过程日志与错误。
+// 失败场景：任一段检索失败即整体失败（返回 error，调用方按「可重试」处理）——
+// 检索失败绝不能当成「无重复」放行，否则会漏过真正的 dupe。
+// 副作用：向目标站点发起 GET 请求。
+func runSearchPlans(siteCode string, query Query, plans []searchPlan, fetch siteFetcher, logModule string) checkOutcome {
+	detailLines := make([]string, 0, 6)
+	appendDetail := func(format string, args ...any) {
+		detailLines = append(detailLines, fmt.Sprintf(format, args...))
+	}
+
+	// 用站点配置补全搜索页路径与范围参数名（未配置时用 NexusPHP 默认值）。
+	for idx := range plans {
+		plans[idx] = applySiteSearchEndpoint(siteCode, plans[idx])
+	}
+
+	if query.MatchSize && query.TorrentSizeBytes <= 0 {
+		appendDetail("dupe 校验跳过：规则勾选了「文件大小」，但无法确定待发布种子体积")
+		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
+	}
+	trimmedBase := strings.TrimRight(strings.TrimSpace(query.BaseURL), "/")
+	if trimmedBase == "" {
+		appendDetail("dupe 校验跳过：目标站点缺少 base_url")
+		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
+	}
+
+	// 客户端比对维度：只有勾选了才逐条比对；都没勾时由站点筛选独占判定。
+	hasClientDimensions := query.MatchSize || query.MatchTeam
+
+	executed := 0
+	for _, plan := range plans {
+		search := strings.TrimSpace(plan.Search)
+		if search == "" {
+			continue
+		}
+		searchURL := buildSearchURL(trimmedBase, plan, search, plan.Filters)
+		if searchURL == "" {
+			continue
+		}
+		executed++
+		if executed > 1 {
+			appendDetail("dupe 追加%s（上一段未命中）", plan.Label)
+		} else {
+			appendDetail("dupe %s: 关键字=%s URL=%s", plan.Label, search, searchURL)
+		}
+
+		candidates, err := fetch(query, searchURL)
+		if err != nil {
+			appendDetail("dupe 检索失败: %v", err)
+			return checkOutcome{Detail: strings.Join(detailLines, "\n"), Err: err}
+		}
+
+		// ⚠️ 筛选参数一旦与站点实际不符，部分站点会返回 0 条（而不是忽略该参数）。
+		// 若就此判定「无重复」，会把「筛错了」当成「查不到」而放行真正的重复。
+		// 因此带筛选却 0 候选时，去掉筛选再查一次。
+		if len(candidates) == 0 && len(plan.Filters) > 0 {
+			retryURL := buildSearchURL(trimmedBase, plan, search, nil)
+			appendDetail("dupe 带筛选检索为 0 条，去掉筛选重试: %s", retryURL)
+			retryCandidates, retryErr := fetch(query, retryURL)
+			if retryErr != nil {
+				appendDetail("dupe 去掉筛选重试失败: %v", retryErr)
+				return checkOutcome{Detail: strings.Join(detailLines, "\n"), Err: retryErr}
+			}
+			appendDetail("dupe 去掉筛选后命中候选 %d 条", len(retryCandidates))
+			// 规则只勾了筛选维度时，去掉筛选拿到的候选无法逐条确认那些维度是否真的一致
+			// （结果行里没有媒介/分辨率/编码可供比对），因此不能据它判重复，只能留痕后换下一段检索。
+			if !hasClientDimensions {
+				appendDetail("dupe 所选维度均由站点筛选承担，无法据去掉筛选的结果判定，按未重复处理")
+				continue
+			}
+			candidates = retryCandidates
+			searchURL = retryURL
+		} else {
+			appendDetail("dupe 检索命中候选 %d 条", len(candidates))
+		}
+
+		for idx := range candidates {
+			candidate := candidates[idx]
+			if query.MatchTeam && !TeamKeysMatch(query.Title, candidate.Title) {
+				continue
+			}
+			if query.MatchSize && !SizeWithinTolerance(query.TorrentSizeBytes, candidate.SizeBytes, query.SizeToleranceBytes) {
+				continue
+			}
+			appendDetail("dupe 判定命中: %s", DescribeDupeMatch(query, candidate, query.BaseURL))
+			logx.Infof(logModule, "命中 dupe keyword=%s candidate=%s", search, candidate.Title)
+			return checkOutcome{
+				Result: Result{
+					Matched:    &candidate,
+					SearchURL:  searchURL,
+					MatchedURL: buildTorrentDetailURL(trimmedBase, candidate.TorrentID),
+				},
+				Detail: strings.Join(detailLines, "\n"),
+			}
+		}
+	}
+
+	if executed == 0 {
+		appendDetail("dupe 校验跳过：没有可用于检索的外部 ID 或标题")
+		return checkOutcome{Detail: strings.Join(detailLines, "\n")}
+	}
+	appendDetail("dupe 判定：未发现重复（%s 均一致的候选不存在）", MatchScopeLabel(query))
+	return checkOutcome{Detail: strings.Join(detailLines, "\n")}
+}
+
+// MatchScopeLabel 返回本次判定要求的维度中文说明（用于日志）。
+// 参数/返回：query 为检索输入；返回形如「文件大小、制作组」的文本。
+// 说明：未声明 Dimensions 的调用按旧口径（制作组 + 文件大小）描述，保证历史行为与日志可读性一致。
+// 副作用：无。
+func MatchScopeLabel(query Query) string {
+	dims := NormalizeDupeDimensions(query.Dimensions)
+	if len(dims) == 0 {
+		dims = NormalizeDupeDimensions([]string{DimensionSize, DimensionTeam})
+	}
+	return strings.Join(DupeDimensionLabels(dims), "、")
+}
+
+// buildSearchURL 按站点配置拼接 NexusPHP 风格搜索 URL。
+// 参数/返回：baseURL 为站点根地址；plan 提供搜索页路径与范围参数名；search 为关键字；
+// filters 为筛选参数（传 nil 表示不带筛选）。返回完整 URL；参数不足时返回空串。
+// 副作用：无。
+func buildSearchURL(baseURL string, plan searchPlan, search string, filters map[string]string) string {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	trimmedSearch := strings.TrimSpace(search)
+	if trimmedBase == "" || trimmedSearch == "" {
+		return ""
+	}
+	searchPath := strings.Trim(strings.TrimSpace(plan.SearchPath), "/")
+	if searchPath == "" {
+		searchPath = defaultDupeSearchPath
+	}
+	areaParam := strings.TrimSpace(plan.SearchAreaParam)
+	if areaParam == "" {
+		areaParam = defaultDupeSearchAreaParam
+	}
+
+	values := map[string]string{
+		"search":         trimmedSearch,
+		areaParam:        strings.TrimSpace(plan.SearchArea),
+		"search_mode":    "0",
+		"incldead":       "0",
+		"spstate":        "0",
+		"inclbookmarked": "0",
+		"mytorrent":      "0",
+	}
+	for key, value := range filters {
+		trimmedKey := strings.TrimSpace(key)
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedKey == "" || trimmedValue == "" {
+			continue
+		}
+		values[trimmedKey] = trimmedValue
+	}
+	return appendQuery(trimmedBase+"/"+searchPath, values)
+}
+
+// 各 NexusPHP 站点的默认搜索页路径与搜索范围参数名（站点 YAML 未声明时使用）。
+const (
+	defaultDupeSearchPath      = "torrents.php"
+	defaultDupeSearchAreaParam = "search_area"
+)
+
+// applySiteSearchEndpoint 用站点 YAML 的 dupe_check 配置补全检索端点信息。
+// 参数/返回：siteCode 为站点标识；plan 为待补全的检索计划；返回补全后的计划。
+// 说明：已接入站点都用 torrents.php + search_area，默认值即正确值；
+// 这里读配置是为了让 YAML 里声明的 search_path / search_area_param 真正生效，
+// 避免出现「配了却不读」的死配置。
+// 副作用：加载站点配置（有缓存）。
+func applySiteSearchEndpoint(siteCode string, plan searchPlan) searchPlan {
+	siteCfg, err := publishmapping.LoadSitePublishConfig(siteCode)
+	if err != nil || siteCfg == nil {
+		return plan
+	}
+	if path := strings.TrimSpace(siteCfg.DupeCheck.SearchPath); path != "" {
+		plan.SearchPath = path
+	}
+	if param := strings.TrimSpace(siteCfg.DupeCheck.SearchAreaParam); param != "" {
+		plan.SearchAreaParam = param
+	}
+	return plan
+}
+
+// httpGetText 发起一次搜索页 GET 请求并返回正文。
+// 参数/返回：query 为检索输入（提供 base_url/cookie/user-agent）；searchURL 为完整 URL。
+// 返回响应正文与错误。
+// 失败场景：请求失败、响应状态异常时返回错误。
+// 副作用：向目标站点发起 GET 请求。
+func httpGetText(query Query, searchURL string) (string, error) {
+	client := newDupeHTTPClient()
+	req, err := http.NewRequest(http.MethodGet, searchURL, nil)
+	if err != nil {
+		return "", fmt.Errorf("创建 dupe 检索请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", firstNonEmptyValue(query.UserAgent, defaultDupeUserAgent))
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,zh-TW;q=0.8,zh-HK;q=0.7,en-US;q=0.6,en;q=0.5")
+	req.Header.Set("Referer", strings.TrimRight(strings.TrimSpace(query.BaseURL), "/")+"/torrents.php")
+	if cookie := strings.TrimSpace(query.Cookie); cookie != "" {
+		req.Header.Set("Cookie", cookie)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("dupe 检索请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, sharedBodyLimit))
+	if err != nil {
+		return "", fmt.Errorf("读取 dupe 检索响应失败: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return "", fmt.Errorf("dupe 检索响应状态异常: %d", resp.StatusCode)
+	}
+	return string(body), nil
+}
+
+// dupeSearchFormMarkers 用于识别「站点正常处理的搜索结果页」。
+// 实测依据（hdhome）：0 结果时页面**不含**结果表（class="torrents"），
+// 但仍完整渲染搜索结果页框架（含搜索表单）；而 Cookie 失效时页面是登录页（含 name="username"、无搜索表单）。
+// 因此「有搜索表单」是区分「真的没有重复」与「登录/限流导致查不到」的关键特征。
+var dupeSearchFormMarkers = []string{
+	`name="search"`,
+	`name="search_area"`,
+	`id="searchinput"`,
+}
+
+// ensureSearchResultPage 校验响应确实是站点正常处理的搜索结果页。
+//
+// 参数/返回：body 为响应正文；resultTableMarkers 为该站结果表的结构标记（任一命中即视为有结果表）。
+// 返回错误表示「无法确认是否重复」，调用方必须走重试而不是放行。
+//
+// 判定顺序与语义：
+//  1. 登录页 → 错误（Cookie 失效，查不到不等于不重复）；
+//  2. 限流/人机验证页 → 错误（同上）；
+//  3. 含结果表标记 → 正常（有候选，交给解析）；
+//  4. 含搜索表单标记 → 正常（站点处理了搜索但 0 条结果，即「没有重复」）；
+//  5. 以上都不是 → 错误（非预期页面）。
+//
+// 副作用：无。
+func ensureSearchResultPage(body string, resultTableMarkers []string) error {
+	if looksLikeLoginPage(body, nil) {
+		return fmt.Errorf("dupe 检索被重定向到登录页，请检查目标站点 Cookie 是否有效")
+	}
+	// 站点限流常以 HTTP 200 返回提示页（无任何结果行）。这种页面必须当失败处理：
+	// 若按「无结果」返回，会把检索失败误判成「不存在重复」而放行发布。
+	if looksLikeVerificationError(body) {
+		return fmt.Errorf("dupe 检索被站点限流（HTTP 200 但返回人机验证/访问限制提示页），无法确认是否重复；请降低发种频率或稍后重试")
+	}
+	for _, marker := range resultTableMarkers {
+		if trimmed := strings.TrimSpace(marker); trimmed != "" && strings.Contains(body, trimmed) {
+			return nil
+		}
+	}
+	// 没有结果表不等于异常：站点在 0 条结果时本就不渲染结果表。
+	// 只要页面还是搜索结果页（带搜索表单），就说明请求被正常处理，结论是「没有重复」。
+	for _, marker := range dupeSearchFormMarkers {
+		if strings.Contains(body, marker) {
+			return nil
+		}
+	}
+	return fmt.Errorf("dupe 检索返回的页面既无结果列表也无搜索表单，无法确认是否重复（可能是站点返回了非预期页面）")
+}
+
+// defaultDupeUserAgent 为检索请求的默认 UA，与浏览器一致，避免被判定为异常客户端。
+const defaultDupeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0) Gecko/20100101 Firefox/157.0"
+
+// looksLikeVerificationError 判断响应是否为限流/人机验证提示页。
+func looksLikeVerificationError(body string) bool {
+	limit := len(body)
+	if limit > 8192 {
+		limit = 8192
+	}
+	sample := body[:limit]
+	for _, marker := range []string{
+		"人机验证", "验证未通过", "Access Denied", "访问过于频繁", "请求过于频繁",
+		"Just a moment", "Checking your browser", "cf_chl", "Attention Required",
+	} {
+		if strings.Contains(sample, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeLoginPage 判断响应是否为登录页。
+func looksLikeLoginPage(body string, extraMarkers []string) bool {
+	limit := len(body)
+	if limit > 8192 {
+		limit = 8192
+	}
+	sample := body[:limit]
+	lower := strings.ToLower(sample)
+	if !strings.Contains(lower, "<html") && !strings.HasPrefix(strings.TrimSpace(lower), "<!doctype") {
+		return false
+	}
+	markers := append([]string{`name="username"`, "login.php?returnto=", `action="login.php"`}, extraMarkers...)
+	for _, marker := range markers {
+		if strings.Contains(lower, strings.ToLower(marker)) {
+			return true
+		}
+	}
+	return false
+}
+
+func newDupeHTTPClient() *http.Client {
+	transport := &http.Transport{
+		DialContext:         (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ForceAttemptHTTP2:   true,
+		MaxIdleConns:        32,
+		IdleConnTimeout:     60 * time.Second,
+		TLSHandshakeTimeout: 30 * time.Second,
+		TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+	}
+	netproxy.ConfigureTransport(transport)
+	return &http.Client{
+		Timeout:   sharedRequestTimeout,
+		Transport: transport,
+	}
+}
