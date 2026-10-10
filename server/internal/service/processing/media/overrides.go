@@ -8,13 +8,15 @@ import (
 
 // ApplyMediaInfoOverrides 用媒体文本（MediaInfo/BDInfo）的标准标签覆盖标题组件的 HDR/音频字段。
 // 参数/返回：components 为标题组件；hdr/audio 为解析出的媒体信息；
-// preferMediaAudio 为 true 时（BDInfo 源）直接用第一条音轨的编码重建「音频编码」，
-// 否则（MediaInfo 源 / 默认）保持「标题编码为准、媒体只补全细节」的既有语义。
+// preferMediaAudio 为 true 时直接用媒体主音轨重建「音频编码」（编码 + 声道 + Atmos + 音轨数），
+// 否则保持「标题编码为准、媒体只补全细节」的语义。
 // 副作用：原地修改 components 的 value。
 //
-// 背景：BDInfo 的 AUDIO 段是权威来源，且段内首轨常与标题写的不一致
-// （2026-10-10 实测：标题 `...AVC TrueHD 5.1...`、BDInfo 首轨实为 LPCM 2.0），
-// 此时若仍按「拿标题编码去音轨列表匹配」的语义，就会保留标题值、核对页与实际发种字段不一致。
+// 背景：媒体段是权威来源，且段内主音轨常与标题写的不一致
+// （2026-10-10 实测：标题 `...AVC TrueHD 5.1...`、BDInfo 首轨实为 LPCM 2.0；
+// 2026-10-11 实测：MediaInfo 标题 `DDP5.1`、首轨实为捷克语配音 AAC LC 2.0）。
+// 按「拿标题编码去音轨列表匹配」的语义会保留标题值，导致核对页与实际发种字段不一致，
+// 故媒体源统一走这条分支；未识别的音轨仍由 buildMediaInfoAudioFromTracks 的选轨规则兜底。
 func ApplyMediaInfoOverrides(components []map[string]any, hdr HDRInfo, audio AudioInfo, preferMediaAudio bool) []map[string]any {
 	if len(components) == 0 {
 		return components
@@ -35,7 +37,7 @@ func ApplyMediaInfoOverrides(components []map[string]any, hdr HDRInfo, audio Aud
 	}
 
 	if preferMediaAudio && strings.TrimSpace(audio.Codec) != "" {
-		// BDInfo 源：以首轨编码为准，直接重建「音频编码」，不再用标题编码去匹配音轨。
+		// 媒体权威源：以选出的主音轨为准，直接重建「音频编码」，不再用标题编码去匹配音轨。
 		if info := buildAudioInfoValue(audio); info != "" {
 			setComponentValue(components, "音频编码", info)
 		}

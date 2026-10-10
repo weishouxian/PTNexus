@@ -52,8 +52,11 @@ func BuildTitleComponentsForStorage(
 	if isMediainfo || isBDInfo {
 		hdr := processingmedia.ExtractHDRInfoFromMediaText(trimmedMedia, isBDInfo)
 		audio := processingmedia.ExtractAudioInfoFromMediaText(trimmedMedia, isBDInfo)
-		// BDInfo 源以 AUDIO 段首轨为权威（preferMediaAudio=true），MediaInfo 源保持标题优先。
-		components = processingmedia.ApplyMediaInfoOverrides(components, hdr, audio, isBDInfo)
+		// 媒体源（MediaInfo/BDInfo）统一以媒体主音轨为权威重建「音频编码」：
+		// 编码 + 声道 + Atmos + 音轨数全部取自媒体，避免与标准值 audio_codec 两套口径打架
+		// （2026-10-11：MediaInfo 源原走「标题优先」，标题 `DDP5.1` 与媒体首轨 `AAC 2.0`
+		// 被拼成 `DDP 5.1 11Audios`，编码来自标题、音轨数来自媒体）。
+		components = processingmedia.ApplyMediaInfoOverrides(components, hdr, audio, true)
 	}
 
 	// 对齐 Python：再次根据 MediaInfo/BDInfo 类型修正所有组件值中的 Blu-ray/BluRay 写法。
