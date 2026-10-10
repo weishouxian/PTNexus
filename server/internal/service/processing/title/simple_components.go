@@ -48,7 +48,7 @@ const sourcePlatformAlternatives = `MA|Apple\s?TV\+|ViuTV|MyTVSuper|MyTVS|DNSP|i
 
 var (
 	reSourcePlatformBoundary = regexp.MustCompile("(?i)(?:^|[^\\p{L}\\p{N}_])(" + sourcePlatformAlternatives + ")(?:$|[^\\p{L}\\p{N}_])")
-	reAudioDTSHDMA           = regexp.MustCompile(`(?i)\bDTS[-\s]?HD\s*MA\b`)
+	reAudioDTSHDMA           = regexp.MustCompile(`(?i)\bDTS[:\-\s.]*HD[:\-\s.]*MA`)
 	reAudioCodecDD           = regexp.MustCompile(`(?i)\bDD\b`)
 	reReleaseGroupSplit      = regexp.MustCompile(`[@\-\s]+`)
 	reHDRTitleToken          = regexp.MustCompile(`(?i)Dolby Vision|DoVi|HDR10\+|HDRVivid|HDR10|HLG|HDR|SDR|DV|Vivid`)
@@ -203,6 +203,12 @@ func splitTitleAndTeamPythonish(title string, releaseGroup string) (string, stri
 		if ch != '-' && ch != '@' {
 			continue
 		}
+		// 例外：`DTS-HD` 家族里的 "-" 属于音频编码 token，不是制作组分隔符。
+		// 若不跳过，标题会被截断成 `...Blu-ray DTS`：音频编码退化成裸 `DTS`（再被补全成 `DTS 5.1`），
+		// 制作组变成 `HDMA5.1-52pt` 这类垃圾值（2026-10-10 实测，标题 `... Blu-ray DTS-HDMA5.1-52pt`）。
+		if ch == '-' && isAudioDTSHDSplit(trimmed, idx) {
+			continue
+		}
 		before := strings.TrimSpace(trimmed[:idx])
 		after := strings.TrimSpace(trimmed[idx+1:])
 		if before == "" || after == "" {
@@ -215,6 +221,19 @@ func splitTitleAndTeamPythonish(title string, releaseGroup string) (string, stri
 	}
 
 	return trimmed, ""
+}
+
+// isAudioDTSHDSplit 判断 text[idx] 处的 "-" 是否属于 `DTS-HD` 音频 token（"-" 左端为 DTS、右端为 HD）。
+// 参数/返回：text 为标题，idx 为待判定的 "-" 下标；属于音频 token 返回 true。
+// 失败场景：下标越界或两端不符合 `DTS` / `HD` 形态时返回 false。
+// 副作用：无。
+func isAudioDTSHDSplit(text string, idx int) bool {
+	if idx <= 0 || idx+1 >= len(text) {
+		return false
+	}
+	before := strings.ToUpper(strings.TrimSpace(text[:idx]))
+	after := strings.ToUpper(text[idx+1:])
+	return strings.HasSuffix(before, "DTS") && strings.HasPrefix(after, "HD")
 }
 
 func extractSeasonEpisodeAndRemove(title string) (string, string) {
@@ -518,9 +537,11 @@ func audioCleanupTags(audio string) []string {
 		"Dual",
 	}
 	upper := strings.ToUpper(trimmed)
+	matchedCodec := ""
 	for _, codec := range codecPatterns {
 		if strings.Contains(upper, strings.ToUpper(codec)) {
 			appendTag(codec)
+			matchedCodec = codec
 			break
 		}
 	}
@@ -531,6 +552,18 @@ func audioCleanupTags(audio string) []string {
 		if len(match) >= 2 {
 			appendTag(match[1])
 		}
+	}
+
+	// 标题里同一编码常用无空格 / 点号写法（`DTS-HDMA` / `DTS-HD.MA`），与组件值（`DTS-HD MA`）字面量不等，
+	// 仅按字面量移除会残留进「无法识别」（2026-10-10 实测，标题 `... Blu-ray DTS-HDMA5.1-52pt`）。
+	for _, variant := range audioCodecSeparatorVariants(matchedCodec) {
+		appendTag(variant)
+	}
+	// 编码与声道完全粘连（`DTS-HDMA5.1`）时，编码、声道各自的标签都缺 `\b` 边界，需整体移除。
+	if matchedCodec != "" && len(channelMatches) > 0 && len(channelMatches[0]) >= 2 {
+		channel := channelMatches[0][1]
+		appendTag(strings.ReplaceAll(matchedCodec, " ", "") + channel)                            // DTS-HDMA5.1
+		appendTag(strings.NewReplacer("-", "", " ", "", ".", "").Replace(matchedCodec) + channel) // DTSHDMA5.1
 	}
 
 	if strings.Contains(upper, "ATMOS") {
@@ -548,6 +581,21 @@ func audioCleanupTags(audio string) []string {
 	}
 
 	return out
+}
+
+// audioCodecSeparatorVariants 返回音频编码在标题里的分隔符变体（无空格 / 点号写法）。
+// 参数/返回：codec 为组件里的标准展示名（如 `DTS-HD MA`）；无已知变体时返回 nil。
+// 失败场景：codec 不在已知列表时返回 nil。
+// 副作用：无。
+func audioCodecSeparatorVariants(codec string) []string {
+	switch strings.ToUpper(strings.TrimSpace(codec)) {
+	case "DTS-HD MA":
+		// `XLL` 是 MediaInfo/部分标题对 DTS-HD MA 的写法（DTS:X 才是 `DTS XLL X`）。
+		return []string{"DTS-HDMA", "DTSHDMA", "DTS-HD.MA", "DTS.HD.MA", "DTS XLL", "DTSXLL", "DTS.XLL", "DTS-XLL"}
+	case "DTS-HD HR":
+		return []string{"DTS-HDHR", "DTSHDHR", "DTS-HD.HR", "DTS.HD.HR"}
+	}
+	return nil
 }
 
 func mediumCleanupTags(medium string) []string {
@@ -1268,34 +1316,30 @@ func extractAudioFromTitle(title string) string {
 	upper := strings.ToUpper(title)
 	audioCodec := ""
 	audioCodecPos := -1
+	// audioTokenEnd 为命中音频编码 token 的结束位置；DTS 家族由 extract.DTSAudioCodecKeySpan 给出，
+	// 用于修正「token 长度与标题实际写法不一致」导致的声道搜索起点偏移（如 `DTS-HDMA5.1`）。
+	audioTokenEnd := -1
 	switch {
 	case strings.Contains(upper, "TRUEHD"):
 		audioCodec = "TrueHD"
 		audioCodecPos = strings.Index(upper, "TRUEHD")
-	case strings.Contains(upper, "DTS:X"), strings.Contains(upper, "DTS X"):
-		audioCodec = "DTS:X"
-		if idx := strings.Index(upper, "DTS:X"); idx >= 0 {
-			audioCodecPos = idx
-		} else {
-			audioCodecPos = strings.Index(upper, "DTS X")
-		}
-	case strings.Contains(upper, "DTS-HD MA"), strings.Contains(upper, "DTS HD MA"):
-		audioCodec = "DTS-HD MA"
-		if idx := strings.Index(upper, "DTS-HD MA"); idx >= 0 {
-			audioCodecPos = idx
-		} else {
-			audioCodecPos = strings.Index(upper, "DTS HD MA")
-		}
-	case strings.Contains(upper, "DTS-HD HR"), strings.Contains(upper, "DTS HD HR"):
-		audioCodec = "DTS-HD HR"
-		if idx := strings.Index(upper, "DTS-HD HR"); idx >= 0 {
-			audioCodecPos = idx
-		} else {
-			audioCodecPos = strings.Index(upper, "DTS HD HR")
-		}
 	case strings.Contains(upper, "DTS"):
-		audioCodec = "DTS"
-		audioCodecPos = strings.Index(upper, "DTS")
+		// DTS 家族统一走 extract.DTSAudioCodecKeySpan（与标准值/抓取链路同源），避免第二套口径：
+		// 兼容 `DTS-HDMA` / `DTSHDMA` / `DTS-HD.MA` 等无空格写法，并防止把 `DTS XLL`
+		//（MediaInfo 对 DTS-HD MA 的 Format 写法）误判成 DTS:X。
+		key, start, end := parser.DTSAudioCodecKeySpan(title)
+		switch key {
+		case "audio.dtsx":
+			audioCodec = "DTS:X"
+		case "audio.dts_hd_hr":
+			audioCodec = "DTS-HD HR"
+		case "audio.dts_hd_ma":
+			audioCodec = "DTS-HD MA"
+		default:
+			audioCodec = "DTS"
+		}
+		audioCodecPos = start
+		audioTokenEnd = end
 	case strings.Contains(upper, "E-AC-3"), strings.Contains(upper, "DDP"), strings.Contains(upper, "DD+"), strings.Contains(upper, "DD＋"), strings.Contains(upper, "DD﹢"):
 		audioCodec = "DDP"
 		// 查找 DDP 或 DD+ 的位置
@@ -1371,7 +1415,10 @@ func extractAudioFromTitle(title string) string {
 	channelRe := regexp.MustCompile(`(?i)\b(\d{1,2}\.\d(?:\.\d+)?)\b`)
 	// 在音频编码之后搜索声道信息，避免误匹配标题中的版本号（如 "M3GAN 2.0"）
 	searchStart := 0
-	if audioCodecPos >= 0 {
+	if audioTokenEnd >= 0 {
+		// DTS 家族：用精确命中区间，兼容 `DTS-HDMA5.1` 这类 token 长度与实际写法不一致的情况。
+		searchStart = audioTokenEnd
+	} else if audioCodecPos >= 0 {
 		searchStart = audioCodecPos + len(audioCodec)
 	}
 	if searchStart < len(title) {

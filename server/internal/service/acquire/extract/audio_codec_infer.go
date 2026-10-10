@@ -61,7 +61,8 @@ func inferAudioCodecFromText(upperText string) string {
 }
 
 // InferAudioCodecKey 按标准值口径推断音频编码标准键（audio.*）。
-// 优先级：MediaInfo 的 Audio 段 Format（多轨取规格最高）> 标题 token > 「标题+媒体文本」合并文本 token。
+// 优先级：MediaInfo/BDInfo 的 Audio 段（取**第一条**音轨，与 mediainfo_codec.go:inferAudioCodecFromMediainfo 一致）
+// > 标题 token > 「标题+媒体文本」合并文本 token。
 // 参数/返回：title 为种子标题；mediainfo 为 MediaInfo/BDInfo 原文；全部无法识别时返回空串。
 // 副作用：无。
 //

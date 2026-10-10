@@ -52,7 +52,8 @@ func BuildTitleComponentsForStorage(
 	if isMediainfo || isBDInfo {
 		hdr := processingmedia.ExtractHDRInfoFromMediaText(trimmedMedia, isBDInfo)
 		audio := processingmedia.ExtractAudioInfoFromMediaText(trimmedMedia, isBDInfo)
-		components = processingmedia.ApplyMediaInfoOverrides(components, hdr, audio)
+		// BDInfo 源以 AUDIO 段首轨为权威（preferMediaAudio=true），MediaInfo 源保持标题优先。
+		components = processingmedia.ApplyMediaInfoOverrides(components, hdr, audio, isBDInfo)
 	}
 
 	// 对齐 Python：再次根据 MediaInfo/BDInfo 类型修正所有组件值中的 Blu-ray/BluRay 写法。
