@@ -36,6 +36,22 @@
       </div>
     </div>
 
+    <!-- 发布成功但自动加入下载器失败：一键重新添加（只加种子，不会再次发种） -->
+    <div class="re-add-toolbar" v-if="failedDownloaderSites.length > 0">
+      <el-icon class="re-add-toolbar-icon"><Warning /></el-icon>
+      <span class="re-add-toolbar-text">
+        {{ failedDownloaderSites.length }} 个站点已发布成功，但未添加到下载器
+      </span>
+      <el-button
+        type="primary"
+        size="small"
+        :loading="isReAddingFailedSites"
+        @click="reAddFailedSitesToDownloader"
+      >
+        一键添加到下载器
+      </el-button>
+    </div>
+
     <!-- 分波发布（设置了发种间隔）时的整体进度汇总 -->
     <div class="publish-wave-summary" v-if="publishWaveSummary">
       <el-icon class="wave-summary-icon"><InfoFilled /></el-icon>
@@ -165,6 +181,17 @@
                     : '添加失败'
                 }}
               </span>
+              <el-button
+                v-if="failedDownloaderSites.includes(result.siteName)"
+                link
+                type="primary"
+                size="small"
+                class="re-add-inline-button"
+                :loading="reAddingSites.includes(result.siteName)"
+                @click="reAddSiteToDownloader(result.siteName)"
+              >
+                重新添加
+              </el-button>
             </div>
 
             <!-- 操作按钮 -->
@@ -226,6 +253,40 @@ const {
   getValidUrlsCount,
   forceRepublishSite,
   forceRepublishingSite,
+  reAddSiteToDownloader,
+  reAddFailedSitesToDownloader,
+  reAddingSites,
+  isReAddingFailedSites,
+  failedDownloaderSites,
 } = useCrossSeedPanelContext()
 </script>
+
+<style scoped>
+.re-add-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid #f5dab1;
+  border-radius: 6px;
+  background-color: #fdf6ec;
+  color: #b88230;
+  font-size: 13px;
+}
+
+.re-add-toolbar-icon {
+  font-size: 16px;
+}
+
+.re-add-toolbar-text {
+  flex: 1;
+}
+
+.re-add-inline-button {
+  margin-left: 6px;
+  padding: 0;
+  height: auto;
+}
+</style>
 

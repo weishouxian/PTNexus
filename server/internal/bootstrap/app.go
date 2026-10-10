@@ -361,6 +361,7 @@ func registerRoutes(
 
 		api.GET("/publish_logs", migrateHandler.PublishLogs)
 		api.POST("/publish_logs/delete", migrateHandler.BatchDeletePublishLogs)
+		api.POST("/publish_logs/re_add_downloader", migrateHandler.ReAddPublishLogToDownloader)
 		api.GET("/publish_logs/by_queue_task/:id", migrateHandler.GetPublishLogByQueueTask)
 	}
 

@@ -79,6 +79,43 @@ func (h *Handler) BatchDeletePublishLogs(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+// ReAddPublishLogToDownloader 对「已发布成功但添加到下载器失败」的记录重试添加。
+// 参数/返回：请求体支持两种定位方式——{"id":1} 或 {"task_id":"...","target_site":"..."}，
+// 另可带 downloader_id / save_path / url / publishURL；返回最新添加结果与状态码。
+// 失败场景：请求体解析失败或定位参数缺失返回 400；服务层错误返回 4xx/5xx。
+// 副作用：向下载器添加任务，命中日志行时回写其 auto_add_result。
+func (h *Handler) ReAddPublishLogToDownloader(c *gin.Context) {
+	var body struct {
+		ID           uint64 `json:"id"`
+		TaskID       string `json:"task_id"`
+		TargetSite   string `json:"target_site"`
+		DownloaderID string `json:"downloader_id"`
+		SavePath     string `json:"save_path"`
+		URL          string `json:"url"`
+		PublishURL   string `json:"publishURL"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil ||
+		(body.ID == 0 && (strings.TrimSpace(body.TaskID) == "" || strings.TrimSpace(body.TargetSite) == "")) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请提供日志 ID 或 task_id + target_site"})
+		return
+	}
+
+	payload := map[string]any{
+		"id":            body.ID,
+		"task_id":       strings.TrimSpace(body.TaskID),
+		"target_site":   strings.TrimSpace(body.TargetSite),
+		"downloader_id": strings.TrimSpace(body.DownloaderID),
+		"save_path":     strings.TrimSpace(body.SavePath),
+		"url":           strings.TrimSpace(body.URL),
+		"publishURL":    strings.TrimSpace(body.PublishURL),
+	}
+	result, status := h.service.ReAddPublishLogToDownloader(payload)
+	if status == 0 {
+		status = http.StatusOK
+	}
+	c.JSON(status, result)
+}
+
 func parsePositiveInt(raw string, fallback int) int {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {

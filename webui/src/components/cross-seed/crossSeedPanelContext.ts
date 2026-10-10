@@ -267,6 +267,16 @@ export interface CrossSeedPanelContext {
   forceRepublishSite: (siteName: string) => Promise<void>
   /** 正在强制发布的站点名，用于按钮 loading。 */
   forceRepublishingSite: Ref<string>
+  /** 发布成功但自动加入下载器失败的站点：单站一键重新添加（只加种子，不会再次发种）。 */
+  reAddSiteToDownloader: (siteName: string, options?: { silent?: boolean }) => Promise<boolean>
+  /** 一键把全部「加种失败」的站点逐个重新添加。 */
+  reAddFailedSitesToDownloader: () => Promise<void>
+  /** 正在重新添加的站点名，用于卡片按钮 loading。 */
+  reAddingSites: Ref<string[]>
+  /** 批量重新添加进行中。 */
+  isReAddingFailedSites: Ref<boolean>
+  /** 当前可一键重试的失败站点名列表。 */
+  failedDownloaderSites: ComputedRef<string[]>
 
   // Footer
   showCompleteButton: ComputedRef<boolean>
