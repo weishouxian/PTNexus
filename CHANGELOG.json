@@ -6,7 +6,7 @@
     },
     {
       "name": "gitee",
-      "url": "https://gitee.com/sqing33/PTNexus/releases/download/{version}/{filename}"
+      "url": "https://gitee.com/wsx181/PTNexus/releases/download/{version}/{filename}"
     },
     {
       "name": "github-proxy",
@@ -18,6 +18,22 @@
     }
   ],
   "history": [
+    {
+      "version": "v4.0.3",
+      "date": "2026.10.10",
+      "changes": [
+        "新增：接入馒头、CHD、家园、爱玲、我的PT、柠檬不甜、修道院、HDvideo、dstudio、novahd、TTG、野马等源站与目标站",
+        "新增：自动发种支持定时发种与一种多站发布，进度页可对单站任务立即发布或取消",
+        "新增：dupe 查重按 6 类媒介归组匹配，支持自定义尺寸容差与规则",
+        "新增：碟结构媒介纠偏与 DIY 标签同步",
+        "新增：发种日志支持「重新添加到下载器」",
+        "新增：截图数量可配置，非 HDR 种子自动重新获取截图",
+        "优化：首页加载速度与 Mediainfo 信息展示",
+        "修复：音频编码 DTS XLL 被误判为 DTS:X，补齐 BDInfo 音轨解析",
+        "修复：发布进度时间显示为 UTC 等时区相关问题",
+        "修复：远程下载器路径映射无效"
+      ]
+    },
     {
       "version": "v4.0.2",
       "date": "2026.03.21",

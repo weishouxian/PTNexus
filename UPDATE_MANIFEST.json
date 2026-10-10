@@ -11,7 +11,7 @@
         "size": 11163781,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/sqing33/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-amd64.tar.gz",
+          "https://gitee.com/wsx181/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-amd64.tar.gz",
           "https://gh.ddlc.top/https://github.com/weishouxian/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-amd64.tar.gz",
           "https://ghproxy.net/https://github.com/weishouxian/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-amd64.tar.gz"
         ]
@@ -24,7 +24,7 @@
         "size": 10104449,
         "format": "tar.gz",
         "mirror_urls": [
-          "https://gitee.com/sqing33/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-arm64.tar.gz",
+          "https://gitee.com/wsx181/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-arm64.tar.gz",
           "https://gh.ddlc.top/https://github.com/weishouxian/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-arm64.tar.gz",
           "https://ghproxy.net/https://github.com/weishouxian/PTNexus/releases/download/v4.0.2/ptnexus-runtime-linux-arm64.tar.gz"
         ]
