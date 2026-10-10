@@ -43,6 +43,7 @@
 - 查 `ptn-publish-site-setup/references/known_sites.md`。
 - hdhome 六维度独立 select、无地区字段；我堡 Remux 硬禁、无粤语标签；青蛙标题特化 + HDR 统一写「HDR」（正则别用 `\b`）；北洋园无六维度、无 `name`、简介只有 `descr`、动漫整类拒发。
 - **m-team**：`team` 一律不提交（站点校验组成员）；`source` 仅电影大类；「Passkey 栏」放**存取令牌（36 位 UUID）**，32 位 Passkey/Cookie 会被 `mteamapi.ExtractToken` 本地拒绝；`labelsNew` 本地按 mediainfo 补 `4k`/`8k`/`hdr` 并丢弃与「菁彩HDR」冲突的 HDR10/HDR10+；`api.m-team.cc` 与 `api2` 同一后端（504 直接重试）。
+- **52pt**：标准 NexusPHP 但**无 `source_sel`/`processing_sel`**（不区分产地）；标签是裸名 `tags[]` 且 **value 是中文词**（走 `mappings.tag`，**不能**用 `checkbox_tags`）；`url` 字段即「IMDb链接」；`medium_sel` 把「分辨率 + 原盘有无中文」编码进选项、站内两个 52PT 小组同属 `team.pt52` ⇒ 必须靠 `sites/pt52.go` 适配器二次判定（详见 details 文件）。
 
 ## 媒体参数（要点）
 - 标准值真源 `acquire/extract/review_extract.go:InferStandardizedValues`；产地只认简介「◎产　　地」、年份只认「◎年　　代」。

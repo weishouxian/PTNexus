@@ -50,6 +50,19 @@
 - **彩虹岛** 0/1/3/4 无豆瓣、平铺名。
 - 后四站体积只有展示文本、按 1024³ 换算。除家园外**维度映射均为固定值**，五维可直接进检索。
 
+### 52pt 站点差异速查（2026-10-10）
+
+- 定位：`52pt.site`，标准 NexusPHP（`takeupload.php`，file 字段 `file`），`migration=3`（源+目标）。**免 yaml 做不到**：`medium_sel` 的取值把「分辨率」与「原盘有无中文」编码进去了。
+- `form_fields`：`type`/`medium_sel`/`codec_sel`/`audiocodec_sel`/`standard_sel`/`team_sel`/`name`/`small_descr`/`descr`/`url`(IMDb 链接，配 `imdb_url`)/`tags[]`。**没有** `source_sel`/`processing_sel`/`pt_gen`/`dburl`/`technical_info`。
+- `tags[]` 是**裸名数组**，value 就是中文词：`原盘/DIY/Remux/国语/粤语/简中/繁中/简繁/双语字幕/杜比视界/HDR/3D/官组`。⚠️ 别被「`fields.tags` 为 null + 一排 checkbox」误导去用 `checkbox_tags` —— 那些 checkbox 的 `name` **全是 `tags[]`**（`checkbox_tags` 要求各自独立命名 + value=yes）；数组形态靠 `resolveTagFieldBase` 取 `FormFields["tags[]"]` 削掉 `[]` 得到 `tags`，写出 `tags[0..n]`，PHP 一样解析成数组。`tag.官组` 被 `global_mappings.excluded_tags` 全局丢弃 → 本站「官组」选项拿不到值。
+- `medium_sel` 选项：`2`=Blu-ray DIY `11`=Blu-ray原盘无中文 `1`=4K UHD无中文 `4`=Blu-ray Remux `5`=4K UHD Remux `14`=2K原盘中字（国粤语）`15`=4K原盘中字（国粤语）`3`=HDTV `12`=4K UHD DIY `7`=Encode(MKV/MP4) `6`=DVD/DVDR `8`=CD/HDCD `10`=WEB-DL `9`=Others `13`=8K UHD。
+  - **yaml 只给保守落点**（`medium.remux→4`、`medium.bluray→11`、`medium.uhd_bluray→1`），`medium.remux` 的 4K/1080p 与 原盘 11/14、1/15 的区分由 `sites/pt52.go:refinePT52Medium` 按 `standard_sel`（5=4K、7=8K）与标签（`DIY` / `简中|繁中|简繁|国语|粤语`）二次判定。
+- `team_sel`：`6`=52PT DIY/原盘小组、`7`=52PT REMUX/重编码小组（两者标准值同为 `team.pt52`，靠媒介判定 → `refinePT52Team`）；`4`=COASTER 在 `global_mappings` 无对应标准制作组，**不映射**。
+- MediaInfo 内嵌：站点无 mediainfo 输入框 ⇒ `52pt` 已进 `uploader/helpers.go:shouldInlineMediainfo` 白名单，用 `[quote]` 包住并置于「正文之后、截图之前」；适配器再 `delete(technical_info)`。
+- IMDb：`url` 字段要**完整链接**，而 `workflow/publish_target.go:resolvePublishExternalLinks` 只聚合 `imdb_link/imdbLink/imdb`、**不读 `imdb_id`** ⇒ 适配器 `resolvePT52IMDbURL` 自己兜底（`tt` 前缀或裸数字 → `https://www.imdb.com/title/tt<digits>/`）。
+- 源站侧：`source_parsers.source_params` 用详情的实际标签（类型/媒介/**编码**/音频编码/分辨率/制作组 —— 注意视频编码的标签是「编码」不是「视频编码」）；`standard_keys` 覆盖详情「基本信息」里的原文（`Movies/电影`、`Blu-ray Remux`、`H.264/AVC`、`TRUE.HD Atmos`、`4K/2160P`、`52PT REMUX/重编码小组` 等）。
+- 未做：`dupe_check` 未声明（需先探 `torrents.php` 检索参数）。
+
 ### 添加下载器失败的重试入口（2026-10-10）
 
 - 失败信息存 `publish_logs.auto_add_result`（JSON：success/message/downloader_id/downloader_name），**发布状态仍是 success**（发布与添加下载器分开判定）。发种日志页「下载器」列读的就是它。
