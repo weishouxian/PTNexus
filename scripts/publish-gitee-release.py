@@ -15,24 +15,6 @@ DEFAULT_MAX_BYTES = 100 * 1024 * 1024
 MANIFEST_NAME = "UPDATE_MANIFEST.json"
 
 
-def add_query(url: str, **params: str) -> str:
-    parsed = urllib.parse.urlsplit(url)
-    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
-    for key, value in params.items():
-        if value == "":
-            continue
-        query.append((key, value))
-    return urllib.parse.urlunsplit(
-        (
-            parsed.scheme,
-            parsed.netloc,
-            parsed.path,
-            urllib.parse.urlencode(query),
-            parsed.fragment,
-        )
-    )
-
-
 def encode_form_payload(payload: dict[str, Any]) -> bytes:
     form_items: list[tuple[str, str]] = []
     for key, value in payload.items():
@@ -52,11 +34,14 @@ def api_request(
     *,
     form_encoded: bool = False,
 ) -> Any:
-    request_url = add_query(url, access_token=token)
+    request_url = url
     data = None
+    # Gitee 只对 GET 接受 query 里的 access_token；POST/PATCH/DELETE 必须走
+    # Authorization 头，否则一律返回 401 / code 40001「登录失效」。
     headers = {
         "Accept": "application/json",
         "User-Agent": "ptnexus-release-sync",
+        "Authorization": f"token {token}",
     }
     if payload is not None:
         if form_encoded:
@@ -83,10 +68,13 @@ def api_request(
 
 def get_release_by_tag(owner: str, repo: str, tag: str, token: str) -> dict[str, Any] | None:
     url = f"{API_BASE}/repos/{urllib.parse.quote(owner)}/{urllib.parse.quote(repo)}/releases/tags/{urllib.parse.quote(tag)}"
-    request_url = add_query(url, access_token=token)
     request = urllib.request.Request(
-        request_url,
-        headers={"Accept": "application/json", "User-Agent": "ptnexus-release-sync"},
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "ptnexus-release-sync",
+            "Authorization": f"token {token}",
+        },
         method="GET",
     )
     try:
@@ -173,6 +161,8 @@ def upload_release_asset(owner: str, repo: str, release_id: int, token: str, fil
         "-fsS",
         "-X",
         "POST",
+        "-H",
+        f"Authorization: token {token}",
         "-H",
         "Content-Type: multipart/form-data",
         "-F",
