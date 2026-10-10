@@ -99,7 +99,11 @@ func inferAudioCodecFromMediainfo(mediainfo string) string {
 func parseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
 	sections := allMediaInfoAudioSections(mediainfo)
 	if len(sections) == 0 {
-		return nil
+		// MediaInfo 的 `Audio` 段切不到时回退 BDInfo 音轨解析：
+		// BDInfo 的段头是 `AUDIO:`（带冒号），reMediaInfoSectionHeader 不匹配，
+		// 不回退会让 BDInfo 源音轨恒为 0 条 → 音频编码只能靠标题 contains 兜底
+		// （2026-10-10 实测：BDInfo 第一条 LPCM 2.0、第二条 TrueHD 5.1 时被判成 TrueHD）。
+		return parseBDInfoAudioTracks(mediainfo)
 	}
 	tracks := make([]AudioTrack, 0, len(sections))
 	for i, section := range sections {
@@ -122,6 +126,113 @@ func parseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
 		})
 	}
 	return tracks
+}
+
+var (
+	// reBDInfoAudioHeader 匹配 BDInfo 的音轨段头：`AUDIO:`（允许前导 `*` 与空白）。
+	reBDInfoAudioHeader = regexp.MustCompile(`(?i)^\s*\*?\s*AUDIO\s*:\s*$`)
+	// reBDInfoAudioSectionStop 匹配 BDInfo 音轨段之后的段头，用于终止音轨扫描。
+	reBDInfoAudioSectionStop = regexp.MustCompile(`(?i)^(\*?\s*)?(SUBTITLES|FILES|VIDEO|CHAPTERS|DISC INFO|PLAYLIST REPORT|QUICK SUMMARY|DISC SIZE|BDINFO)\s*:?`)
+	// reBDInfoAudioTableLine 匹配 BDInfo 音轨表格的表头行与分隔行（`Codec Language Bitrate Description` / `-----`）。
+	reBDInfoAudioTableLine = regexp.MustCompile(`(?i)^(\*+\s*)?(CODEC|LANGUAGE|BITRATE|DESCRIPTION)\b` + `|^-+`)
+	// reBDInfoAudioCodecCell 取 BDInfo 音轨行的首列（编码名），到 2 个以上连续空格为止。
+	reBDInfoAudioCodecCell = regexp.MustCompile(`^(.+?)\s{2,}`)
+	// reBDInfoAudioChannels 取 BDInfo 描述列里的声道布局（如 `5.1 /`、`2.0 /`、`7.1.4 /`），要求后跟 `/` 以免误命中 `2.3 Mbps`。
+	reBDInfoAudioChannels = regexp.MustCompile(`\b([1-8]\.\d(?:\.\d)?)\s*/`)
+	// reBDInfoAudioBitRate 取 BDInfo 音轨行的码率（kbps）。
+	reBDInfoAudioBitRate = regexp.MustCompile(`(?i)\b(\d{2,6})\s*kbps\b`)
+)
+
+// parseBDInfoAudioTracks 解析 BDInfo 文本 AUDIO 段的音轨行，返回按出现顺序排列的结构化音轨。
+// 参数/返回：bdinfo 为 BDInfo 原文；未定位到 `AUDIO:` 段或段内无可用音轨时返回 nil。
+// 失败场景：文本为空、无 `AUDIO:` 段、或行首编码既非空也无法识别为标准音频键（表头/说明行会被跳过）。
+// 副作用：无。
+//
+// 背景：BDInfo 的段头是 `AUDIO:`（带冒号），与 MediaInfo 的 `Audio` 段头不同，
+// allMediaInfoAudioSections 切不出 BDInfo 音轨，故需要独立的行扫描实现。
+// 编码名取行首列（到多空格为止），避免 Description 列里的 `AC3 Embedded` 等噪声干扰判定。
+func parseBDInfoAudioTracks(bdinfo string) []AudioTrack {
+	normalized := strings.ReplaceAll(bdinfo, "\r\n", "\n")
+	normalized = strings.ReplaceAll(normalized, "\r", "\n")
+	lines := strings.Split(normalized, "\n")
+
+	start := -1
+	for i, line := range lines {
+		if reBDInfoAudioHeader.MatchString(line) {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return nil
+	}
+
+	tracks := make([]AudioTrack, 0, 4)
+	for i := start + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" {
+			continue
+		}
+		if reBDInfoAudioSectionStop.MatchString(trimmed) {
+			break
+		}
+		if reBDInfoAudioTableLine.MatchString(trimmed) {
+			continue
+		}
+
+		codecText := trimmed
+		if m := reBDInfoAudioCodecCell.FindStringSubmatch(trimmed); len(m) == 2 {
+			codecText = strings.TrimSpace(m[1])
+		}
+		codecKey := audioCodecKeyFromFormatText(codecText)
+		if codecKey == "" {
+			continue
+		}
+
+		tracks = append(tracks, AudioTrack{
+			CodecKey:    codecKey,
+			Format:      strings.TrimSpace(codecText),
+			BitRateKbps: bdInfoAudioBitRateKbps(trimmed),
+			Channels:    bdInfoAudioChannels(trimmed),
+			Default:     false,
+			Index:       len(tracks) + 1,
+		})
+	}
+	return tracks
+}
+
+// bdInfoAudioChannels 把 BDInfo 描述列里的声道布局（如 `5.1` / `2.0` / `7.1.4`）换算为声道总数。
+// 参数/返回：line 为音轨整行；未匹配到布局时返回 0。
+// 副作用：无。
+func bdInfoAudioChannels(line string) int {
+	m := reBDInfoAudioChannels.FindStringSubmatch(line)
+	if len(m) != 2 {
+		return 0
+	}
+	total := 0
+	for _, part := range strings.Split(m[1], ".") {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return 0
+		}
+		total += n
+	}
+	return total
+}
+
+// bdInfoAudioBitRateKbps 解析 BDInfo 音轨行里的码率（`2304 kbps`），返回 kbps 数值。
+// 参数/返回：line 为音轨整行；未匹配到码率时返回 0。
+// 副作用：无。
+func bdInfoAudioBitRateKbps(line string) float64 {
+	m := reBDInfoAudioBitRate.FindStringSubmatch(line)
+	if len(m) != 2 {
+		return 0
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(m[1]), 64)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 // mediaInfoBitRateKbps 解析段落里的 "Bit rate : xxx kb/s"，归一为 kbps 数值。
@@ -369,7 +480,9 @@ func audioCodecKeyFromFormatText(format string) string {
 			return "audio.ddp_atmos"
 		}
 		return "audio.ddp"
-	case strings.Contains(upper, "AC-3") || strings.Contains(upper, "AC3"):
+	case strings.Contains(upper, "AC-3") || strings.Contains(upper, "AC3") || strings.Contains(upper, "DOLBY DIGITAL"):
+		// BDInfo 把 AC-3 写作 `Dolby Digital Audio`，MediaInfo 写作 `AC-3`，两者都要命中。
+		// `Dolby Digital Plus`（E-AC-3）已由上面的 DDP 分支拦截，不会落到这里。
 		return "audio.ac3"
 	case strings.Contains(upper, "FLAC"):
 		return "audio.flac"
@@ -415,17 +528,41 @@ var (
 // 失败场景：文本为空或不含 `DTS` 时返回空串。
 // 副作用：无。
 func dtsCodecKeyFromText(upper string) string {
+	key, _, _ := DTSAudioCodecKeySpan(upper)
+	return key
+}
+
+// DTSAudioCodecKeySpan 返回文本中 DTS 家族的标准编码键与命中区间，供展示层（标题组件「音频编码」）复用同一套判定口径。
+// 参数/返回：text 为标题/技术文本（大小写不限）；返回标准键（audio.dtsx / audio.dts_hd_hr / audio.dts_hd_ma / audio.dts）
+// 与命中区间 [start,end)（相对 text 的字节下标）；非 DTS 家族返回 ""、-1、-1。
+// 失败场景：text 不含 `DTS` 时返回 ""、-1、-1。
+// 副作用：无。
+//
+// 背景：判定顺序与 dtsCodecKeyFromText 完全一致（后者已改为调用本函数），避免出现第二套 DTS 判定口径。
+// 返回区间是为了让调用方能从命中 token 之后继续搜索声道（如标题 `...DTS-HDMA5.1-52pt`：
+// 命中 `DTS-HDMA` 后从 `5.1` 处取声道，而不是按固定长度偏移而错过）。
+func DTSAudioCodecKeySpan(text string) (string, int, int) {
+	upper := strings.ToUpper(text)
 	if !strings.Contains(upper, "DTS") {
-		return ""
+		return "", -1, -1
 	}
-	switch {
-	case reDTSXMarker.MatchString(upper):
-		return "audio.dtsx"
-	case reDTSHDHRMarker.MatchString(upper) || strings.Contains(upper, "HIGH RESOLUTION"):
-		return "audio.dts_hd_hr"
-	case reDTSHDMAMarker.MatchString(upper) || strings.Contains(upper, "MASTER AUDIO"):
-		return "audio.dts_hd_ma"
-	default:
-		return "audio.dts"
+	if loc := reDTSXMarker.FindStringIndex(upper); loc != nil {
+		return "audio.dtsx", loc[0], loc[1]
 	}
+	if loc := reDTSHDHRMarker.FindStringIndex(upper); loc != nil {
+		return "audio.dts_hd_hr", loc[0], loc[1]
+	}
+	if loc := reDTSHDMAMarker.FindStringIndex(upper); loc != nil {
+		return "audio.dts_hd_ma", loc[0], loc[1]
+	}
+	// 纯文本兜底（MediaInfo 的 Commercial name 写法），此时只有 `DTS` 这一处可定位。
+	dtsStart := strings.Index(upper, "DTS")
+	dtsEnd := dtsStart + len("DTS")
+	if strings.Contains(upper, "HIGH RESOLUTION") {
+		return "audio.dts_hd_hr", dtsStart, dtsEnd
+	}
+	if strings.Contains(upper, "MASTER AUDIO") {
+		return "audio.dts_hd_ma", dtsStart, dtsEnd
+	}
+	return "audio.dts", dtsStart, dtsEnd
 }

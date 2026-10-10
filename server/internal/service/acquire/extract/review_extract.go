@@ -2641,7 +2641,7 @@ func inferStandardizedValues(title, mediainfo, body string) map[string]string {
 	}
 
 	// 音频编码统一走 InferAudioCodecKey（与标签链路同源）：
-	// MediaInfo 的 Audio 段 Format（多轨取规格最高）> 标题 token > 「标题+媒体文本」合并文本 token，
+	// MediaInfo/BDInfo 的 Audio 段（取第一条音轨）> 标题 token > 「标题+媒体文本」合并文本 token，
 	// 并在同族编码内按 Atmos 线索升级（标题只写 TrueHD7.1、Atmos 落在 BDInfo/MediaInfo 音轨描述时不再漏判）。
 	if codecKey := InferAudioCodecKey(title, mediainfo); codecKey != "" {
 		values["audio_codec"] = codecKey
