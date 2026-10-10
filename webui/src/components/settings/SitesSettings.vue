@@ -691,6 +691,10 @@
               规则已按媒介区分，因此「<strong>媒介</strong>」恒为判定维度（已锁定、不可取消）；
               勾选「分辨率 / 视频编码 / 音频编码」会作为站点检索条件，勾选「文件大小 / 制作组」由本系统逐条比对。
             </div>
+            <div class="form-tip">
+              媒介统一归为 6 类（UHD Blu-ray / Blu-ray / HDTV / Encode / Remux / WEB），
+              站点的细分媒介（如 UHD DIY、UHD Remux、1080p 压制）会自动落到对应类别，无需逐个添加。
+            </div>
             <el-table
               :data="dupeRuleRows"
               size="small"
@@ -733,14 +737,12 @@
                 :loading="isDupeOptionsLoading"
                 class="dupe-medium-select"
               >
-                <el-option-group v-for="group in dupeMediumGroups" :key="group.value" :label="group.label">
-                  <el-option
-                    v-for="item in group.items"
-                    :key="item.medium"
-                    :label="item.label"
-                    :value="item.medium"
-                  />
-                </el-option-group>
+                <el-option
+                  v-for="item in dupeOptions?.mediums || []"
+                  :key="item.medium"
+                  :label="item.label"
+                  :value="item.medium"
+                />
               </el-select>
               <el-button size="small" type="primary" :disabled="!pendingDupeMedium" @click="addDupeRule">
                 添加媒介
@@ -757,7 +759,7 @@
               ⚠️ 该站点没有声明「{{ unsupportedRuleDimensions.join('、') }}」的检索参数，这几项勾选后不会生效（已置灰）。
             </div>
             <div v-else-if="dupeOptions && !dupeOptions.mediums.length" class="form-tip dupe-rule-warning">
-              ⚠️ 没读到该站点的媒介清单，无法在此添加规则（请检查站点 YAML 的 mappings.medium）。
+              ⚠️ 没读到该站点可用的媒介分类，无法在此添加规则（请检查站点 YAML 的 mappings.medium）。
             </div>
             <div class="dupe-fallback">
               <div class="dupe-fallback-head">
@@ -1094,21 +1096,6 @@ const dupeMediumLabel = (medium: string): string => {
   const found = dupeOptions.value?.mediums.find((item) => item.medium === medium)
   return found?.label || medium
 }
-
-// 按站点取值分组：同义媒介（如 UHD Blu-ray 与 UHD DIY 共用同一上传取值）相邻展示，便于批量添加。
-const dupeMediumGroups = computed(() => {
-  const groups = new Map<string, { value: string; label: string; items: DupeMediumOption[] }>()
-  for (const item of dupeOptions.value?.mediums || []) {
-    const key = item.site_value || item.medium
-    const existing = groups.get(key)
-    if (existing) {
-      existing.items.push(item)
-      continue
-    }
-    groups.set(key, { value: key, label: item.label, items: [item] })
-  }
-  return Array.from(groups.values())
-})
 
 // 站点不支持（界面上置灰）的筛选维度中文名，用于在规则区给出显式提示。
 const unsupportedRuleDimensions = computed(() =>

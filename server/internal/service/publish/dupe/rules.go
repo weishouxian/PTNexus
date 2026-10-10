@@ -155,19 +155,30 @@ func ClientDimensions(dims []string) (matchSize bool, matchTeam bool) {
 // SiteSettings.MatchRule 取指定媒介**实际生效**的判定维度。
 // 参数/返回：medium 为标准媒介键；返回维度集合、命中的规则键与是否命中。
 //
-// 匹配顺序：先精确命中该媒介；没有再退化到兜底规则（DupeFallbackMedium）。
+// 匹配顺序：
+//  1. 精确命中该媒介 —— 兼容只配了细粒度键的既有配置（如直接写 medium.uhd_remux）；
+//  2. 按媒介组命中 —— 规则表只列 6 类（见 medium_groups.go），而种子可能带更细的标准键
+//     （medium.uhd_remux / medium.encode_1080p 等），这里统一归到组键再查一次；
+//  3. 退化到兜底规则（DupeFallbackMedium）—— 未单独配置的媒介都由它接手。
+//
 // 命中兜底时会把规则键返回为 DupeFallbackMedium，调用方据此在日志里说明「走的是兜底」。
 //
 // ⚠️ 媒介规则（非兜底）**恒含「媒介」维度**：规则本身就是按媒介区分的，
 // 因此检索范围必须锁在这个媒介上。这里统一补一次（`ensureMediumDimension`），
 // 使历史数据或手工改过的配置也照样生效；界面上该维度是「已勾选且不可取消」。
 //
-// ⚠️ 未开启兜底、且该媒介没有单独配置时返回 ok=false，调用方必须跳过校验而不是放行。
+// ⚠️ 未开启兜底、且该媒介没有命中任何规则时返回 ok=false，调用方必须跳过校验而不是放行。
 // 副作用：无。
 func (s SiteSettings) MatchRule(medium string) (dims []string, ruleKey string, ok bool) {
-	if key := strings.TrimSpace(medium); key != "" {
+	key := strings.TrimSpace(medium)
+	if key != "" {
 		if stored, hit := s.Rules[key]; hit {
 			return ensureMediumDimension(stored), key, true
+		}
+		if groupKey := mediumGroupKey(key); groupKey != "" && groupKey != key {
+			if stored, hit := s.Rules[groupKey]; hit {
+				return ensureMediumDimension(stored), groupKey, true
+			}
 		}
 	}
 	if fallback, hit := s.FallbackRule(); hit {

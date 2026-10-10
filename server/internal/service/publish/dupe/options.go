@@ -1,11 +1,9 @@
 package dupe
 
 import (
-	"sort"
 	"strings"
 
 	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
-	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
 
 // DupeDimensionOption 描述一个可选判定维度，供站点设置页渲染勾选框。
@@ -24,13 +22,12 @@ type DupeDimensionOption struct {
 
 // SiteDupeMediumOption 描述一个可配置规则的目标媒介。
 type SiteDupeMediumOption struct {
-	// Medium 为标准媒介键，即规则表里的键（如 medium.remux）。
+	// Medium 为标准媒介键，即规则表里的键（见 medium_groups.go 的 6 类）。
 	Medium string `json:"medium"`
-	// Label 为中文名（取自反向映射，取不到时回退为标准键本身）。
+	// Label 为展示名（固定文案：UHD Blu-ray / Blu-ray / HDTV / Encode / Remux / WEB）。
 	Label string `json:"label"`
-	// SiteValue 为该媒介在站点上传表单里的取值。
-	// 多个标准媒介可能映射到同一取值（如 medium.uhd_bluray 与 medium.uhd_diy 都是 UHD Blu-ray），
-	// 界面上按它分组展示，避免用户误以为要逐个添加同义项。
+	// SiteValue 为该媒介在站点上传表单里的取值（组内任一成员在该站的映射值）。
+	// 仅作展示参考：实际检索用的取值取自待发布种子自己的表单字段，与规则键无关。
 	SiteValue string `json:"site_value"`
 }
 
@@ -38,7 +35,7 @@ type SiteDupeMediumOption struct {
 type SiteDupeOptions struct {
 	// Enabled 表示站点声明了 dupe 校验能力（YAML dupe_check.enabled）。
 	Enabled bool `json:"enabled"`
-	// Mediums 为站点 mappings.medium 中的全部标准媒介键（已排序）。
+	// Mediums 为可配置规则的媒介组（固定 6 类，顺序固定；站点完全没映射的组会被略去）。
 	Mediums []SiteDupeMediumOption `json:"mediums"`
 	// Dimensions 为全部可选判定维度（含可用性标记）。
 	Dimensions []DupeDimensionOption `json:"dimensions"`
@@ -49,9 +46,10 @@ type SiteDupeOptions struct {
 
 // BuildSiteDupeOptions 汇总站点 dupe 规则的可选项。
 // 参数/返回：siteCode 为站点标识；返回选项集合（站点未声明 dupe 能力时 Enabled=false 且列表为空）。
-// 说明：媒介清单来自站点 YAML 的 mappings.medium —— 与发布时写进 standardized_params.medium 的
-// 取值同源，因此这里列出的键就是规则能命中的键；中文名来自反向映射表。
-// 副作用：加载站点配置与反向映射（均有缓存/文件读取）。
+// 说明：媒介清单不再直接照搬站点 YAML 的 mappings.medium（那里同义键太多），
+// 而是收敛成 6 类（见 medium_groups.go）；只要站点映射了该组的任一成员就列出，
+// 组内的细分键由 MatchRule 自动归类命中。
+// 副作用：加载站点配置（有缓存）。
 func BuildSiteDupeOptions(siteCode string) SiteDupeOptions {
 	options := SiteDupeOptions{
 		Dimensions:     buildDimensionOptions(siteCode),
@@ -63,28 +61,26 @@ func BuildSiteDupeOptions(siteCode string) SiteDupeOptions {
 	}
 	options.Enabled = true
 
-	labelSource := mediumLabelSource()
 	mediumMapping := siteCfg.Mappings["medium"]
-	mediums := make([]SiteDupeMediumOption, 0, len(mediumMapping))
-	for standard, siteValue := range mediumMapping {
-		key := strings.TrimSpace(standard)
-		// mappings 里的 default 是兜底项而非真实媒介，不能作为规则目标。
-		if key == "" || key == "default" || !strings.Contains(key, ".") {
+	mediums := make([]SiteDupeMediumOption, 0, len(dupeMediumGroups))
+	for _, group := range dupeMediumGroups {
+		siteValue := ""
+		for _, member := range group.Members {
+			if value := strings.TrimSpace(mediumMapping[member]); value != "" {
+				siteValue = value
+				break
+			}
+		}
+		// 站点没映射该组的任何标准键 → 无法用该媒介检索，列出来只会让人勾了却不生效。
+		if siteValue == "" {
 			continue
 		}
 		mediums = append(mediums, SiteDupeMediumOption{
-			Medium:    key,
-			Label:     firstNonEmptyValue(labelSource[key], humanizeMediumKey(key)),
-			SiteValue: strings.TrimSpace(siteValue),
+			Medium:    group.Key,
+			Label:     group.Label,
+			SiteValue: siteValue,
 		})
 	}
-	// 按站点取值分组（同义媒介相邻），组内按标准键排序，保证每次返回顺序稳定。
-	sort.Slice(mediums, func(i, j int) bool {
-		if mediums[i].SiteValue != mediums[j].SiteValue {
-			return mediums[i].SiteValue < mediums[j].SiteValue
-		}
-		return mediums[i].Medium < mediums[j].Medium
-	})
 	options.Mediums = mediums
 	return options
 }
@@ -109,27 +105,4 @@ func buildDimensionOptions(siteCode string) []DupeDimensionOption {
 		options = append(options, item)
 	}
 	return options
-}
-
-// humanizeMediumKey 为没有中文名可用的标准媒介键生成可读标签。
-// 参数/返回：key 为标准媒介键（如 medium.bluray_diy）；返回去掉命名空间前缀、下划线转空格的文本。
-// 说明：反向映射表覆盖不到少数冷门键（如 medium.iso / medium.bluray_diy），
-// 直接展示原始键太生硬，这里退化成「bluray diy」这类可读形式。
-// 副作用：无。
-func humanizeMediumKey(key string) string {
-	trimmed := strings.TrimSpace(key)
-	if idx := strings.LastIndex(trimmed, "."); idx >= 0 && idx+1 < len(trimmed) {
-		trimmed = trimmed[idx+1:]
-	}
-	return strings.ReplaceAll(trimmed, "_", " ")
-}
-
-// mediumLabelSource 返回「标准媒介键 → 中文名」映射（反向映射表）。
-func mediumLabelSource() map[string]string {
-	reverse := reversemapping.Build(nil)
-	raw, ok := reverse["medium"].(map[string]string)
-	if !ok || raw == nil {
-		return map[string]string{}
-	}
-	return raw
 }

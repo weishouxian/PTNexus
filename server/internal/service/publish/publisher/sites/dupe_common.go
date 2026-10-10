@@ -152,16 +152,25 @@ func runSiteDupeCheck(logModule string, input publisher.PublishInput, formFields
 // 参数/返回：medium 为待发布种子的标准媒介；ruleKey 为命中的规则键；usingFallback 表示是否走兜底。
 // 说明：区分「该媒介单独配了规则」与「走兜底」很关键 —— 事后排查时能一眼看出
 // 是规则配错了，还是压根没配、被兜底接手了。
+//
+// 规则按 6 类媒介归组（见 dupe/medium_groups.go），种子的细分媒介（如 medium.uhd_remux）
+// 会命中组键 medium.remux。两者不一致时把原始媒介一并写出来，避免看日志的人
+// 误以为「我配的是 Remux，怎么种子的媒介变成 medium.remux 了」。
 // 副作用：无。
 func ruleScopeLabel(medium string, ruleKey string, usingFallback bool) string {
+	seedMedium := strings.TrimSpace(medium)
 	if usingFallback {
-		shown := strings.TrimSpace(medium)
+		shown := seedMedium
 		if shown == "" {
 			shown = "未知"
 		}
 		return fmt.Sprintf("兜底规则（媒介 %s 未单独配置）", shown)
 	}
-	return fmt.Sprintf("媒介=%s", strings.TrimSpace(ruleKey))
+	key := strings.TrimSpace(ruleKey)
+	if seedMedium != "" && seedMedium != key {
+		return fmt.Sprintf("媒介=%s（种子 %s 归入该组）", key, seedMedium)
+	}
+	return fmt.Sprintf("媒介=%s", key)
 }
 
 // unsupportedFilterDimensions 返回规则勾选、但站点未声明检索参数的筛选维度。
