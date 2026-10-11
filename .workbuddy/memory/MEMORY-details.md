@@ -125,3 +125,29 @@
 - **poster**：`repair/movie_info.go:FetchMovieInfo` 五级兜底 —— ①已有外链互补（queryByIMDb/queryByDouban/searchByName + `backfillTMDbByIMDbIfNeeded`）②PTGen 多节点（`repair/ptgen_nodes.go`，数组序=优先级）③豆瓣页 `og:image`/`.nbg` ④TMDb API ⑤IMDb 页 → 再经 `NormalizePosterBBCodeWithConfig` 取首个 URL 并转存图床（`cross_seed.image_hoster`：`pixhost`(默认)/`agsv`，输出单个 `[img]`），返回 `posters` + `extracted_{imdb,douban,tmdb}_link`。前端 `CrossSeedPanel.vue:refreshPosters` 只在原外链为空时回填。
 - 图床转存 `repair/pixhost.go`：下载候选 = 直连 + 两个 worker 代理前缀（`posterTransferProxyPrefixes`），每候选重试 2 次、25MB 上限、必须 `image/*`；上传取 `show_url` 后 `ResolvePixhostImageURLWithConfig` 解析直链并 `IsImageURLReachable`（HEAD → Range GET）校验。
 - 前端预览图失效会自动走 `handleImageError` 重发同一 payload（`type=poster`），但**受限标签命中直接跳过**、`pixhost.to` 域名直接跳过检测。
+
+## 媒体参数补充（自 MEMORY.md 迁入 2026-10-11）
+
+- 组件展示侧「音频编码」真源 `processing/title/simple_components.go:extractAudioFromTitle`；`audioCleanupTags` 需一并输出无空格变体（`audioCodecSeparatorVariants`），否则残留进「无法识别」。
+- `title/components.go` 恒传 `preferMediaAudio=true` 的 B 方案（2026-10-11 用户选定）：MediaInfo 与 BDInfo 统一以媒体主音轨重建「音频编码」= 编码 + 声道 + Atmos + 音轨数。此前 MediaInfo 源走「标题优先」，会把标题 `DDP5.1` 与媒体首轨 `AAC 2.0` 拼成 `DDP 5.1 11Audios`。
+- 传 `false` 的「标题优先 + 媒体补缺」分支（`findBestMatchingAudioTrack`/`supplementAudioInfo`）现已无调用方，保留备用。
+- 多语言 WEB-DL 首轨常是配音 AAC（2026-10-10 实测）—— 这是「首轨低规格则改取最高规格」规则的来源。
+- `parser_pythonish.go` 里从 Python 直译的正则若含 `\(`/`\[` 必须写单反斜杠：raw string 的 `\\(s\\)` 要求字面反斜杠 → `Channel(s)` 永不匹配、声道静默退化成 2.0（2026-10-11 已修）。同类未修：`cleanBBCode` 的 `\\[/?\\w+\\]`。
+
+## 代理路径探测细则
+
+- 真源 `downloaderclient/proxy_paths.go:BuildProxyPathCandidates`，调用方须传两个根 `[原始路径, 映射后路径]`；四条链路：refresh_flow / screenshot(_preview) / bdinfo_task_ops / episode_count。
+- ⚠️ 候选循环**只在 400 continue、其余 break** ⇒ 代理 stat 失败必须经 `proxy_error.go:NormalizeProxyCandidateStatus` + `newProxyHTTPError/newProxyResponseFailure` 归一为 400；不可达仍返回 500 会立即 break、断掉后续候选。
+- 本地回退门禁 `shouldSkipLocalMediaFallback`/`shouldSkipLocalScreenshotFallback`：`use_proxy=true` 且映射后本地根不存在 → 报「本地路径不可访问」。
+
+## 发布 / CI 细则（2026-10-11 查实）
+
+- **CI 不可用（铁证）**：`weishouxian/PTNexus` 是 **fork**（parent/source = `sqing33/PTNexus`，公开；父仓同名工作流 conclusion=success）。本仓 `GET /repos/.../actions/runs?per_page=100` → 75 条（70 schedule + 5 workflow_dispatch），**conclusion 全为 failure、0 success**，最早回溯至 2026-08-02 前后。
+- `meta` job 症状：`started_at` 与 `completed_at` 相差 **3 秒**、`runner_name` 为空、`steps` 为空数组；`GET /repos/.../actions/jobs/<job_id>/logs` → `BlobNotFound`（HTTP 404）⇒ **job 从未在 runner 上执行**。其余 job（runtime/desktop_windows/proxy/docker_image/release_assets）全 skipped。
+- ⇒ 别派 `workflow_dispatch`，也别修 CI；直接本地构建 + `github-release` 技能发布（`ptn-proxy-release` 技能 2026-09-24 已记同样结论）。
+- **本机凭据**：`~/.workbuddy/skills/github-release/scripts/gh` 包装器已登录 `weishouxian`（仓库所有者），scopes = `gist, read:org, repo`（**不含 `workflow`**）。包装器自动设可写 `GH_CONFIG_DIR=~/.workbuddy/binaries/gh/config` 并清空代理变量。⚠️ 新建 tag 的 Release 可能报 workflow scope 不足（补：`scripts/gh auth refresh -h github.com -s workflow`）；向**已存在** Release 上传附件不需要。
+- **v4.0.3 附件实况（手工发的证据）**：`install-pt-nexus-box-proxy.sh`(15,484) / `pt-nexus-box-proxy-amd64`(7,098,552) / `pt-nexus-box-proxy-arm64`(6,684,856) / `ptnexus-runtime-linux-amd64.tar.gz`(11,925,701) / `ptnexus-runtime-linux-arm64.tar.gz`(10,948,622) / `UPDATE_MANIFEST.json`(26,741) —— **没有桌面安装包/浏览器插件**（CI 才产），共 6 件。GitHub release id `409005495`，created 2026-10-10T13:38:18Z。
+- **更新检测链路**：`updater/update_sources.go` 候选顺序 = `UPDATE_MANIFEST_URL` 环境变量 > `github.com/<owner>/<repo>/releases/download/<version>/UPDATE_MANIFEST.json` > `gitee.com/wsx181/.../releases/download/<version>/...` > 两边 `/releases/latest/download/...`。比对 `manifest.latest.version` 与 `getLocalVersion()`（运行时推断，Docker 下退化为镜像内 `/app/CHANGELOG.json`）。强更标记 `latest.force_update`/`latest.disable_update`/`history[].force_update`。
+- **清单生成**：`scripts/build-update-artifacts.sh:66` 从 `CHANGELOG.json` 取版本 → 生成 `dist/updates/<VERSION>/UPDATE_MANIFEST.json`（`schema:2`，`latest.version/date/artifacts[]`，artifacts 含 os/arch/url/sha256/size/format + `mirror_urls`）；`scripts/merge-update-manifest.py:build_base_manifest()` 再合并桌面安装包元数据。URL 由 `CHANGELOG.json:artifact_sources[].url` 模板（`{version}`/`{filename}`）展开，兜底 `BASE_URL=https://github.com/weishouxian/PTNexus/releases/download/<ver>`。
+- `build-update-artifacts.sh` 也可直接本机交叉编译（`gcc` / `aarch64-linux-gnu-gcc`，Linux 环境）；Windows 无 `aarch64-linux-gnu-gcc`，故 v4.0.3 选择从 Docker 镜像抽产物。
+- ⚠️ **Dockerfile 写死 `ENV SCHEDULE_ENABLED="false"`** → 容器默认关闭每天 06:00 的定时自动升级（UI 手动升级不受影响）。相关变量：`SCHEDULE_TIME`/`SCHEDULE_TIMEZONE`/`UPDATE_DIR`(默认 `/app/data/updates`)/`PTNEXUS_BASE_DIR`/`SUPERVISOR_CONF`/`SUPERVISOR_SERVER_NAME`/`AUTO_INSTALL_SYSTEM_DEPS`/`UPDATE_USE_PROXY`/`UPDATE_SKIP_VERIFY`/`UPDATE_MANIFEST_URL`。
