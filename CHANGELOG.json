@@ -19,6 +19,15 @@
   ],
   "history": [
     {
+      "version": "v4.0.5",
+      "date": "2026.10.11",
+      "changes": [
+        "修复：在线更新在 btrfs / fuse-overlayfs 等文件系统上报「invalid cross-device link」导致安装失败",
+        "修复：容器启动时运行时恢复失败会中断启动，现降级为镜像内运行时并打印原因",
+        "优化：在线更新遇到 /app/server 被挂载时给出明确的部署提示，不再只抛底层报错"
+      ]
+    },
+    {
       "version": "v4.0.4",
       "date": "2026.10.11",
       "changes": [

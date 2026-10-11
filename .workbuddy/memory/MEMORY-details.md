@@ -159,6 +159,20 @@
 - 待删目标（2026-10-11 用户决定**暂不删**）：`D:/MYCODE/gitee/PTNexus.obsolete-20261011`，1.8GB / 23,118 文件；其独有文件 `.github/workflows/release-beta.yml`(15,423B) 等 3 个 workflow 已备份至 `.workbuddy/tmp/archive-unique/`。
 - `github-release` 技能 `publish.sh` 末尾的 `[safe-delete][SAFE_DELETE_INVALID_PATH]` 同理 —— 退出码 1 但发布已成功，以 `[publish] 完成` 为准。
 
+## 在线更新（updater）安装链路细则（2026-10-11）
+
+- 容器入口 = updater（5274，反代 server 5275，supervisord 编排）；接口 `/update/check|pull|install|changelog`；前端 `webui/src/components/VersionUpdate.vue`。
+- 安装流程（`updater/artifact_update.go:installPreparedBundle`）：拉清单 → 下载 runtime → 校验 sha256 → 解压 staging → `ensureRuntimeSymlinks` → 停 server → staging 移入 `/app/data/updates/releases/<ver>/server` → 切 `current` 软链 → 起 server 并查 `/health` → 失败自动回滚 → 写本地版本。
+- `ensureRuntimeSymlinks` 的语义：把**镜像内置**的 `/app/server` 挪到 `/app/server.image.<YYYYMMDD-HHMMSS>`，再把 `/app/server` 变成指向 `<UPDATE_DIR>/current` 的软链；`start-services.sh:restore_updated_runtime` 在容器重建后做同样的事。
+- ⚠️ **该流程依赖「目录 rename」**，在部分环境不可用 → 线上故障 `迁移 baseDir 失败: rename /app/server /app/server.image.…: invalid cross-device link`。
+  - 已排除：普通 overlayfs（构建机 kernel 6.1 `redirect_dir=N` 下 `mv /app/server` 正常，写过文件后也正常）、镜像声明卷（三个 tag 的 `Config.Volumes` 都只有 `/app/data`）。
+  - 实测差异：`/app/server` 被 bind mount / 命名卷挂载时报 **EBUSY**（`Device or resource busy`），与用户看到的 EXDEV 不是同一条路径。
+  - ⇒ 剩余解释：btrfs 存储驱动（跨子卷）/ fuse-overlayfs（rootless，改下层目录）/ ZFS 跨 dataset，或部分内核下 rename 挂载点返回 EXDEV。**定性需用户给 `docker info --format '{{.Driver}}'` 与容器 mounts。**
+  - 2026-10-11 已加固：`moveDirPortable`（rename 优先，EXDEV/EBUSY/EINVAL 退回「复制 + 删除」）、`isMountPointPath`（解析 `/proc/self/mountinfo`）、`moveBaseDirAside`（真是挂载点则给可操作错误）；`start-services.sh` 同步加 `move_dir_portable` 且 `restore_updated_runtime` 不再 `return 1`（原先在 `set -e` 下会让容器起不来）。回归测试 `updater/artifact_move_test.go`。
+- ⚠️ **部署铁律：不要挂载 `/app/server`**。镜像只要求 `- ./data:/app/data`（readme 的 compose 就是这么写的）；挂 `/app/server` 会让在线更新永远失败（且 `docker pull` 也换不掉运行时）。
+- ⚠️ `cd updater && go build ./...` 会**覆盖 git 跟踪的预编译产物 `updater/pt-nexus-updater.exe`**；本地验证请用 `go build -o /dev/null .` 或 `go vet`。
+- 跨设备回退只能在 **Linux + 另一个设备**上复现：`docker run --rm -v $PWD:/src -w /src golang:1.25 sh -c 'go test -count=1 -run TestMoveDirPortableCrossDeviceFallback -v ./...'`（tmpfs `/dev/shm` 与 `/src` 不同设备 → 真实 EXDEV）。
+
 ## 站点差异补充（自 MEMORY.md 迁入 2026-10-11）
 
 - **hdhome**：六维度独立 select、无地区字段。**我堡**：Remux 硬禁、无粤语标签。**青蛙**：标题特化 + HDR 统一写「HDR」（正则别用 `\b`）。**北洋园**：无六维度、无 `name`、简介只有 `descr`、动漫整类拒发。

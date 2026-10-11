@@ -256,6 +256,12 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.5（2026.10.11）
+
+- 修复：在线更新在 btrfs / fuse-overlayfs 等文件系统上报「invalid cross-device link」导致安装失败
+- 修复：容器启动时运行时恢复失败会中断启动，现降级为镜像内运行时并打印原因
+- 优化：在线更新遇到 /app/server 被挂载时给出明确的部署提示，不再只抛底层报错
+
 ### v4.0.4（2026.10.11）
 
 - 新增：转种目标站点-聆音（pt.soulvoice.club），MediaInfo 内联进简介

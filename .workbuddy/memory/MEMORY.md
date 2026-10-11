@@ -21,6 +21,7 @@
 ## 发布 / 数据
 - `5.135.178.15`（OVH，`/home/code/PTNexus`）是**构建推送机**非生产（buildx push Docker Hub `fenglaile/ptnexus`；GHCR 永久排除）；动手前查 `ps -ef | grep '[b]uildx build'`。⚠️ 多平台 buildx 必须用 `debian` 用户、**不能 sudo**（builder `multiarch` 配在该用户下）。SSH 见 `ptn-deploy` 技能。
 - ⚠️ 容器 `/etc/localtime` 仍 UTC → DSN 必须显式 `loc=Asia/Shanghai`。
+- ⚠️ **部署铁律：不要挂载 `/app/server`**（镜像只要求 `- ./data:/app/data`）。在线更新要把 `/app/server` 改名成软链，挂载后 rename 必失败（`invalid cross-device link` / `device or resource busy`），且 `docker pull` 也换不掉运行时。细则与 2026-10-11 加固见 details。
 - 内网 DB `192.168.5.3:3306/pt_nexus`（root/111111，pymysql）。`publish.sh` 退出码 1 不代表失败（trap 被 safe-delete 拦），以 `[publish] 完成` 为准。
 - ⚠️ 无外键。删某颗种子的库内数据 = 按 hash 删 **`torrents`/`seed_parameters`/`torrent_upload_stats`**（重测必须一起删）。应用内「一种多站」删除只删 torrents + torrent_upload_stats。
 - 进度/日志列表「大小」两表无 size 列 → 旁路关联 hash 取 `torrents.size`（日志页覆盖 ~63%）；`migrationflow/publish_size.go`，DTO `gorm:"-"`，`SizeByHashes` 刻意不过滤 is_hidden。

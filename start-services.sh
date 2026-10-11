@@ -26,6 +26,38 @@ update_symlink_atomic() {
   mv -Tf "$tmp" "$link_path"
 }
 
+is_mount_point() {
+  local target="$1"
+  local resolved
+  resolved="$(readlink -f "$target" 2>/dev/null || echo "$target")"
+  [ -r /proc/self/mountinfo ] || return 1
+  awk -v p="$resolved" '$5 == p { found = 1 } END { exit(found ? 0 : 1) }' /proc/self/mountinfo 2>/dev/null
+}
+
+# 迁移目录：优先 rename；btrfs / ZFS / fuse-overlayfs 等文件系统不支持目录 rename 时
+# （EXDEV「invalid cross-device link」、EBUSY「device or resource busy」）退回「复制 + 删除」。
+move_dir_portable() {
+  local src="$1"
+  local dst="$2"
+
+  if [ ! -e "$src" ]; then
+    return 0
+  fi
+  if mv "$src" "$dst" 2>/dev/null; then
+    return 0
+  fi
+
+  log_bootstrap "目录 rename 不可用，改用复制后删除: ${src} -> ${dst}"
+  rm -rf "$dst" 2>/dev/null || true
+  if ! cp -a "$src" "$dst"; then
+    return 1
+  fi
+  if ! rm -rf "$src"; then
+    return 1
+  fi
+  return 0
+}
+
 restore_updated_runtime() {
   local base_dir="${PTNEXUS_BASE_DIR:-/app/server}"
   local update_root="${UPDATE_DIR:-/app/data/updates}"
@@ -53,16 +85,23 @@ restore_updated_runtime() {
 
   local backup_dir=""
   if [ -e "$base_dir" ] && [ ! -L "$base_dir" ]; then
+    if is_mount_point "$base_dir"; then
+      log_bootstrap "检测到 ${base_dir} 是容器内挂载点，无法切换运行时；请从部署中去掉该挂载（镜像只需挂载 /app/data），继续使用镜像内运行时"
+      return 0
+    fi
     backup_dir="${base_dir}.image.$(date +%Y%m%d-%H%M%S)"
-    mv "$base_dir" "$backup_dir"
+    if ! move_dir_portable "$base_dir" "$backup_dir"; then
+      log_bootstrap "迁移镜像内运行时失败，继续使用镜像内运行时: ${base_dir}"
+      return 0
+    fi
   fi
 
   if ! update_symlink_atomic "$base_dir" "$current_link"; then
     if [ -n "$backup_dir" ] && [ ! -e "$base_dir" ]; then
-      mv "$backup_dir" "$base_dir"
+      move_dir_portable "$backup_dir" "$base_dir" || true
     fi
-    echo "恢复持久化更新运行时失败：${base_dir} -> ${current_link}" >&2
-    return 1
+    echo "恢复持久化更新运行时失败：${base_dir} -> ${current_link}，继续使用镜像内运行时" >&2
+    return 0
   fi
 
   if [ -n "$backup_dir" ]; then

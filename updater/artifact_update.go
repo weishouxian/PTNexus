@@ -1006,6 +1006,181 @@ func isCrossDeviceRenameErr(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "cross-device link")
 }
 
+// isDirMoveFallbackErr 判断「目录改名」失败是否属于文件系统不支持的情况，需要退回「复制 + 删除」。
+//
+// 触发场景（都表现为 rename 不可用）：
+//   - EXDEV「invalid cross-device link」：btrfs / ZFS 存储驱动下跨子卷改名；
+//     fuse-overlayfs（rootless Docker）改下层目录；部分内核/文件系统下改名挂载点。
+//   - EBUSY「device or resource busy」：目标是挂载点。
+//   - EINVAL：部分文件系统不支持目录改名。
+func isDirMoveFallbackErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.EXDEV) || errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EINVAL) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	for _, needle := range []string{
+		"cross-device link",
+		"device or resource busy",
+		"invalid argument",
+		"not same device",      // Windows: 跨盘符搬迁
+		"different disk drive", // Windows 英文系统提示
+	} {
+		if strings.Contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// decodeMountInfoField 还原 /proc/self/mountinfo 里的转义（空格 \040、制表 \011、换行 \012、反斜杠 \134）。
+func decodeMountInfoField(value string) string {
+	if !strings.Contains(value, `\`) {
+		return value
+	}
+	replacer := strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`)
+	return replacer.Replace(value)
+}
+
+// isMountPointPath 判断路径是否是容器内的挂载点（bind mount / volume / tmpfs）。
+// 挂载点无法被 rename，也无法被替换成软链，需要提前给出可操作的提示。
+func isMountPointPath(target string) bool {
+	resolved := filepath.Clean(target)
+	if evaluated, err := filepath.EvalSymlinks(target); err == nil {
+		resolved = filepath.Clean(evaluated)
+	}
+
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		if decodeMountInfoField(fields[4]) == resolved {
+			return true
+		}
+	}
+	return false
+}
+
+// copyFilePortable 复制单个文件并保留权限位。
+func copyFilePortable(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	if err := os.Remove(dst); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode.Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Sync(); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	// 显式 chmod，避免受 umask 影响而丢掉可执行位。
+	return os.Chmod(dst, mode.Perm())
+}
+
+// copyDirTreePortable 递归复制目录树（保留权限、软链与可执行位）。
+func copyDirTreePortable(src, dst string) error {
+	st, err := os.Lstat(src)
+	if err != nil {
+		return err
+	}
+
+	if st.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(src)
+		if err != nil {
+			return err
+		}
+		if err := os.RemoveAll(dst); err != nil {
+			return err
+		}
+		return os.Symlink(target, dst)
+	}
+	if !st.IsDir() {
+		return copyFilePortable(src, dst, st.Mode())
+	}
+
+	if err := os.MkdirAll(dst, st.Mode().Perm()); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if err := copyDirTreePortable(filepath.Join(src, entry.Name()), filepath.Join(dst, entry.Name())); err != nil {
+			return err
+		}
+	}
+	return os.Chmod(dst, st.Mode().Perm())
+}
+
+// moveDirPortable 迁移目录：优先 rename，文件系统不支持时退回「复制 + 删除」。
+// 返回是否走了复制回退路径。
+func moveDirPortable(src, dst string) (bool, error) {
+	if strings.TrimSpace(src) == "" || strings.TrimSpace(dst) == "" {
+		return false, errors.New("moveDirPortable: 路径为空")
+	}
+
+	renameErr := os.Rename(src, dst)
+	if renameErr == nil {
+		return false, nil
+	}
+	if !isDirMoveFallbackErr(renameErr) {
+		return false, renameErr
+	}
+
+	log.Printf("安装更新步骤: 目录 rename 不可用，改用复制后删除 src=%s dst=%s err=%v", src, dst, renameErr)
+	if err := os.RemoveAll(dst); err != nil {
+		return true, fmt.Errorf("清理目标目录失败: %w", err)
+	}
+	if err := copyDirTreePortable(src, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return true, fmt.Errorf("复制目录失败: %w", err)
+	}
+	if err := os.RemoveAll(src); err != nil {
+		return true, fmt.Errorf("删除原目录失败（若 %s 是挂载点请勿在部署中挂载它）: %w", src, err)
+	}
+	log.Printf("安装更新步骤: 目录已通过复制方式迁移完成 src=%s dst=%s", src, dst)
+	return true, nil
+}
+
+// moveBaseDirAside 把镜像内置的运行时目录让位给软链。
+// 若 baseDir 本身是挂载点则直接给出可操作的错误，而不是抛裸 EXDEV。
+func moveBaseDirAside(baseDir, legacy string) error {
+	if isMountPointPath(baseDir) {
+		return fmt.Errorf(
+			"%s 是容器内的挂载点（bind mount / volume），无法原地迁移运行时；"+
+				"请从部署中去掉该挂载（镜像只要求挂载 /app/data），然后重建容器："+
+				"docker compose pull && docker compose up -d",
+			baseDir,
+		)
+	}
+	if _, err := moveDirPortable(baseDir, legacy); err != nil {
+		return err
+	}
+	return nil
+}
+
 func updateSymlinkAtomic(linkPath, target string) error {
 	if strings.TrimSpace(linkPath) == "" {
 		return errors.New("empty link path")
@@ -1056,7 +1231,7 @@ func rollbackBootstrappedBaseDir(baseDir, legacy string, cause error) error {
 	if removeErr := os.Remove(baseDir); removeErr != nil && !os.IsNotExist(removeErr) {
 		return fmt.Errorf("%w; 删除失败的 baseDir 软链失败: %v", cause, removeErr)
 	}
-	if renameErr := os.Rename(legacy, baseDir); renameErr != nil {
+	if _, renameErr := moveDirPortable(legacy, baseDir); renameErr != nil {
 		return fmt.Errorf("%w; 恢复 baseDir 失败: %v", cause, renameErr)
 	}
 	return cause
@@ -1086,12 +1261,12 @@ func ensureRuntimeSymlinks() (baseDir, currentLink, currentTarget string, err er
 		} else {
 			// Move image runtime aside and make baseDir a stable symlink.
 			legacy := fmt.Sprintf("%s.image.%s", baseDir, time.Now().Format("20060102-150405"))
-			if err := os.Rename(baseDir, legacy); err != nil {
+			if err := moveBaseDirAside(baseDir, legacy); err != nil {
 				return "", "", "", fmt.Errorf("迁移 baseDir 失败: %w", err)
 			}
 			if err := updateSymlinkFn(baseDir, currentLink); err != nil {
 				// Best-effort rollback.
-				_ = os.Rename(legacy, baseDir)
+				_, _ = moveDirPortable(legacy, baseDir)
 				return "", "", "", err
 			}
 			if err := updateSymlinkFn(currentLink, legacy); err != nil {
@@ -1105,11 +1280,11 @@ func ensureRuntimeSymlinks() (baseDir, currentLink, currentTarget string, err er
 		if st.Mode()&os.ModeSymlink == 0 {
 			// Container recreated: baseDir is image directory while currentLink exists on volume.
 			legacy := fmt.Sprintf("%s.image.%s", baseDir, time.Now().Format("20060102-150405"))
-			if err := os.Rename(baseDir, legacy); err != nil {
+			if err := moveBaseDirAside(baseDir, legacy); err != nil {
 				return "", "", "", fmt.Errorf("迁移 baseDir 失败: %w", err)
 			}
 			if err := updateSymlinkFn(baseDir, currentLink); err != nil {
-				_ = os.Rename(legacy, baseDir)
+				_, _ = moveDirPortable(legacy, baseDir)
 				return "", "", "", err
 			}
 		}
@@ -1192,7 +1367,7 @@ func installPreparedBundle(ctx context.Context, prepared *PreparedUpdate) error 
 		ensureDir(filepath.Dir(releaseServerDir))
 		log.Printf("安装更新步骤: 准备写入新版本目录 target=%s", releaseServerDir)
 
-		if err := os.Rename(stagingServerDir, releaseServerDir); err != nil {
+		if _, err := moveDirPortable(stagingServerDir, releaseServerDir); err != nil {
 			return fmt.Errorf("移动新版本目录失败: %w", err)
 		}
 		log.Printf("安装更新步骤: 新版本目录已就位 target=%s", releaseServerDir)
