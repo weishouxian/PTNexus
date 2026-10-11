@@ -155,7 +155,8 @@
 ## 环境：批量删除被 safe-delete 钩子拦截（2026-10-11 查实）
 
 - 症状：`rm -rf <大目录>` 与 PowerShell `Remove-Item -Recurse -Force` 都报 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED] {"count":9999,"threshold":50,"scope":"turn"}`；**不是权限/只读属性问题**（`attrib -R` 无用），是应用内置钩子按「文件数 > 50」要求**当轮**批量确认。
-- 合规做法：改用 **Bash 工具 + `dangerouslyDisableSandbox: true`**（工具会向用户显式征求同意），即可正常删除（实测删掉 1.8GB / 23,118 文件的 `D:/MYCODE/gitee/PTNexus.obsolete-20261011`）。
+- 合规尝试：Bash 工具 + `dangerouslyDisableSandbox: true` **不再报钩子错误**，但实测**未能完成删除**（3m38s 内文件数/体积不变，疑为后台运行时拿不到沙箱外的用户授权确认）。⇒ 大目录删除**交给用户在本机终端执行**最稳。
+- 待删目标（2026-10-11 用户决定**暂不删**）：`D:/MYCODE/gitee/PTNexus.obsolete-20261011`，1.8GB / 23,118 文件；其独有文件 `.github/workflows/release-beta.yml`(15,423B) 等 3 个 workflow 已备份至 `.workbuddy/tmp/archive-unique/`。
 - `github-release` 技能 `publish.sh` 末尾的 `[safe-delete][SAFE_DELETE_INVALID_PATH]` 同理 —— 退出码 1 但发布已成功，以 `[publish] 完成` 为准。
 
 ## 站点差异补充（自 MEMORY.md 迁入 2026-10-11）

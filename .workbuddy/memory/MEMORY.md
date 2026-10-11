@@ -5,7 +5,7 @@
 
 ## 环境 / 流程
 - 主工作区直接改、不建 worktree；改完给 `git status`/`git diff`；提交/回滚/改历史须当轮明确要求。
-- **双推**：唯一目录 `D:/MYCODE/PTNexus`，`origin` 两个 pushurl（github SSH `weishouxian/PTNexus` → gitee HTTPS `wsx181/PTNexus`）⇒ 一次 `git push` 推两边；另留 `gitee` remote 备用。⚠️ `set-url --add --push` 必须把原 github 也 add 进去。旧目录 `D:/MYCODE/gitee/PTNexus.obsolete-20261011`（1.66GB，已确认删除中）。
+- **双推**：唯一目录 `D:/MYCODE/PTNexus`，`origin` 两个 pushurl（github SSH `weishouxian/PTNexus` → gitee HTTPS `wsx181/PTNexus`）⇒ 一次 `git push` 推两边；另留 `gitee` remote 备用。⚠️ `set-url --add --push` 必须把原 github 也 add 进去。旧目录 `D:/MYCODE/gitee/PTNexus.obsolete-20261011`（1.8GB，**2026-10-11 用户决定暂不删**）。
 - **⚠️ gitee 铁律**：① 本地绝不能浅克隆（gitee 拒 `shallow update not allowed`，GitHub 容忍）—— 已 unshallow。② 写权限只能用 `wsx181` 私人令牌（本机 SSH key 属 `wsxqq`，被拒），令牌已存 GCM，remote 走 HTTPS。③ 仓库容量已用 827MB/1GB。
 - **⚠️ GitHub 直连国内 ~50 KB/s**；用 `https://gh-proxy.com/https://github.com/<user>/<repo>.git` 可跑 10–14 MiB/s（`ghfast.top` ~4MiB/s）：临时 remote → `git fetch --unshallow` → `remote remove`。⚠️ 中断 fetch 残留 `.git/shallow.lock` 须手删。
 - 两仓同根 `c6c3a3b5`(2025-08-13)，`2d5ed176`(2026-04-07) 分叉；gitee 旧线存分支 `legacy-gitee-20261011`(=`c7e277c`)。
@@ -16,7 +16,7 @@
 - ⚠️ `core.autocrlf=true`：**gofmt 前先 `tr -d '\r'`**；**绝不对目录跑 `gofmt -w <dir>`**（改整目录行尾、凭空多差异，已踩两次），只逐个文件。
 - 临时测试写 `zz_tmp_*_test.go`，验完备份 `.workbuddy/tmp/test-backup/` 再删（`server/` 下另有 4 个 git 跟踪正式测试，勿删）；`-mod=mod` 污染 go.mod，用完还原。
 - 通知走 `wsl-win-notify`；本机 toast 会挂起，须加 `--channel msg`。
-- ⚠️ **删大目录会被内置 safe-delete 钩子拦**（文件数 > 50 → `SAFE_DELETE_BULK_CONFIRM_REQUIRED`，与权限无关）：改用 **Bash + `dangerouslyDisableSandbox: true`**（会向用户征求同意）。`publish.sh` 结尾的 `SAFE_DELETE_INVALID_PATH`/退出码 1 同理，不代表失败。
+- ⚠️ **删大目录会被内置 safe-delete 钩子拦**（目标文件数 > 50 → `SAFE_DELETE_BULK_CONFIRM_REQUIRED`，与权限/只读属性无关）；`dangerouslyDisableSandbox` 虽不报错但后台运行时也删不动 ⇒ **大目录删除交给用户在本机终端做**。`publish.sh` 结尾的 `SAFE_DELETE_INVALID_PATH`/退出码 1 同理，不代表失败。
 
 ## 发布 / 数据
 - `5.135.178.15`（OVH，`/home/code/PTNexus`）是**构建推送机**非生产（buildx push Docker Hub `fenglaile/ptnexus`；GHCR 永久排除）；动手前查 `ps -ef | grep '[b]uildx build'`。⚠️ 多平台 buildx 必须用 `debian` 用户、**不能 sudo**（builder `multiarch` 配在该用户下）。SSH 见 `ptn-deploy` 技能。
