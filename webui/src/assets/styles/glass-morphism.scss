@@ -35,6 +35,10 @@
 
   .el-table__body-wrapper {
     background-color: transparent !important;
+    /* ⚠️ EP 的滚动条缩略块默认只有 30% 不透明度（--el-scrollbar-opacity: .3），
+       在白底表格上淡到几乎看不见 —— 常显之后仍然容易漏看。这里提到 0.5。 */
+    --el-scrollbar-opacity: 0.5;
+    --el-scrollbar-hover-opacity: 0.7;
   }
 
   .el-table__header-wrapper {
@@ -60,9 +64,43 @@
   }
 
   /* 确保悬停状态也保持透明 */
-  .el-table__body tr.hover-row>td {
+  // ⚠️ 必须排除固定列（左右冻结列）：固定列被下面的规则给了实底，
+  // 若这里再用半透明的 rgba(255,255,255,.1) 盖上去，它又会变透明、透出下层内容。
+  .el-table__body tr.hover-row > td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
     background-color: rgba(255, 255, 255, 0.1) !important;
 
+  }
+
+  /* ⚠️ 表格滚动条强制常显。
+     Element Plus 的滚动条默认是「鼠标移入才淡入」（bar 上用 v-show，未悬停时内联 display:none），
+     于是在需要横向滚动的表格上，看不到滚动条会让人以为右边的列就是被裁掉了、没法看全。
+     这里用 !important 压掉内联的 display:none（作者样式表的 !important 优先于内联样式）。
+     没有溢出时 EP 不给 thumb 设宽度，缩略块尺寸为 0，所以不会凭空多画出一条。 */
+  .el-table__body-wrapper .el-scrollbar__bar {
+    display: block !important;
+  }
+
+  /* ⚠️ 固定列（左右冻结列）必须有不透明底色。
+     上面把行与表体的背景都置成了 transparent，而 Element Plus 的固定列用的是
+     background: inherit（继承行背景）→ 固定列跟着变透明；横向滚动时，被它遮住的
+     那几列文字会直接透出来，看起来像「两列叠在一起」。
+     这里刻意不加 !important：让各页面自定义的行底色（如标红的异常行）依旧能覆盖它。 */
+  .el-table__body-wrapper td.el-table-fixed-column--left,
+  .el-table__body-wrapper td.el-table-fixed-column--right {
+    background-color: #fff;
+  }
+
+  /* 悬停时固定列同样保持实底（否则鼠标划过整行又会透出下层内容）。
+     同样不加 !important，保留页面自定义的悬停行色（如 .deleted-row:hover）。 */
+  .el-table__body-wrapper tr:hover > td.el-table-fixed-column--left,
+  .el-table__body-wrapper tr:hover > td.el-table-fixed-column--right {
+    background-color: #fff;
+  }
+
+  /* 固定列表头：表头用的是「3 个类 + !important」，需要同级别的选择器才能压回来 */
+  .el-table__header-wrapper th.el-table__cell.el-table-fixed-column--left,
+  .el-table__header-wrapper th.el-table__cell.el-table-fixed-column--right {
+    background-color: #fff !important;
   }
 }
 

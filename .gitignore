@@ -36,3 +36,15 @@
 /.vscode/*
 !/.vscode/extensions.json
 */__pycache__
+
+# IDE project files (JetBrains)
+/.idea/
+
+# Release build staging (binaries + manifests generated during manual release)
+/dist/
+
+# WorkBuddy agent private workspace (skills / scratch / ad-hoc diagnostics)
+/.workbuddy/skills/
+/.workbuddy/tmp/
+/.workbuddy/tmp_*.py
+/.workbuddy/tmp_*.sh

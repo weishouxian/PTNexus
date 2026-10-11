@@ -2432,16 +2432,9 @@ const handleDelete = (site: SiteConfig) => {
   border: 1px solid #f5dab1;
 }
 
-.site-edit-dialog :deep(.el-overlay-dialog) {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  overflow: hidden;
-}
-
-.site-edit-dialog :deep(.el-dialog) {
-  margin: 0;
-}
+/* 弹窗的尺寸与滚动见文件末尾的非 scoped <style> 块：
+   Element Plus 把 class 落在 .el-dialog 自身，scoped 的 :deep() 拼出的是「祖先 后代」选择器，
+   对同一个元素不成立（原先写在这里的两条 site-edit-dialog 规则其实一直没生效）。 */
 
 /* 拖拽排序样式 */
 .drag-handle {
@@ -2564,8 +2557,43 @@ const handleDelete = (site: SiteConfig) => {
     overflow-x: auto;
     justify-content: space-between;
   }
+}
+</style>
 
-  .site-edit-dialog :deep(.el-dialog) {
+<!--
+  编辑站点 / Dupe 查重设置弹窗：高度封顶，内容区自己滚动（表头表尾固定）。
+
+  ⚠️ 必须放在非 scoped 的样式块里。Element Plus 会把 <el-dialog class="..."> 的 class
+  落到 .el-dialog 自己身上（dialog.vue 用 $attrs 透传，见 el-dialog-content 的根 div），
+  而 scoped 的 `:deep()` 拼出来的是「祖先 + 后代」形式（.site-edit-dialog[data-v-x] .el-dialog），
+  同一个元素不可能同时是自己的祖先 —— 所以写在 scoped 块里那几条规则从来没生效过。
+-->
+<style>
+.site-edit-dialog {
+  /* 高度上限用 EP 自己的边距变量算：顶部 15vh + 底部 50px 之外全留给弹窗。
+     这样内容再长也不会超出视口，且不会再多出一根「整页滚动条」（高度不够时只滚内容区）。 */
+  max-height: calc(100vh - var(--el-dialog-margin-top, 15vh) - 50px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* 表头（含关闭按钮）与底部按钮始终可见，不被内容顶走 */
+.site-edit-dialog .el-dialog__header,
+.site-edit-dialog .el-dialog__footer {
+  flex: none;
+}
+
+/* 只有内容区滚动。min-height: 0 是让 flex 子项允许收缩的关键，
+   少了它内容会把弹窗继续撑高、滚动条不出现。 */
+.site-edit-dialog .el-dialog__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 768px) {
+  .site-edit-dialog {
     width: calc(100vw - 16px) !important;
     max-width: calc(100vw - 16px) !important;
   }

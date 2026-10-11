@@ -1,0 +1,132 @@
+site_name: "好学"
+
+# 好学 (HXPT / hxpt / www.hxpt.org) 发种映射配置
+# 抓取来源: https://www.hxpt.org/upload.php (登录态实测)
+# 表单: action=takeupload.php method=post enctype=multipart/form-data
+# 文件字段: file
+# 关键差异:
+#   1) 字段名【有】[4] 后缀: medium_sel[4] / codec_sel[4] / audiocodec_sel[4] /
+#      standard_sel[4] / source_sel[4] / team_sel[4] / processing_sel[4]
+#   2) ⚠️ 这是一个教育类站点，多数字段被二次定义为「教育」语义，与 PTNexus 标准语义错位：
+#      - audiocodec_sel[4] = 「年级」(幼儿园~高三) —— 不是音频编码，不配
+#      - codec_sel[4]     = 「格式」(RMVB/MP4/PDF/TXT/MKV…) —— 文件格式非视频编码，不配
+#      - source_sel[4]    = 「发布年份」(2010年前~2026) —— 不是产地/地区，不配
+#      - processing_sel[4]= 「版本」(人教版/苏教版等教材版本) —— 不是处理方式，不配
+#      上述四个字段在 yaml 里不配置，运行时自动跳过(站点非必填)
+#   3) type 分类: 401 学前教育 402 小学部 403 初中部 404 高职部 405 高中部 406 教育 410 纪录片
+#      ⚠️ 用户限定「只能发布纪录片」——非纪录片由 sites/hxpt.go:resolveHXPTRestriction 在入口
+#      用 *PreCheckError 确定性拒绝，本 yaml 的 mappings.type 只需覆盖纪录片(其余到不了映射)
+#   4) medium_sel[4] 媒介语义: 1=视频 2=音频 3=书籍 4=文档 5=笔记 6=课件 7=软件 8=会议 9=图片 10=其他
+#      纪录片一律填「视频」=1，其余(音频/书籍/课件等)与纪录片无关，全部兜底到 1
+#   5) standard_sel[4] 分辨率: 2=720p/720i 3=1080p/1080i 4=4K/2160p/2160i 5=8K/4320p/4320i 6=Other
+#      (注意: 无 1 值，从 2 开始)
+#   6) team_sel[4] 制作组: 8=HXWEB 9=HXPT 11=HX 10=Other
+#   7) 标签 tags[4][]: 常规标签(禁转/首发/DIY/国语/中字/HDR/完结/分集) + 学科标签(语文/数学/外语/
+#      历史/地理/物理/化学/生物/道法/音乐/美术/体育/自然科学/信息技术/兴趣爱好/古籍)
+#      —— 只映射常规标签，学科标签无 PTNexus 对应数据源，不映射
+#   8) 外链: url=IMDb 链接、pt_gen=PT-Gen（无 dburl / picture）
+#   9) 有 technical_info(MediaInfo) 独立 textarea —— MediaInfo 走独立字段，无需内联进简介
+#  10) 必填字段: 种子文件、简介(descr)、类型(type)；质量行、标签、IMDb 链接、PT-Gen 均非必填
+#  11) 匿名: NexusPHP 标准 uplver(anonymous.go 默认兜底，无需配置)
+
+upload_file_field: "file"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel[4]"
+  resolution: "standard_sel[4]"
+  team: "team_sel[4]"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  technical_info: "technical_info"
+  imdb_url: "url"                 # IMDb 链接文本框
+  pt_gen: "pt_gen"                # PT-Gen 链接文本框
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    resolution:
+      source_key: "分辨率"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Documentaries": "category.documentaries"
+      "Documentary": "category.documentaries"
+      "documentary": "category.documentaries"
+      "纪录片": "category.documentaries"
+
+    medium:
+      "视频": "medium.video"
+      "Other": "medium.other"
+      "其他": "medium.other"
+
+    resolution:
+      "720p/720i": "resolution.r720p"
+      "1080p/1080i": "resolution.r1080p"
+      "4K/2160p/2160i": "resolution.r2160p"
+      "8K/4320p/4320i": "resolution.r4320p"
+      "Other": "resolution.other"
+
+    team:
+      "HXWEB": "team.hxweb"
+      "HXPT": "team.hxpt"
+      "HX": "team.hx"
+      "Other": "team.other"
+
+mappings:
+  # type 分类: 410=纪录片 (401-406 为教育分类，非纪录片在入口被拒绝)
+  type:
+    "category.documentaries": "410"
+    "default": "410"
+
+  # medium_sel[4] 媒介: 1=视频 2=音频 3=书籍 4=文档 5=笔记 6=课件 7=软件 8=会议 9=图片 10=其他
+  # 纪录片一律「视频」=1；其余语义(音频/书籍/课件等)与纪录片无关，全部兜底到 1
+  medium:
+    "medium.video": "1"
+    "medium.uhd_bluray": "1"
+    "medium.uhd_diy": "1"
+    "medium.bluray": "1"
+    "medium.bluray_diy": "1"
+    "medium.remux": "1"
+    "medium.encode": "1"
+    "medium.encode_2160p": "1"
+    "medium.encode_1080p": "1"
+    "medium.encode_720p": "1"
+    "medium.webdl": "1"
+    "medium.webrip": "1"
+    "medium.hdtv": "1"
+    "medium.dvd": "1"
+    "medium.dvdr": "1"
+    "medium.cd": "1"
+    "medium.track": "1"
+    "medium.minibd": "1"
+    "medium.other": "1"
+    "default": "1"
+
+  # standard_sel[4] 分辨率: 2=720p/720i 3=1080p/1080i 4=4K/2160p/2160i 5=8K/4320p/4320i 6=Other
+  resolution:
+    "resolution.r2160p": "4"
+    "resolution.r4320p": "5"
+    "resolution.r1080p": "3"
+    "resolution.r1080i": "3"
+    "resolution.r720p": "2"
+    "resolution.sd": "6"
+    "resolution.other": "6"
+    "default": "6"
+
+  # team_sel[4] 制作组: 8=HXWEB 9=HXPT 11=HX 10=Other
+  team:
+    "team.hxweb": "8"
+    "team.hxpt": "9"
+    "team.hx": "11"
+    "team.other": "10"
+    "team.tlf": "10"
+    "team.bmdru": "10"
+    "team.original": "10"
+    "default": "10"

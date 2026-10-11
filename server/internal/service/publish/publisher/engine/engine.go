@@ -67,6 +67,10 @@ func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 		return publishsites.PublishPT52(input)
 	case "m-team", "mteam", "m_team":
 		return publishsites.PublishMTeam(input)
+	case "torrentccf", "tccf":
+		return publishsites.PublishTCCF(input)
+	case "hxpt":
+		return publishsites.PublishHXPT(input)
 	default:
 		return publisher.PublishPublic(input)
 	}

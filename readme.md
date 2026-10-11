@@ -256,6 +256,15 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.6（2026.10.11）
+
+- 新增：发布目标站点「他吹吹风」(TCCF / et8.org)，仅限纪录片，MediaInfo 内联进简介
+- 新增：发布目标站点「好学」(HXPT / www.hxpt.org)，仅限纪录片，MediaInfo 走独立字段
+- 优化：定时发种的目标站列表只保留「可发种 + 目标站 + 已配 Cookie/Passkey」的站点，并对不满足条件的已选站点给出提示
+- 修复：Element Plus 表格固定列在玻璃态样式下透出下层内容（两列重叠）
+- 修复：表格滚动条在非悬停时不可见、容易漏看，改为常显并提高不透明度
+- 修复：站点设置弹窗高度不受控，改为内容区独立滚动、表头表尾固定
+
 ### v4.0.5（2026.10.11）
 
 - 修复：在线更新在 btrfs / fuse-overlayfs 等文件系统上报「invalid cross-device link」导致安装失败

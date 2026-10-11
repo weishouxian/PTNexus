@@ -1,0 +1,213 @@
+site_name: "他吹吹风"
+
+# 他吹吹风 (TCCF / torrentccf / et8.org) 发种映射配置
+# 抓取来源: https://et8.org/upload.php (登录态实测)
+# 表单: action=takeupload.php method=post enctype=multipart/form-data
+# 文件字段: file
+# 关键差异:
+#   1) 标准 NexusPHP 六维度字段名【无】[N] 后缀:
+#      medium_sel / codec_sel / audiocodec_sel / standard_sel / team_sel
+#   2) source_sel 不是「产地/地区」，而是「次类型」——纪录片的内容学科分类
+#      (1信息技术 2自然科学 3社科 4哲学 5法律 6军事政治 7经济 8/9文体教育 10语言文字
+#       11文学艺术 12历史地理 13医学卫生 14其他)。PTNexus 的 source.* 是地区，对不上，不配
+#   3) type 只有两个大类: 624=Documentaries.纪录片 + 628-635 Elearning(电子书/杂志/漫画/有声书/公开课/视频教程)
+#      ⚠️ 用户限定「只能发布纪录片」——非纪录片由 sites/torrentccf.go:resolveTCCFRestriction 在入口
+#      用 *PreCheckError 确定性拒绝，本 yaml 的 mappings.type 只需覆盖纪录片(其余到不了映射)
+#   4) 无 tags[] 数组、无独立标签 checkbox(只有 uplver 匿名 checkbox) —— 不配 tag
+#   5) 外链只有 url(IMDb 链接文本框)，无 dburl / pt_gen / picture
+#   6) 无 mediainfo / technical_info 独立字段(textarea 只有 descr，且简介是必填 *) ——
+#      MediaInfo 由 helpers.go shouldInlineMediainfo 白名单内联进简介([quote] 包裹)
+#   7) 必填字段: 种子文件、简介(descr)、类型(type)；质量行(source/medium/codec/audio/standard)、
+#      内容行(team)、IMDb 链接均非必填
+#   8) 匿名: NexusPHP 标准 uplver(anonymous.go 默认兜底，无需配置)
+
+upload_file_field: "file"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel"
+  video_codec: "codec_sel"
+  audio_codec: "audiocodec_sel"
+  resolution: "standard_sel"
+  team: "team_sel"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"                 # IMDb 链接文本框
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    audio_codec:
+      source_key: "音频编码"
+    resolution:
+      source_key: "分辨率"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Documentaries": "category.documentaries"
+      "Documentary": "category.documentaries"
+      "documentary": "category.documentaries"
+      "纪录片": "category.documentaries"
+      "Record Education": "category.documentaries"
+      "纪录教育": "category.documentaries"
+
+    medium:
+      "UHD Bluray": "medium.uhd_bluray"
+      "UHD Blu-ray": "medium.uhd_bluray"
+      "UHD原盘": "medium.uhd_bluray"
+      "BluRay": "medium.bluray"
+      "Blu-ray": "medium.bluray"
+      "BD原盘": "medium.bluray"
+      "Remux": "medium.remux"
+      "Encode": "medium.encode"
+      "WEB-DL": "medium.webdl"
+      "Web-DL": "medium.webdl"
+      "HDTV": "medium.hdtv"
+      "HDRip": "medium.other"
+      "DVDR": "medium.dvd"
+      "DVDRip": "medium.dvd"
+      "DVD": "medium.dvd"
+      "Other": "medium.other"
+
+    video_codec:
+      "H.264": "video.h264"
+      "x264": "video.x264"
+      "AVC": "video.h264"
+      "H265/HEVC": "video.h265"
+      "H.265": "video.h265"
+      "x265": "video.x265"
+      "HEVC": "video.h265"
+      "VC-1": "video.vc1"
+      "Xvid": "video.xvid"
+      "MPEG-2": "video.mpeg2"
+      "Other": "video.other"
+
+    audio_codec:
+      "FLAC": "audio.flac"
+      "APE": "audio.ape"
+      "DTS-HD": "audio.dts_hd"
+      "DTS": "audio.dts"
+      "AC3": "audio.ac3"
+      "AC-3": "audio.ac3"
+      "AAC": "audio.aac"
+      "TrueHD": "audio.truehd"
+      "LPCM": "audio.lpcm"
+      "WAV": "audio.wav"
+      "MP3": "audio.mp3"
+      "Other": "audio.other"
+
+    resolution:
+      "2160/4K": "resolution.r2160p"
+      "2160p": "resolution.r2160p"
+      "4K": "resolution.r2160p"
+      "1080p": "resolution.r1080p"
+      "1080i": "resolution.r1080i"
+      "720p": "resolution.r720p"
+      "SD": "resolution.sd"
+
+    team:
+      "TorrentCCF/TCCF": "team.other"
+      "TCCF": "team.other"
+      "TLF": "team.tlf"
+      "BMDru": "team.bmdru"
+      "CatEDU": "team.catedu"
+      "MADFOX": "team.other"
+      "个人原创资源(Original)": "team.original"
+      "Original": "team.original"
+      "其他(other)": "team.other"
+      "Other": "team.other"
+
+mappings:
+  # type 分类: 624=Documentaries.纪录片 (628-635 为 Elearning 电子书/学习类，非纪录片在入口被拒绝)
+  type:
+    "category.documentaries": "624"
+    "default": "624"
+
+  # medium_sel 媒介: 10=UHD Bluray 1=BluRay 5=Remux 11=Encode 9=WEB-DL 6=HDTV 3=HDRip 7=DVDR 4=DVDRip 8=Other 12=PDF 13=EPUB 14=AZW3 15=MOBI 16=TXT 17=Pictures
+  medium:
+    "medium.uhd_bluray": "10"
+    "medium.uhd_diy": "10"
+    "medium.bluray": "1"
+    "medium.bluray_diy": "1"
+    "medium.remux": "5"
+    "medium.encode": "11"
+    "medium.encode_2160p": "11"
+    "medium.encode_1080p": "11"
+    "medium.encode_720p": "11"
+    "medium.webdl": "9"
+    "medium.webrip": "9"
+    "medium.hdtv": "6"
+    "medium.dvd": "7"
+    "medium.dvdr": "7"
+    "medium.cd": "8"
+    "medium.track": "8"
+    "medium.minibd": "8"
+    "medium.other": "8"
+    "default": "8"
+
+  # codec_sel 视频编码: 1=H.264 6=x265 8=H265/HEVC 7=x264 2=VC-1 3=Xvid 4=MPEG-2 5=Other
+  video_codec:
+    "video.h264": "1"
+    "video.x264": "7"
+    "video.avc": "1"
+    "video.h265": "8"
+    "video.x265": "6"
+    "video.hevc": "8"
+    "video.vc1": "2"
+    "video.xvid": "3"
+    "video.mpeg2": "4"
+    "video.mpeg4": "4"
+    "video.av1": "5"
+    "video.other": "5"
+    "default": "5"
+
+  # audiocodec_sel 音频编码: 1=FLAC 2=APE 3=DTS 4=AC3 6=AAC 8=DTS-HD 9=TrueHD 10=LPCM 11=WAV 5=MP3 7=Other
+  audio_codec:
+    "audio.flac": "1"
+    "audio.ape": "2"
+    "audio.dts": "3"
+    "audio.ac3": "4"
+    "audio.ddp": "4"
+    "audio.aac": "6"
+    "audio.dts_hd_ma": "8"
+    "audio.dts_hd": "8"
+    "audio.dts_hd_hr": "8"
+    "audio.dtsx": "8"
+    "audio.truehd": "9"
+    "audio.truehd_atmos": "9"
+    "audio.ddp_atmos": "4"
+    "audio.lpcm": "10"
+    "audio.wav": "11"
+    "audio.mp3": "5"
+    "audio.mpeg": "5"
+    "audio.opus": "7"
+    "audio.other": "7"
+    "default": "7"
+
+  # standard_sel 分辨率: 5=2160/4K 1=1080p 2=1080i 3=720p 4=SD
+  resolution:
+    "resolution.r2160p": "5"
+    "resolution.r4320p": "5"
+    "resolution.r1080p": "1"
+    "resolution.r1080i": "2"
+    "resolution.r720p": "3"
+    "resolution.sd": "4"
+    "resolution.other": "4"
+    "default": "4"
+
+  # team_sel 制作组: 1=TorrentCCF/TCCF 2=TLF 3=BMDru 4=CatEDU 5=MADFOX 6=个人原创资源(Original) 7=其他(other)
+  team:
+    "team.tlf": "2"
+    "team.bmdru": "3"
+    "team.catedu": "4"
+    "team.original": "6"
+    "team.other": "7"
+    "default": "7"

@@ -55,6 +55,9 @@
               <el-button size="small" type="primary" @click="selectAllSites">全选</el-button>
               <el-button size="small" type="info" @click="clearAllSites">清空</el-button>
             </el-button-group>
+            <span class="site-selection-hint">
+              仅列出「可发种 + 目标站/源站·目标站 + 已配置 Cookie 或 Passkey」的站点（共 {{ siteList.length }} 个）
+            </span>
           </div>
           <SiteTagChips
             :sites="tagSiteItems"
@@ -68,14 +71,33 @@
               :key="site.name"
               class="site-button"
               :type="form.target_sites.includes(site.name) ? 'success' : 'default'"
-              :disabled="site.can_publish === false"
+              :disabled="!isUsableTargetSite(site)"
               @click="toggleSite(site.name)"
             >
               {{ site.name }}
             </el-button>
             <div v-if="siteList.length === 0 && !sitesLoading" class="site-empty">
-              暂无可用目标站点
+              {{
+                siteStatusLoaded
+                  ? '暂无可用目标站点（需为可发种的目标站，且已配置 Cookie 或 Passkey）'
+                  : '站点状态获取失败，请关闭弹窗后重试'
+              }}
             </div>
+          </div>
+          <div v-if="unavailableSelectedSites.length" class="site-selection-warning">
+            <span class="site-selection-warning-text">
+              以下已选站点当前不满足上述条件，发布时会失败，建议移除：
+            </span>
+            <el-tag
+              v-for="name in unavailableSelectedSites"
+              :key="name"
+              type="danger"
+              size="small"
+              closable
+              @close="removeSite(name)"
+            >
+              {{ name }}
+            </el-tag>
           </div>
         </div>
       </el-form-item>
@@ -253,16 +275,41 @@ const removeSeed = (index: number) => {
 }
 
 // ---- 目标站点按钮网格 ----
-type SiteItem = { name: string; can_publish: boolean; tags: string[] }
+type SiteItem = {
+  name: string
+  can_publish: boolean
+  /** 角色含「目标站」（migration = 2 或 3） */
+  is_target: boolean
+  /** 已配置 Cookie */
+  has_cookie: boolean
+  /** 已配置 Passkey */
+  has_passkey: boolean
+  tags: string[]
+}
 const siteList = ref<SiteItem[]>([])
 const sitesLoading = ref(false)
+/** 站点状态是否取到（用于区分「确实没有可用站点」与「状态接口失败」） */
+const siteStatusLoaded = ref(false)
 
-// 传给标签快捷选择组件的站点清单（不可发布 => disabled）。
+// 定时发种的目标站必须同时满足三条：
+//   ① 可发种（can_publish）② 角色含「目标站」（migration 2 或 3）③ 已配置 Cookie 或 Passkey。
+// 少了任意一条，任务跑起来都会卡在发布阶段（站点不接受发布 / 没有凭据无法上传），
+// 所以这里直接把它们挡在可选清单之外，而不是列出来再让用户踩坑。
+const isUsableTargetSite = (site: SiteItem): boolean =>
+  site.can_publish && site.is_target && (site.has_cookie || site.has_passkey)
+
+// 已选中、但当前不在可用清单里的站点（历史任务遗留，或站点配置后来被改掉）。
+// 不静默丢弃 —— 保存时仍会带上它们，所以这里显式列出来让用户决定是否移除。
+const unavailableSelectedSites = computed(() =>
+  form.target_sites.filter((name) => !siteList.value.some((site) => site.name === name)),
+)
+
+// 传给标签快捷选择组件的站点清单（不可用 => disabled）。
 const tagSiteItems = computed(() =>
   siteList.value.map((site) => ({
     name: site.name,
     tags: site.tags,
-    disabled: site.can_publish === false,
+    disabled: !isUsableTargetSite(site),
   })),
 )
 
@@ -290,8 +337,13 @@ const toggleSite = (site: string) => {
   }
 }
 
+// 从上一步「不可用已选站点」里移除（语义明确，不必借用 toggleSite 的取反逻辑）
+const removeSite = (site: string) => {
+  form.target_sites = form.target_sites.filter((name) => name !== site)
+}
+
 const selectAllSites = () => {
-  form.target_sites = siteList.value.filter((s) => s.can_publish !== false).map((s) => s.name)
+  form.target_sites = siteList.value.map((s) => s.name)
 }
 
 const clearAllSites = () => {
@@ -305,43 +357,75 @@ const fetchSiteList = async () => {
       axios.get('/api/sites_list'),
       axios.get('/api/sites/status'),
     ])
-    // 构建 can_publish / tags 映射 (name → 值)
-    const canPublishMap = new Map<string, boolean>()
-    const tagsMap = new Map<string, string[]>()
+
+    // /api/sites/status 是站点可用性的真源：能否发种、角色是否含目标、有没有凭据、标签。
+    type SiteStatus = {
+      canPublish: boolean
+      isTarget: boolean
+      hasCookie: boolean
+      hasPasskey: boolean
+      tags: string[]
+    }
+    const statusMap = new Map<string, SiteStatus>()
     if (Array.isArray(statusRes.data)) {
       for (const s of statusRes.data) {
-        canPublishMap.set(s.name, s.can_publish !== false)
-        tagsMap.set(s.name, Array.isArray(s.tags) ? s.tags : [])
+        const name = String(s?.name || '').trim()
+        if (!name) continue
+        statusMap.set(name, {
+          canPublish: s.can_publish !== false,
+          isTarget: s.is_target === true,
+          hasCookie: s.has_cookie === true,
+          hasPasskey: s.has_passkey === true,
+          tags: Array.isArray(s.tags) ? s.tags : [],
+        })
       }
     }
-    // /api/sites_list 返回 { source_sites: [...], target_sites: [...] }
-    if (listRes.data?.target_sites && Array.isArray(listRes.data.target_sites)) {
-      siteList.value = listRes.data.target_sites
-        .map((s: any) => {
-          const name = typeof s === 'string' ? s : s.site || s.nickname || ''
-          if (!name) return null
-          return {
-            name,
-            can_publish: canPublishMap.get(name) !== false,
-            tags: tagsMap.get(name) || [],
-          }
-        })
-        .filter(Boolean) as SiteItem[]
-    } else if (Array.isArray(listRes.data)) {
-      siteList.value = listRes.data
-        .map((s: any) => {
-          const name = typeof s === 'string' ? s : s.name || ''
-          if (!name) return null
-          return {
-            name,
-            can_publish: canPublishMap.get(name) !== false,
-            tags: tagsMap.get(name) || [],
-          }
-        })
-        .filter(Boolean) as SiteItem[]
+    siteStatusLoaded.value = statusMap.size > 0
+
+    const toSiteItem = (name: string): SiteItem => {
+      const status = statusMap.get(name)
+      return {
+        name,
+        can_publish: status?.canPublish ?? false,
+        is_target: status?.isTarget ?? false,
+        has_cookie: status?.hasCookie ?? false,
+        has_passkey: status?.hasPasskey ?? false,
+        tags: status?.tags ?? [],
+      }
     }
+
+    // /api/sites_list 返回 { source_sites: [...], target_sites: [...] }。
+    // target_sites 已按角色筛过（migration 2/3），但还可能缺凭据或不可发种，
+    // 所以这里再用 isUsableTargetSite 收紧一层 —— 见该函数的注释。
+    // 列表项可能是站点昵称字符串，也可能是带 site/nickname 字段的对象，两种都兼容。
+    const pickSiteName = (raw: unknown, keys: string[]): string => {
+      if (typeof raw === 'string') return raw
+      if (raw && typeof raw === 'object') {
+        const record = raw as Record<string, unknown>
+        for (const key of keys) {
+          const value = record[key]
+          if (typeof value === 'string' && value.trim() !== '') return value
+        }
+      }
+      return ''
+    }
+
+    const rawNames: string[] = Array.isArray(listRes.data?.target_sites)
+      ? listRes.data.target_sites.map((s: unknown) => pickSiteName(s, ['site', 'nickname']))
+      : Array.isArray(listRes.data)
+        ? listRes.data.map((s: unknown) => pickSiteName(s, ['name']))
+        : []
+
+    const usableSites = rawNames
+      .map((name) => name.trim())
+      .filter((name) => name !== '')
+      .map(toSiteItem)
+      .filter(isUsableTargetSite)
+    // 站点昵称理论上唯一，这里仍按名字去重：重复项会让 v-for 的 key 冲突
+    siteList.value = Array.from(new Map(usableSites.map((site) => [site.name, site])).values())
   } catch (e) {
     console.error('获取站点列表失败:', e)
+    siteStatusLoaded.value = false
   } finally {
     sitesLoading.value = false
   }
@@ -501,7 +585,35 @@ const handleSubmit = async () => {
 }
 
 .site-selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.site-selection-hint {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.site-selection-warning {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid #fde2e2;
+  border-radius: 4px;
+  background-color: #fef0f0;
+}
+
+.site-selection-warning-text {
+  color: #f56c6c;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .site-buttons-group {
