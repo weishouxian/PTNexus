@@ -19,6 +19,18 @@
   ],
   "history": [
     {
+      "version": "v4.0.4",
+      "date": "2026.10.11",
+      "changes": [
+        "新增：转种目标站点-聆音（pt.soulvoice.club），MediaInfo 内联进简介",
+        "优化：音频编码统一以媒体主音轨重建（编码 + 声道 + Atmos + 音轨数）",
+        "优化：桌面端内置站点配置与主程序保持一致",
+        "修复：MediaInfo 声道解析正则退化导致多声道被识别为 2.0",
+        "修复：DTS-HD MA（DTS XLL）被误判为 DTS:X，补齐 BDInfo 音轨解析",
+        "修复：Gitee 发布脚本改用 Authorization 头鉴权"
+      ]
+    },
+    {
       "version": "v4.0.3",
       "date": "2026.10.10",
       "changes": [

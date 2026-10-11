@@ -1,0 +1,231 @@
+site_name: "聆音"
+
+# 聆音Club (pt.soulvoice.club) 发种映射配置
+# 抓取来源: https://pt.soulvoice.club/upload.php (登录态实测)
+# 表单: action=takeupload.php method=post enctype=multipart/form-data
+# 文件字段: file
+# 关键差异:
+#   1) 同 ptfans：两个 name=type 的 select 靠 data-mode 前端二选一显示
+#      - id=browsecat data-mode=4 → 种子区(401-409)，字段带 [4] 后缀
+#      - id=specialcat data-mode=8 → 特别区(499 有声书 / 500 电子书)，字段带 [8] 后缀
+#      引擎只发种子区 mode_4 那一套，[8] 后缀一律不配
+#   2) 种子区没有 source_sel(产地/地区)、没有 audiocodec_sel —— 不配，运行时自动跳过
+#      (source_sel[8]/audiocodec_sel[8]/processing_sel[8] 属于特别区图书语义：语言/文件格式/类别)
+#   3) 媒介选项极少: 12=Other 11=DSD 10=APE/FLAC 4=MiniBD 7=Encode，站内实测绝大多数种子都选 Other
+#   4) 分辨率无 720P 档: 1=1080P 2=1080I 3=2160P 4=Other
+#   5) 标签是 tags[4][] 数组: 10=应求 9=特效 8=完结 1=禁转 13=原创 2=首发 4=DIY 5=国语 6=中字 7=HDR 12=杜比 11=HLG
+#   6) 外链: url 是「IMDb链接」文本框；pt_gen 是 PT-Gen 链接(豆瓣链接填这里)；无 dburl
+#   7) 无 mediainfo / technical_info 独立字段(textarea 只有 descr) ——
+#      MediaInfo 由 helpers.go shouldInlineMediainfo 白名单内联进简介([quote] 包裹)
+#   8) 匿名: NexusPHP 标准 uplver（anonymous.go 默认兜底，无需配置）
+#   9) 只有「类型」是必填(带红 *)；质量/标签行均无必填标记
+
+upload_file_field: "file"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel[4]"
+  video_codec: "codec_sel[4]"
+  resolution: "standard_sel[4]"
+  team: "team_sel[4]"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"                 # IMDb 链接文本框
+  pt_gen: "pt_gen"                # PT-Gen 外链(豆瓣链接会填这里)
+  "tags[4][]": "tags[4][]"
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    resolution:
+      source_key: "分辨率"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Movies": "category.movie"
+      "Movie": "category.movie"
+      "电影": "category.movie"
+      "TV Series": "category.tv_series"
+      "TV-Series": "category.tv_series"
+      "TVSeries": "category.tv_series"
+      "电视剧": "category.tv_series"
+      "剧集": "category.tv_series"
+      "TV Shows": "category.tv_shows"
+      "TV-Shows": "category.tv_shows"
+      "综艺": "category.tv_shows"
+      "Documentaries": "category.documentaries"
+      "Documentary": "category.documentaries"
+      "纪录片": "category.documentaries"
+      "Animate": "category.animation"
+      "Animation": "category.animation"
+      "动画": "category.animation"
+      "动漫": "category.animation"
+      "Music": "category.music"
+      "音乐": "category.music"
+      "Music Video": "category.mv"
+      "MV": "category.mv"
+      "音乐视频": "category.mv"
+      "School": "category.study"
+      "教育": "category.study"
+      "教学": "category.study"
+      "Book": "category.ebook"
+      "书籍": "category.ebook"
+      "Audiobook": "category.audiobook"
+      "有声书": "category.audiobook"
+      "Software": "category.software"
+      "软件": "category.software"
+      "Game": "category.game"
+      "游戏": "category.game"
+      "Other": "category.other"
+
+    medium:
+      "MiniBD": "medium.minibd"
+      "Remux": "medium.remux"
+      "Encode": "medium.encode"
+      "Blu-ray": "medium.bluray"
+      "UHD Blu-ray": "medium.uhd_bluray"
+      "UHD原盘": "medium.uhd_bluray"
+      "BD原盘": "medium.bluray"
+      "WEB-DL": "medium.webdl"
+      "Web-DL": "medium.webdl"
+      "HDTV": "medium.hdtv"
+      "DVDR": "medium.dvd"
+      "DVD": "medium.dvd"
+      "CD": "medium.cd"
+      "Track": "medium.track"
+      "Other": "medium.other"
+
+    video_codec:
+      "H.264": "video.h264"
+      "x264": "video.x264"
+      "AVC": "video.h264"
+      "H.265": "video.h265"
+      "x265": "video.x265"
+      "HEVC": "video.h265"
+      "VC-1": "video.vc1"
+      "MPEG-2": "video.mpeg2"
+      "Xvid": "video.xvid"
+      "AV1": "video.av1"
+      "Other": "video.other"
+
+    resolution:
+      "8K": "resolution.r4320p"
+      "4320p": "resolution.r4320p"
+      "4K": "resolution.r2160p"
+      "2160p": "resolution.r2160p"
+      "1080p": "resolution.r1080p"
+      "1080i": "resolution.r1080i"
+      "720p": "resolution.r720p"
+      "SD": "resolution.sd"
+
+    team:
+      "HDS": "team.hds"
+      "CHD": "team.chd"
+      "FRDS": "team.frds"
+      "CMCT": "team.cmct"
+      "Other": "team.other"
+
+mappings:
+  # type 分类(种子区 mode_4, id=browsecat)
+  #   401=电影 402=电视剧 403=综艺 404=纪录片 405=动漫
+  #   406=音乐视频 407=教学 408=音乐 409=其它
+  type:
+    "category.movie": "401"
+    "category.movie_3d": "401"
+    "category.tv_series": "402"
+    "category.tv_pack": "402"
+    "category.tv_shows": "403"
+    "category.documentaries": "404"
+    "category.animation": "405"
+    "category.mv": "406"
+    "category.study": "407"
+    "category.music": "408"
+    "category.stage": "409"
+    "category.audiobook": "409"
+    "category.ebook": "409"
+    "category.game": "409"
+    "category.software": "409"
+    "category.sports": "409"
+    "category.drama": "409"
+    "category.other": "409"
+    "default": "409"
+
+  # medium_sel[4] 媒介: 12=Other 11=DSD 10=APE/FLAC 4=MiniBD 7=Encode
+  # 站点媒介档位很少(站内实测绝大多数种子都用 Other)，只把语义精确对应的填进去，其余兜底 Other
+  medium:
+    "medium.minibd": "4"
+    "medium.encode": "7"
+    "medium.encode_2160p": "7"
+    "medium.encode_1080p": "7"
+    "medium.encode_720p": "7"
+    "default": "12"
+
+  # codec_sel[4] 视频编码: 1=H.264 2=H.265 5=Other
+  video_codec:
+    "video.h264": "1"
+    "video.x264": "1"
+    "video.avc": "1"
+    "video.h265": "2"
+    "video.x265": "2"
+    "video.hevc": "2"
+    "video.vc1": "5"
+    "video.mpeg2": "5"
+    "video.mpeg4": "5"
+    "video.xvid": "5"
+    "video.av1": "5"
+    "video.other": "5"
+    "default": "5"
+
+  # standard_sel[4] 分辨率: 1=1080P 2=1080I 3=2160P 4=Other(无 720P/8K 档)
+  resolution:
+    "resolution.r1080p": "1"
+    "resolution.r1080i": "2"
+    "resolution.r2160p": "3"
+    "resolution.r4320p": "4"
+    "resolution.r720p": "4"
+    "resolution.sd": "4"
+    "resolution.other": "4"
+    "default": "4"
+
+  # team_sel[4] 制作组: 1=HDS 2=CHD 3=FRDS 4=CMCT 5=Other
+  team:
+    "team.hds": "1"
+    "team.chd": "2"
+    "team.frds": "3"
+    "team.cmct": "4"
+    "team.other": "5"
+    "default": "5"
+
+  # tags[4][] 标签: 10=应求 9=特效 8=完结 1=禁转 13=原创 2=首发 4=DIY 5=国语 6=中字 7=HDR 12=杜比 11=HLG
+  tag:
+    "tag.应求": "10"
+    "tag.特效": "9"
+    "tag.完结": "8"
+    "tag.禁转": "1"
+    "tag.原创": "13"
+    "tag.首发": "2"
+    "tag.DIY": "4"
+    "tag.国语": "5"
+    "tag.中字": "6"
+    "tag.简繁中字": "6"
+    "tag.HDR": "7"
+    "tag.HDR10": "7"
+    "tag.杜比": "12"
+    "tag.杜比视界": "12"
+    "tag.Dolby Vision": "12"
+    "tag.DoVi": "12"
+    "tag.HLG": "11"
+    "default": null
+
+# 标签决定分类: 带动画/动漫标签时必须归到 405 动漫(站点有独立动漫分类)
+type_by_tag:
+  "tag.动画": "category.animation"
+  "tag.动漫": "category.animation"

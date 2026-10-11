@@ -256,6 +256,28 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.4（2026.10.11）
+
+- 新增：转种目标站点-聆音（pt.soulvoice.club），MediaInfo 内联进简介
+- 优化：音频编码统一以媒体主音轨重建（编码 + 声道 + Atmos + 音轨数）
+- 优化：桌面端内置站点配置与主程序保持一致
+- 修复：MediaInfo 声道解析正则退化导致多声道被识别为 2.0
+- 修复：DTS-HD MA（DTS XLL）被误判为 DTS:X，补齐 BDInfo 音轨解析
+- 修复：Gitee 发布脚本改用 Authorization 头鉴权
+
+### v4.0.3（2026.10.10）
+
+- 新增：接入馒头、CHD、家园、爱玲、我的PT、柠檬不甜、修道院、HDvideo、dstudio、novahd、TTG、野马等源站与目标站
+- 新增：自动发种支持定时发种与一种多站发布，进度页可对单站任务立即发布或取消
+- 新增：dupe 查重按 6 类媒介归组匹配，支持自定义尺寸容差与规则
+- 新增：碟结构媒介纠偏与 DIY 标签同步
+- 新增：发种日志支持「重新添加到下载器」
+- 新增：截图数量可配置，非 HDR 种子自动重新获取截图
+- 优化：首页加载速度与 Mediainfo 信息展示
+- 修复：音频编码 DTS XLL 被误判为 DTS:X，补齐 BDInfo 音轨解析
+- 修复：发布进度时间显示为 UTC 等时区相关问题
+- 修复：远程下载器路径映射无效
+
 ### v4.0.2（2026.03.21）
 
 - 修改：盒子端脚本下载地址
