@@ -32,7 +32,9 @@
 /proxy/pt-nexus-box-proxy.exe
 
 # Local IDE/agent private settings
-/.claude/settings.local.json
+/.claude/
+/.codex/
+/.github/
 /.vscode/*
 !/.vscode/extensions.json
 */__pycache__
@@ -43,8 +45,5 @@
 # Release build staging (binaries + manifests generated during manual release)
 /dist/
 
-# WorkBuddy agent private workspace (skills / scratch / ad-hoc diagnostics)
-/.workbuddy/skills/
-/.workbuddy/tmp/
-/.workbuddy/tmp_*.py
-/.workbuddy/tmp_*.sh
+# WorkBuddy agent private workspace (skills / scratch / memory / diagnostics)
+/.workbuddy/
