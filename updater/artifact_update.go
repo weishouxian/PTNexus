@@ -1298,7 +1298,7 @@ func ensureRuntimeSymlinks() (baseDir, currentLink, currentTarget string, err er
 }
 
 func waitForServerHealthy(ctx context.Context) error {
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	urlStr := fmt.Sprintf("http://127.0.0.1:%s/health", serverPort)
 	client := &http.Client{Timeout: 3 * time.Second}
 	var lastErr string
