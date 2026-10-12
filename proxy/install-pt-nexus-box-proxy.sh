@@ -179,23 +179,35 @@ download_bdinfo_tools() {
         return 1
     fi
 
-    # 下载每个文件（按候选目录依次尝试，优先 arch 专属目录）
+    # 下载每个文件：优先 Release 附件（与代理二进制同一 CDN，最稳），
+    # 再回退仓库 raw（按 arch 目录）以及 raw 的 gh-proxy 镜像（国内直连 raw 常不通）。
     for file in "${files[@]}"; do
         local downloaded=false
-        for bdinfo_platform_dir in "${bdinfo_platform_dirs[@]}"; do
-            local remote_path="server/bdinfo/$bdinfo_platform_dir/$file"
-            local url="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$REPO_REF/$remote_path"
 
-            log "正在下载 $file..."
-            log "尝试下载: $remote_path"
+        # 附件名带架构后缀，避免 amd64 / arm64 互相覆盖
+        local asset_name="$file-$ARCH"
+        if [ "$file" = "liblzfse.so" ]; then
+            asset_name="liblzfse-$ARCH.so"
+        fi
+
+        local urls=("https://github.com/$REPO_OWNER/$REPO_NAME/releases/latest/download/$asset_name")
+        for bdinfo_platform_dir in "${bdinfo_platform_dirs[@]}"; do
+            local raw_url="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$REPO_REF/server/bdinfo/$bdinfo_platform_dir/$file"
+            urls+=("$raw_url")
+            urls+=("https://gh-proxy.com/$raw_url")
+        done
+
+        for url in "${urls[@]}"; do
+            log "正在下载 $file: $url"
+            rm -f "$file"
 
             if [ "$downloader" = "curl" ]; then
-                if curl -L -f -o "$file" "$url"; then
+                if curl -L -f --connect-timeout 15 --retry 2 -o "$file" "$url"; then
                     downloaded=true
                     break
                 fi
             else
-                if wget -O "$file" "$url"; then
+                if wget -q -T 15 -t 2 -O "$file" "$url"; then
                     downloaded=true
                     break
                 fi
@@ -203,7 +215,10 @@ download_bdinfo_tools() {
         done
 
         if [ "$downloaded" != "true" ]; then
-            error "下载 $file 失败，未找到可用的 BDInfo 文件路径（已尝试: ${bdinfo_platform_dirs[*]}）"
+            error "下载 $file 失败，已尝试以下地址："
+            for url in "${urls[@]}"; do
+                error "  - $url"
+            done
             rm -f "$file"
             cd ..
             return 1

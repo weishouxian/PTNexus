@@ -79,6 +79,21 @@ done
 
 install -m 0755 "$PROXY_ROOT/install-pt-nexus-box-proxy.sh" "${OUT_DIR}/install-pt-nexus-box-proxy.sh"
 
+# --- BDInfo 附件 ---
+# install-pt-nexus-box-proxy.sh 会优先从 releases/latest/download/ 拉这三个附件
+# （和代理二进制同一 CDN，国内可直连；raw.githubusercontent.com 常被墙），
+# 附件名带架构后缀，避免 amd64 / arm64 互相覆盖。仓库 raw 只作为回退。
+for arch in $ARCHES; do
+  bdinfo_dir="${REPO_ROOT}/server/bdinfo/linux-${arch}"
+  if [[ ! -d "$bdinfo_dir" ]]; then
+    echo "[proxy/release] missing bdinfo dir: $bdinfo_dir" >&2
+    exit 1
+  fi
+  install -m 0755 "$bdinfo_dir/BDInfo" "${OUT_DIR}/BDInfo-${arch}"
+  install -m 0755 "$bdinfo_dir/BDInfoDataSubstractor" "${OUT_DIR}/BDInfoDataSubstractor-${arch}"
+  install -m 0644 "$bdinfo_dir/liblzfse.so" "${OUT_DIR}/liblzfse-${arch}.so"
+done
+
 echo "[proxy/release] building windows/amd64 standalone package"
 mkdir -p "${WINDOWS_STAGE_DIR}/bdinfo/windows"
 mkdir -p "${WINDOWS_STAGE_DIR}/runtime/logs"
