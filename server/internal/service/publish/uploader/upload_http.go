@@ -34,6 +34,14 @@ var reSelectTag = regexp.MustCompile(`(?is)<select\b[^>]*>.*?</select>`)
 var reOptionTag = regexp.MustCompile(`(?is)<option\b[^>]*>.*?</option>`)
 var reStripHTMLTags = regexp.MustCompile(`(?is)<[^>]+>`)
 var reHTMLAttr = regexp.MustCompile(`(?is)\s([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>` + "`" + `]+))`)
+var reUploadNoticeHeading = regexp.MustCompile(`(?is)<h1[^>]*>(.*?)</h1>`)
+var reUploadNoticeParagraph = regexp.MustCompile(`(?is)<p[^>]*>(.*?)</p>`)
+
+// uploadNoticeErrorKeywords 用于判定 h1 标题是否为站点失败/错误提示（NexusPHP 错误页形如 <h1>上传失败！</h1><p>原因</p>）。
+var uploadNoticeErrorKeywords = []string{
+	"失败", "错误", "出错", "异常", "禁止", "不允许", "无效",
+	"error", "failed", "failure", "invalid", "denied",
+}
 
 type uploadFormFields struct {
 	Hidden  map[string]string
@@ -118,6 +126,7 @@ func TryUploadTorrent(uploadURL, baseURL, cookie, fileField string, torrentFile 
 	bodyText := string(respBody)
 
 	isExisting := looksLikeExistingTorrent(bodyText)
+	uploadNotice := extractUploadNotice(bodyText)
 	responseDetail := summarizeResponseBody(bodyText)
 	detailLines = append(detailLines, fmt.Sprintf("响应状态: %d %s", resp.StatusCode, strings.TrimSpace(resp.Status)))
 
@@ -173,8 +182,13 @@ func TryUploadTorrent(uploadURL, baseURL, cookie, fileField string, torrentFile 
 	if responseDetail == "" {
 		responseDetail = "<empty response body>"
 	}
-	err = fmt.Errorf("HTTP %d 上传失败: %s", resp.StatusCode, responseDetail)
-	appendUploadRawResponse(&detailLines, bodyText)
+	if uploadNotice != "" {
+		// 站点已给出明确失败提示，提示本身即全部有效信息，无需再倾倒整页 HTML。
+		err = fmt.Errorf("HTTP %d 上传失败: %s", resp.StatusCode, uploadNotice)
+	} else {
+		err = fmt.Errorf("HTTP %d 上传失败: %s", resp.StatusCode, responseDetail)
+		appendUploadRawResponse(&detailLines, bodyText)
+	}
 	detailLines = append(detailLines, fmt.Sprintf("尝试结论: %v", err))
 	return "", isExisting, buildDetail(), err
 }
@@ -404,6 +418,11 @@ func summarizeResponseBody(text string) string {
 	if trimmed == "" {
 		return ""
 	}
+	if notice := extractUploadNotice(trimmed); notice != "" {
+		// 站点返回失败提示页（如 NexusPHP 的 <h1>上传失败！</h1><p>原因</p>）时，
+		// 只保留标题与原因正文，避免整页 CSS/JS 把关键信息淹没。
+		return truncateLogText("站点错误提示: "+notice, uploadResponseSummaryLimit)
+	}
 	normalized := strings.Join(strings.Fields(trimmed), " ")
 	title := extractUploadHTMLTitle(trimmed)
 	if looksLikeUploadFormPage(trimmed) {
@@ -416,6 +435,69 @@ func summarizeResponseBody(text string) string {
 		return truncateLogText("返回 HTML 页面: "+normalized, uploadResponseSummaryLimit)
 	}
 	return truncateLogText(normalized, uploadResponseSummaryLimit)
+}
+
+// extractUploadNotice 从站点返回的 HTML 页面中提取失败/错误提示正文。
+// 参数/返回：text 为响应正文；命中 NexusPHP 风格错误页时返回“标题 + 紧随其后的说明段落”，否则返回空串。
+// 失败场景：无 h1、h1 不含错误关键词、或正文为空时返回空串，由调用方回退到原始摘要逻辑。
+// 副作用：无。
+//
+// 背景：Audiences（人人）等 NexusPHP 站点发种校验失败时返回 HTTP 200 + 错误页，形如
+// <h1>上传失败！</h1><p>非完结剧集需在主标题内标明集数 SxxExx ，已完结剧集需勾选完结标签，请重新检查并修正。</p>
+// 页面里广告位等元素也含 <p>，因此必须以 h1 的位置为锚点向后取段落。
+func extractUploadNotice(text string) string {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return ""
+	}
+
+	heading := ""
+	headingEnd := -1
+	for _, match := range reUploadNoticeHeading.FindAllStringSubmatchIndex(trimmed, -1) {
+		if len(match) < 4 {
+			continue
+		}
+		candidate := cleanUploadNoticeText(trimmed[match[2]:match[3]])
+		if candidate == "" || !containsUploadNoticeErrorKeyword(candidate) {
+			continue
+		}
+		heading = candidate
+		headingEnd = match[1]
+		break
+	}
+	if heading == "" || headingEnd < 0 || headingEnd >= len(trimmed) {
+		return ""
+	}
+
+	body := ""
+	if match := reUploadNoticeParagraph.FindStringSubmatch(trimmed[headingEnd:]); len(match) >= 2 {
+		body = cleanUploadNoticeText(match[1])
+	}
+	if body == "" {
+		return truncateLogText(heading, 300)
+	}
+	return truncateLogText(heading+body, 300)
+}
+
+// cleanUploadNoticeText 去除 HTML 标签并归一化空白，用于把提示片段转成可读单行文本。
+func cleanUploadNoticeText(fragment string) string {
+	cleaned := reStripHTMLTags.ReplaceAllString(fragment, " ")
+	cleaned = html.UnescapeString(cleaned)
+	return strings.Join(strings.Fields(strings.TrimSpace(cleaned)), " ")
+}
+
+// containsUploadNoticeErrorKeyword 判断提示标题是否包含失败/错误语义关键词。
+func containsUploadNoticeErrorKeyword(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	for _, keyword := range uploadNoticeErrorKeywords {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func appendUploadRawResponse(detailLines *[]string, bodyText string) {
