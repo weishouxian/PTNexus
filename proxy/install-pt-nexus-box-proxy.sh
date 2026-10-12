@@ -145,7 +145,21 @@ download_bdinfo_tools() {
     mkdir -p "bdinfo"
     cd "bdinfo"
 
-    local bdinfo_platform_dir="linux"
+    # 仓库中 BDInfo 按目标架构分目录存放：server/bdinfo/linux-amd64/、server/bdinfo/linux-arm64/
+    # ⚠️ 2026-10 多架构拆分后目录名从 `linux` 变成了 `linux-<arch>`；取错路径会全部 404，
+    #    而本函数失败只 warn 不中断，表现为“代理能跑但 BDInfo 永远提不出东西”，
+    #    日志里是 `BDInfo executable not found; configure PTNEXUS_BDINFO_PATH or PTNEXUS_BDINFO_DIR`。
+    local bdinfo_platform_dirs=()
+    case "$ARCH" in
+        amd64|arm64)
+            bdinfo_platform_dirs=("linux-$ARCH" "linux")
+            ;;
+        *)
+            warn "当前架构 $ARCH 没有预编译的 BDInfo，跳过下载（BDInfo 功能不可用）"
+            cd ..
+            return 1
+            ;;
+    esac
 
     # BDInfo文件列表
     local files=(
@@ -165,27 +179,32 @@ download_bdinfo_tools() {
         return 1
     fi
 
-    # 下载每个文件
+    # 下载每个文件（按候选目录依次尝试，优先 arch 专属目录）
     for file in "${files[@]}"; do
         local downloaded=false
-        local remote_path="server/bdinfo/$bdinfo_platform_dir/$file"
-        local url="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$REPO_REF/$remote_path"
+        for bdinfo_platform_dir in "${bdinfo_platform_dirs[@]}"; do
+            local remote_path="server/bdinfo/$bdinfo_platform_dir/$file"
+            local url="https://raw.githubusercontent.com/$REPO_OWNER/$REPO_NAME/$REPO_REF/$remote_path"
 
-        log "正在下载 $file..."
-        log "尝试下载: $remote_path"
+            log "正在下载 $file..."
+            log "尝试下载: $remote_path"
 
-        if [ "$downloader" = "curl" ]; then
-            if curl -L -f -o "$file" "$url"; then
-                downloaded=true
+            if [ "$downloader" = "curl" ]; then
+                if curl -L -f -o "$file" "$url"; then
+                    downloaded=true
+                    break
+                fi
+            else
+                if wget -O "$file" "$url"; then
+                    downloaded=true
+                    break
+                fi
             fi
-        else
-            if wget -O "$file" "$url"; then
-                downloaded=true
-            fi
-        fi
+        done
 
         if [ "$downloaded" != "true" ]; then
-            error "下载 $file 失败，未找到可用的 BDInfo 文件路径"
+            error "下载 $file 失败，未找到可用的 BDInfo 文件路径（已尝试: ${bdinfo_platform_dirs[*]}）"
+            rm -f "$file"
             cd ..
             return 1
         fi
