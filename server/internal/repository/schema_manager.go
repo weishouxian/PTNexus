@@ -119,6 +119,18 @@ func (m *SchemaManager) backfillSeedParameterLastPublishAtFromPublishLogs() erro
 		return nil
 	}
 
+	// 只有「last_publish_at 仍为空」的 seed_parameters 行才可能被下面的 UPDATE 命中。
+	// 先取出这些行的匹配键：没有待回填行就直接返回；有的话也能据此把候选裁成超集。
+	// 否则每次启动都要按「成功发布日志条数」逐条执行 UPDATE（生产库实测 5117 条、单条 7~9ms，
+	// 且 100% 影响 0 行），仅这一步就占掉启动 43 秒中的 40 秒以上。
+	pendingKeys, err := m.listPendingLastPublishAtKeys()
+	if err != nil {
+		return err
+	}
+	if pendingKeys.count == 0 {
+		return nil
+	}
+
 	rows := make([]PublishLogEntry, 0)
 	if err := m.store.DB.Model(&PublishLogEntry{}).
 		Select("torrent_id, source_site, title, created_at, updated_at").
@@ -163,7 +175,12 @@ func (m *SchemaManager) backfillSeedParameterLastPublishAtFromPublishLogs() erro
 		}
 	}
 
+	// 命中与否依旧由下面原样的 SQL 条件决定；这里先按超集裁剪候选数量，
+	// 避免对「待回填行里根本不存在」的日志键发注定 0 行的 UPDATE。
 	for _, row := range latestByKey {
+		if !pendingKeys.matchKey(row.torrentID, row.source) {
+			continue
+		}
 		loweredSource := strings.ToLower(row.source)
 		result := m.store.DB.Table("seed_parameters").
 			Where("torrent_id = ? AND (site_name = ? OR nickname = ? OR LOWER(TRIM(site_name)) = ? OR LOWER(TRIM(nickname)) = ?)", row.torrentID, row.source, row.source, loweredSource, loweredSource).
@@ -174,6 +191,9 @@ func (m *SchemaManager) backfillSeedParameterLastPublishAtFromPublishLogs() erro
 		}
 	}
 	for _, row := range latestByTitle {
+		if !pendingKeys.matchTitle(row.title) {
+			continue
+		}
 		result := m.store.DB.Table("seed_parameters").
 			Where("LOWER(TRIM(name)) = LOWER(TRIM(?))", row.title).
 			Where(m.lastPublishAtEmptyCondition()).
@@ -183,6 +203,79 @@ func (m *SchemaManager) backfillSeedParameterLastPublishAtFromPublishLogs() erro
 		}
 	}
 	return nil
+}
+
+// pendingLastPublishAtKeys 汇总「仍缺少 last_publish_at」的 seed_parameters 行的匹配键。
+// 键统一按 TrimSpace + ToLower 归一，因此它是原 SQL 匹配结果的超集：
+// 落在这里面的候选只是「值得试一次」，真正命中与否仍由原 SQL 条件决定，回填结果不变。
+type pendingLastPublishAtKeys struct {
+	count      int
+	torrentIDs map[string]struct{}
+	siteNames  map[string]struct{}
+	names      map[string]struct{}
+}
+
+// listPendingLastPublishAtKeys 读取仍缺少 last_publish_at 的行并汇总其匹配键。
+// 参数/返回：无入参；返回匹配键集合与查询错误。
+// 失败场景：seed_parameters 查询失败。
+// 副作用：只读，不写库。
+func (m *SchemaManager) listPendingLastPublishAtKeys() (*pendingLastPublishAtKeys, error) {
+	rows := make([]struct {
+		TorrentID string `gorm:"column:torrent_id"`
+		SiteName  string `gorm:"column:site_name"`
+		Nickname  string `gorm:"column:nickname"`
+		Name      string `gorm:"column:name"`
+	}, 0)
+	if err := m.store.DB.Table("seed_parameters").
+		Select("torrent_id, site_name, nickname, name").
+		Where(m.lastPublishAtEmptyCondition()).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	keys := &pendingLastPublishAtKeys{
+		count:      len(rows),
+		torrentIDs: make(map[string]struct{}, len(rows)),
+		siteNames:  make(map[string]struct{}, len(rows)*2),
+		names:      make(map[string]struct{}, len(rows)),
+	}
+	for _, row := range rows {
+		addPendingLastPublishAtKey(keys.torrentIDs, row.TorrentID)
+		addPendingLastPublishAtKey(keys.siteNames, row.SiteName)
+		addPendingLastPublishAtKey(keys.siteNames, row.Nickname)
+		addPendingLastPublishAtKey(keys.names, row.Name)
+	}
+	return keys, nil
+}
+
+func addPendingLastPublishAtKey(set map[string]struct{}, value string) {
+	key := strings.ToLower(strings.TrimSpace(value))
+	if key == "" {
+		return
+	}
+	set[key] = struct{}{}
+}
+
+// matchKey 判断「torrent_id + 站点名」这条候选是否可能命中某个待回填行。
+// torrent_id 与 site_name/nickname 都按归一后的值比对，覆盖原 SQL 里 = 与 LOWER(TRIM()) 两支。
+func (k *pendingLastPublishAtKeys) matchKey(torrentID, source string) bool {
+	if k == nil {
+		return true
+	}
+	if _, ok := k.torrentIDs[strings.ToLower(strings.TrimSpace(torrentID))]; !ok {
+		return false
+	}
+	_, ok := k.siteNames[strings.ToLower(strings.TrimSpace(source))]
+	return ok
+}
+
+// matchTitle 判断这条标题候选是否可能命中某个待回填行。
+func (k *pendingLastPublishAtKeys) matchTitle(title string) bool {
+	if k == nil {
+		return true
+	}
+	_, ok := k.names[strings.ToLower(strings.TrimSpace(title))]
+	return ok
 }
 
 func (m *SchemaManager) migratePublishTriggerColumns() error {
