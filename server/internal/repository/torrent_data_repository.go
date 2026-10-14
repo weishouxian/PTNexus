@@ -630,6 +630,24 @@ func (r *TorrentDataRepository) CachedSitesByNameAndSize(name string, size int64
 	return cachedSites, matchedHashes, nil
 }
 
+// DeleteCachedSitesByHashesAndSite 删除指定 hash 集合下某个站点的种子参数缓存。
+// 参数/返回：hashes 为「种子名 + 大小」命中的 hash 集合；site 为站点昵称或站名；返回被删除的记录数。
+// 失败场景：hashes 为空或 site 为空时不执行删除、直接返回 0；数据库执行失败返回 error。
+// 副作用：物理删除 seed_parameters 中该站点在这些 hash 下的记录，同一 hash 的其它站点缓存不受影响。
+func (r *TorrentDataRepository) DeleteCachedSitesByHashesAndSite(hashes []string, site string) (int64, error) {
+	trimmedSite := strings.TrimSpace(site)
+	if len(hashes) == 0 || trimmedSite == "" {
+		return 0, nil
+	}
+	result := r.store.DB.Table("seed_parameters").
+		Where("hash IN ? AND (nickname = ? OR site_name = ?)", hashes, trimmedSite, trimmedSite).
+		Delete(nil)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 type namePublishAt struct {
 	Name      string  `gorm:"column:name"`
 	PublishAt *string `gorm:"column:publish_at"`

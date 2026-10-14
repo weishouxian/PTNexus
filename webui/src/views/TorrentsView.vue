@@ -796,25 +796,38 @@
           <div v-if="cachedSites.length > 0" class="cached-sites-section">
             <p class="cached-sites-label">已缓存的站点 ({{ cachedSites.length }})</p>
             <div class="site-list-box glass-site-box cached-sites-box">
-              <el-tag
+              <span
                 v-for="site in allSourceSitesStatus.filter((s) => s.is_source && cachedSites.includes(s.name))"
                 :key="site.name"
-                :type="getSiteTagType(site)"
-                :class="{
-                  'is-selectable': isSourceSiteSelectable(site.name),
-                  'cached-site-tag': true,
-                }"
-                class="site-tag"
-                @click="
-                  isSourceSiteSelectable(site.name) &&
-                  confirmSourceSiteAndProceed(getSiteDetails(site.name))
-                "
-                v-loading="sourceSiteQueryLoading[site.name]"
-                element-loading-spinner="el-icon-loading"
-                element-loading-background="rgba(0, 0, 0, 0.5)"
+                class="cached-site-item"
               >
-                {{ site.name }} ✓
-              </el-tag>
+                <el-tag
+                  :type="getSiteTagType(site)"
+                  :class="{
+                    'is-selectable': isSourceSiteSelectable(site.name),
+                    'cached-site-tag': true,
+                  }"
+                  class="site-tag"
+                  @click="
+                    isSourceSiteSelectable(site.name) &&
+                    confirmSourceSiteAndProceed(getSiteDetails(site.name))
+                  "
+                  v-loading="sourceSiteQueryLoading[site.name]"
+                  element-loading-spinner="el-icon-loading"
+                  element-loading-background="rgba(0, 0, 0, 0.5)"
+                >
+                  {{ site.name }} ✓
+                </el-tag>
+                <el-tooltip content="删除该站点的缓存数据" placement="top" :hide-after="0">
+                  <el-icon
+                    class="cached-site-delete"
+                    :class="{ 'is-busy': deletingCachedSite === site.name }"
+                    @click.stop="deleteCachedSite(site.name)"
+                  >
+                    <Close />
+                  </el-icon>
+                </el-tooltip>
+              </span>
             </div>
           </div>
 
@@ -1014,7 +1027,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, reactive, watch, nextTick, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { Download } from '@element-plus/icons-vue'
+import { Download, Close } from '@element-plus/icons-vue'
 import { ElMessageBox } from 'element-plus'
 import type { TableInstance, Sort } from 'element-plus'
 import type { ElTree } from 'element-plus'
@@ -1304,6 +1317,7 @@ const IYUU_BATCH_MAX_GROUPS = 200
 const IYUU_BATCH_POLL_INTERVAL_MS = 2000
 const cachedSites = ref<string[]>([]) // 存储已缓存的站点列表
 const cachedSitesLoading = ref<boolean>(false) // 查询缓存站点的加载状态
+const deletingCachedSite = ref<string>('') // 正在删除缓存数据的站点，用于图标 loading 态
 
 // 可发种时间编辑（小时数输入）
 const editingPublishAtId = ref<string | null>(null)
@@ -1992,6 +2006,52 @@ const queryCachedSites = async (row: Torrent) => {
     console.error('查询缓存站点时出错:', error)
   } finally {
     cachedSitesLoading.value = false
+  }
+}
+
+// 删除某个已缓存站点的缓存数据：只清掉该站点在这颗种子下的上传参数缓存，
+// 删除后该站点从「已缓存」落到「未缓存」，可重新抓取；其它站点缓存不受影响。
+const deleteCachedSite = async (siteName: string) => {
+  const row = selectedTorrentForMigration.value
+  if (!row || !siteName) {
+    ElMessage.error('发生内部错误：未找到选中的种子或站点信息。')
+    return
+  }
+  if (deletingCachedSite.value) return
+
+  try {
+    await ElMessageBox.confirm(
+      `确定删除站点「${siteName}」的缓存数据？删除后该站点会回到「未缓存」，可重新抓取。`,
+      '删除缓存数据',
+      {
+        type: 'warning',
+        confirmButtonText: '删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  deletingCachedSite.value = siteName
+  try {
+    const response = await axios.post('/api/data/delete_cached_site', {
+      name: row.name,
+      size: row.size,
+      site: siteName,
+    })
+    const result = response.data
+    if (result.success) {
+      cachedSites.value = cachedSites.value.filter((name) => name !== siteName)
+      ElMessage.success(result.message || `已删除站点「${siteName}」的缓存数据`)
+    } else {
+      ElMessage.error(result.error || '删除缓存数据失败')
+    }
+  } catch (error) {
+    console.error('删除缓存数据时出错:', error)
+    ElMessage.error('删除缓存数据失败')
+  } finally {
+    deletingCachedSite.value = ''
   }
 }
 
@@ -3181,6 +3241,41 @@ watch(visibleColumns, () => {
 
 .site-list-box .site-tag.is-selectable:hover {
   filter: brightness(1.1);
+}
+
+/* 已缓存站点：右上角悬浮删除图标，点击清掉该站点在这颗种子下的缓存数据 */
+.cached-site-item {
+  position: relative;
+  display: inline-flex;
+}
+
+.cached-site-delete {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background-color: #f56c6c;
+  color: #fff;
+  font-size: 10px;
+  cursor: pointer;
+  opacity: 0.8;
+  z-index: 1;
+  box-shadow: 0 0 0 1px #fff;
+  transition:
+    opacity 0.2s,
+    transform 0.2s;
+}
+
+.cached-site-delete:hover {
+  opacity: 1;
+  transform: scale(1.15);
+}
+
+.cached-site-delete.is-busy {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 /* 站点操作弹窗样式 */

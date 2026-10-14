@@ -70,6 +70,20 @@ func (h *TorrentDataHandler) CachedSites(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+// DeleteCachedSite 删除「一种多站」源站点弹窗中某个站点在该种子下的缓存参数。
+// 参数/返回：从 JSON 请求体读取 name/size/site，返回删除结果 JSON。
+// 失败场景：请求体格式错误、缺少参数或数据库失败时返回对应状态与错误信息。
+// 副作用：物理删除 seed_parameters 中该站点在该种子下的缓存记录，其它站点缓存不受影响。
+func (h *TorrentDataHandler) DeleteCachedSite(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "error": "请求体格式错误"})
+		return
+	}
+	result, status := h.service.DeleteCachedSite(payload)
+	c.JSON(status, result)
+}
+
 func (h *TorrentDataHandler) UpdatePublishAt(c *gin.Context) {
 	payload := map[string]any{}
 	if err := c.ShouldBindJSON(&payload); err != nil {

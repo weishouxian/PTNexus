@@ -332,6 +332,7 @@ func registerRoutes(
 		api.GET("/data", torrentDataHandler.Data)
 		api.POST("/refresh_data", torrentDataHandler.RefreshData)
 		api.GET("/cached_sites", torrentDataHandler.CachedSites)
+		api.POST("/data/delete_cached_site", torrentDataHandler.DeleteCachedSite)
 		api.POST("/data/update_publish_at", torrentDataHandler.UpdatePublishAt)
 		api.POST("/data/delete", torrentDataHandler.DeleteData)
 		api.POST("/iyuu_query", torrentDataHandler.IYUUQuery)
