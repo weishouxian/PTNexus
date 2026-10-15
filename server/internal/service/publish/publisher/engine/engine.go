@@ -43,6 +43,8 @@ func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 		return publishsites.PublishRousi(input)
 	case "ptlgs":
 		return publishsites.PublishPTLGS(input)
+	case "ssd":
+		return publishsites.PublishSSD(input)
 	case "hdfans":
 		return publishsites.PublishHdfans(input)
 	case "hdvideo":
