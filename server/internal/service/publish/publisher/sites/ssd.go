@@ -31,6 +31,35 @@ func (ssdPublisher) BuildDescription(input publisher.PublishInput) string {
 	return strings.TrimSpace(resolveUploadSection(input.UploadData, "statement"))
 }
 
+// AdjustFormFields 站点标题规范：SSD 要求主标题用「点号分隔」形态，
+// 源标题可能是空格分隔（如 "Operation Carwash ... 1080p WEB-DL H.264 AAC 2.0-CSWEB"），
+// 在此把主标题字段里的空格统一替换为点号。只改主标题，不动副标题/简介等其他字段。
+func (ssdPublisher) AdjustFormFields(input publisher.PublishInput, formFields map[string]string) {
+	if formFields == nil {
+		return
+	}
+	siteCfg, _ := publishmapping.LoadSitePublishConfig(strings.TrimSpace(input.SiteCode))
+	titleField := "name"
+	if siteCfg != nil {
+		titleField = firstNonEmpty(siteCfg.FormFields["name"], titleField)
+	}
+	if strings.TrimSpace(formFields[titleField]) == "" {
+		return
+	}
+	formFields[titleField] = normalizeSSDTitle(formFields[titleField])
+}
+
+// normalizeSSDTitle 把标题里的空格替换为点号，并压缩连续空白。
+func normalizeSSDTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return trimmed
+	}
+	// 归一化各类空白（含不换行空格）为普通空格，再统一替换为点号。
+	normalized := strings.Join(strings.Fields(trimmed), " ")
+	return strings.ReplaceAll(normalized, " ", ".")
+}
+
 // BuildExtraFormFields 构造 SSD 独立的海报（url_poster）、截图（url_vimages）、媒体信息（Media_BDInfo）字段。
 // 这三个字段在通用 Public 发布器里只有 media info 会被填进 technical_info，海报与截图不会自动填充，
 // 故在此按站点字段名独立提交。

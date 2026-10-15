@@ -49,7 +49,7 @@ func TestPublishSSDFields(t *testing.T) {
 		Cookie:      "SPRINGID=test",
 		TargetName:  "不可说",
 		TorrentPath: torrentPath,
-		Title:       "Test.Movie.2024.1080p.WEB-DL.H.265.AAC-GROUP",
+		Title:       "Test Movie 2024 1080p WEB-DL H.265 AAC 2.0-GROUP",
 		MediaInfo:   "General\nFormat : Matroska",
 		UploadData: map[string]any{
 			"standardized_params": map[string]any{
@@ -78,7 +78,8 @@ func TestPublishSSDFields(t *testing.T) {
 	}
 
 	checks := map[string]string{
-		"offer":          "yes", // 候选标记
+		"offer":          "yes",                                              // 候选标记
+		"name":           "Test.Movie.2024.1080p.WEB-DL.H.265.AAC.2.0-GROUP", // 空格→点号
 		"type":           "501",
 		"source_sel":     "4",
 		"medium_sel":     "7",

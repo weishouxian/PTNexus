@@ -76,20 +76,39 @@ mappings:
     "default": "509"
 
   source:
+    # 站点只有 10 个大区，无独立「子地区」项；西方/欧美国家统一归 West(欧美)=4，
+    # 港台复合值归 Hongkong(香港)=2（与 aling 惯例一致），东南亚（新加坡/马来）无对应区归 Other=99。
     "source.china": "1"
     "source.hongkong": "2"
+    "source.hongkong_taiwan": "2"
     "source.taiwan": "3"
     "source.western": "4"
+    "source.brazil": "4"
+    "source.canada": "4"
+    "source.europe": "4"
+    "source.france": "4"
+    "source.germany": "4"
+    "source.italy": "4"
+    "source.spain": "4"
+    "source.sweden": "4"
+    "source.denmark": "4"
+    "source.uk": "4"
+    "source.australia": "4"
     "source.japan": "5"
     "source.korea": "6"
     "source.india": "7"
     "source.russia": "8"
     "source.thailand": "9"
+    "source.singapore": "99"
+    "source.malaysia": "99"
     "source.other": "99"
     "default": "99"
 
   medium:
     "medium.bluray": "1"
+    # UHD 原盘站点无独立项，归 Blu-ray(1)（原盘类）
+    "medium.uhd_bluray": "1"
+    "medium.uhd_diy": "1"
     "medium.remux": "4"
     "medium.minibd": "2"
     "medium.bdrip": "6"
@@ -123,10 +142,16 @@ mappings:
 
   audio_codec:
     "audio.dts_hd": "1"
+    # DTS 家族细分（MA/X/HR）站点归 DTS-HD(1)
+    "audio.dts_hd_ma": "1"
+    "audio.dts_hd_hr": "1"
+    "audio.dtsx": "1"
     "audio.truehd": "2"
+    "audio.truehd_atmos": "2"
     "audio.lpcm": "6"
     "audio.dts": "3"
     "audio.ddp": "11"
+    "audio.ddp_atmos": "11"
     "audio.ac3": "4"
     "audio.aac": "5"
     "audio.flac": "7"
@@ -134,6 +159,7 @@ mappings:
     "audio.wav": "9"
     "audio.mp3": "10"
     "audio.opus": "12"
+    "audio.av3a": "13"
     "audio.other": "99"
     "default": "99"
 
