@@ -34,14 +34,43 @@ var reSelectTag = regexp.MustCompile(`(?is)<select\b[^>]*>.*?</select>`)
 var reOptionTag = regexp.MustCompile(`(?is)<option\b[^>]*>.*?</option>`)
 var reStripHTMLTags = regexp.MustCompile(`(?is)<[^>]+>`)
 var reHTMLAttr = regexp.MustCompile(`(?is)\s([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>` + "`" + `]+))`)
-var reUploadNoticeHeading = regexp.MustCompile(`(?is)<h1[^>]*>(.*?)</h1>`)
+var reUploadNoticeHeading = regexp.MustCompile(`(?is)<h[1-4][^>]*>(.*?)</h[1-4]>`)
 var reUploadNoticeParagraph = regexp.MustCompile(`(?is)<p[^>]*>(.*?)</p>`)
+
+// reUploadNoticeStdMsgOpen 匹配 NexusPHP 标准提示块的起始标签（如 <td class="text" id='stdmsg'>）。
+// 站点在 h1/p 之外的拒绝场景（如资质不足、无发布权限）统一把提示正文写进 id='stdmsg' 的单元格。
+var reUploadNoticeStdMsgOpen = regexp.MustCompile(`(?is)<\s*(td|th|p|div|span|font|dd|li)\b[^>]*\bid\s*=\s*['"]?stdmsg['"]?[^>]*>`)
+
+// uploadNoticeStdMsgCloseTags 预编译各标签的闭合标签正则，避免每次解析 stdmsg 块时重复编译。
+var uploadNoticeStdMsgCloseTags = map[string]*regexp.Regexp{
+	"td":   regexp.MustCompile(`(?i)</td\s*>`),
+	"th":   regexp.MustCompile(`(?i)</th\s*>`),
+	"p":    regexp.MustCompile(`(?i)</p\s*>`),
+	"div":  regexp.MustCompile(`(?i)</div\s*>`),
+	"span": regexp.MustCompile(`(?i)</span\s*>`),
+	"font": regexp.MustCompile(`(?i)</font\s*>`),
+	"dd":   regexp.MustCompile(`(?i)</dd\s*>`),
+	"li":   regexp.MustCompile(`(?i)</li\s*>`),
+}
 
 // uploadNoticeErrorKeywords 用于判定 h1 标题是否为站点失败/错误提示（NexusPHP 错误页形如 <h1>上传失败！</h1><p>原因</p>）。
 var uploadNoticeErrorKeywords = []string{
 	"失败", "错误", "出错", "异常", "禁止", "不允许", "无效",
 	"error", "failed", "failure", "invalid", "denied",
 }
+
+// uploadNoticeDenialKeywords 用于判定 id='stdmsg' 提示块是否为「被站点拒绝」的原因说明。
+// stdmsg 是 NexusPHP 的通用提示框，成功/中性文案也会用到，因此不能只看有没有 stdmsg，
+// 必须要求正文含「权限/条件不足/被拒绝」这类语义，否则不当作错误提示。
+var uploadNoticeDenialKeywords = []string{
+	"无权", "权限", "不允许", "禁止", "限制", "不足", "拒绝", "条件", "必须",
+	"至少", "只有", "无法", "不能", "需要先", "请先", "缺少", "过期", "封禁",
+	"denied", "not allowed", "permission", "insufficient", "forbidden",
+}
+
+// rePublishDetailLink 命中即认为响应是发布成功后的详情页，此时页面里的 stdmsg 属中性提示而非失败原因。
+// 前导分隔符不可省略：用户资料页 userdetails.php?id=xxx 同样含 "details.php?id="，不设边界会被误判成发布成功。
+var rePublishDetailLink = regexp.MustCompile(`(?i)(^|[\s"'/=?&])details\.php\?id=\d+`)
 
 type uploadFormFields struct {
 	Hidden  map[string]string
@@ -172,8 +201,13 @@ func TryUploadTorrent(uploadURL, baseURL, cookie, fileField string, torrentFile 
 			return "", true, buildDetail(), nil
 		}
 		if looksLikeUploadFormPage(bodyText) {
-			err = fmt.Errorf("站点返回上传表单页面，可能是字段缺失、校验未通过或会话状态异常")
-			appendUploadRawResponse(&detailLines, bodyText)
+			if uploadNotice != "" {
+				// 站点已经给出明确原因（如 stdmsg 里的字段校验提示），提示本身比“返回了表单页”更有价值。
+				err = fmt.Errorf("站点返回上传表单页面: %s", uploadNotice)
+			} else {
+				err = fmt.Errorf("站点返回上传表单页面，可能是字段缺失、校验未通过或会话状态异常")
+				appendUploadRawResponse(&detailLines, bodyText)
+			}
 			detailLines = append(detailLines, fmt.Sprintf("尝试结论: %v", err))
 			return "", isExisting, buildDetail(), err
 		}
@@ -438,19 +472,32 @@ func summarizeResponseBody(text string) string {
 }
 
 // extractUploadNotice 从站点返回的 HTML 页面中提取失败/错误提示正文。
-// 参数/返回：text 为响应正文；命中 NexusPHP 风格错误页时返回“标题 + 紧随其后的说明段落”，否则返回空串。
-// 失败场景：无 h1、h1 不含错误关键词、或正文为空时返回空串，由调用方回退到原始摘要逻辑。
+// 参数/返回：text 为响应正文；命中 NexusPHP 风格错误页时返回“标题 + 紧随其后的说明段落”，
+// 或命中 id='stdmsg' 提示块时返回“提示标题 + 正文”，否则返回空串。
+// 失败场景：两种页面结构都不命中时返回空串，由调用方回退到原始摘要逻辑。
 // 副作用：无。
 //
-// 背景：Audiences（人人）等 NexusPHP 站点发种校验失败时返回 HTTP 200 + 错误页，形如
+// 背景一：Audiences（人人）等 NexusPHP 站点发种校验失败时返回 HTTP 200 + 错误页，形如
 // <h1>上传失败！</h1><p>非完结剧集需在主标题内标明集数 SxxExx ，已完结剧集需勾选完结标签，请重新检查并修正。</p>
 // 页面里广告位等元素也含 <p>，因此必须以 h1 的位置为锚点向后取段落。
+//
+// 背景二：部分站点（如 OurBits/我堡）在上传前做资格校验，被拒时返回 HTTP 200 + 提示页，形如
+// <h2>资质不足</h2><table ...><tr><td class="text" id='stdmsg'>只有已经成功通过审核10个种子…</td></tr></table>
+// 这种页面既没有错误关键词标题，也没有 <p> 正文，只能以 id='stdmsg' 为锚点提取。
 func extractUploadNotice(text string) string {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return ""
 	}
 
+	if notice := extractUploadHeadingNotice(trimmed); notice != "" {
+		return notice
+	}
+	return extractUploadStdMsgNotice(trimmed)
+}
+
+// extractUploadHeadingNotice 处理「错误关键词标题 + 紧随段落」形态的提示页。
+func extractUploadHeadingNotice(trimmed string) string {
 	heading := ""
 	headingEnd := -1
 	for _, match := range reUploadNoticeHeading.FindAllStringSubmatchIndex(trimmed, -1) {
@@ -479,6 +526,52 @@ func extractUploadNotice(text string) string {
 	return truncateLogText(heading+body, 300)
 }
 
+// extractUploadStdMsgNotice 处理 NexusPHP 通用提示块 id='stdmsg'（如「资质不足」页）。
+// 参数/返回：text 为响应正文；命中且正文语义为“被拒绝/条件不足”时返回“标题 + 正文”，否则返回空串。
+// 失败场景：无 stdmsg 标签、正文为空、正文不含拒绝语义、或响应其实是发布成功的详情页时返回空串。
+// 副作用：无。
+func extractUploadStdMsgNotice(trimmed string) string {
+	loc := reUploadNoticeStdMsgOpen.FindStringSubmatchIndex(trimmed)
+	if len(loc) < 4 || loc[1] >= len(trimmed) {
+		return ""
+	}
+	// 发布成功后的详情页里也会带 stdmsg（中性提示），此时不应把页面内容当成失败原因。
+	if rePublishDetailLink.MatchString(trimmed) {
+		return ""
+	}
+
+	tagName := strings.ToLower(trimmed[loc[2]:loc[3]])
+	closeTag := uploadNoticeStdMsgCloseTags[tagName]
+	if closeTag == nil {
+		return ""
+	}
+	closeLoc := closeTag.FindStringIndex(trimmed[loc[1]:])
+	if closeLoc == nil {
+		return ""
+	}
+	body := cleanUploadNoticeText(trimmed[loc[1] : loc[1]+closeLoc[0]])
+	if body == "" || !containsAnyKeyword(body, uploadNoticeDenialKeywords) {
+		return ""
+	}
+
+	// 取 stdmsg 之前最近的小标题（如「资质不足」），过长则视为站点通用标题而丢弃。
+	prefix := trimmed[:loc[0]]
+	heading := ""
+	for _, match := range reUploadNoticeHeading.FindAllStringSubmatchIndex(prefix, -1) {
+		if len(match) < 4 {
+			continue
+		}
+		candidate := cleanUploadNoticeText(prefix[match[2]:match[3]])
+		if candidate != "" && len([]rune(candidate)) <= 40 {
+			heading = candidate
+		}
+	}
+	if heading == "" {
+		return truncateLogText(body, 300)
+	}
+	return truncateLogText(heading+"："+body, 300)
+}
+
 // cleanUploadNoticeText 去除 HTML 标签并归一化空白，用于把提示片段转成可读单行文本。
 func cleanUploadNoticeText(fragment string) string {
 	cleaned := reStripHTMLTags.ReplaceAllString(fragment, " ")
@@ -488,11 +581,16 @@ func cleanUploadNoticeText(fragment string) string {
 
 // containsUploadNoticeErrorKeyword 判断提示标题是否包含失败/错误语义关键词。
 func containsUploadNoticeErrorKeyword(text string) bool {
+	return containsAnyKeyword(text, uploadNoticeErrorKeywords)
+}
+
+// containsAnyKeyword 判断文本（小写化后）是否包含任一给定关键词。
+func containsAnyKeyword(text string, keywords []string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "" {
 		return false
 	}
-	for _, keyword := range uploadNoticeErrorKeywords {
+	for _, keyword := range keywords {
 		if strings.Contains(lower, keyword) {
 			return true
 		}

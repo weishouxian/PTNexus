@@ -947,18 +947,49 @@ var (
 	reMTeamMarkdownImg = regexp.MustCompile(`!\[[^\]]*\]\(\s*([^)\s]+)\s*\)`)
 	// 站点标题规范里蓝光一律写作「BluRay」（不带连字符、不拆空格），源标题的其它写法在此纠偏。
 	reMTeamBluray = regexp.MustCompile(`(?i)\bBlu[-\s]?ray\b`)
+	// 站点标题规范里不含帧率，源标题带的帧率标记（如 23.976fps / 60 FPS）在此剔除。分两条规则：
+	//  1) 独立 token：帧率前必须是标点/空格/行首。左边界既不能用 \b 也不能只排除数字 ——
+	//     "x264.60 fps" 里 \b 会落在 x264 的 264 之前，把编码号与 .60 拼成一个假帧率。
+	//  2) 紧贴分辨率：2160p60fps / 1080i50fps 这类写法单列一条，此时帧率前是 p/i 而非分隔符。
+	reMTeamFrameRateToken  = regexp.MustCompile(`(?i)(^|[^\p{L}\p{N}])(\d{2,3}(?:\.\d+)?)\s*fps\b`)
+	reMTeamFrameRateSuffix = regexp.MustCompile(`(?i)(\d{3,4}[pi])(\d{2,3}(?:\.\d+)?)\s*fps\b`)
+	// 剔除帧率后可能留下连续点号（如 "1080p..H264"）或 ".-"（如 "x264.-Group"），一并整理回正常分隔形态。
+	reMTeamDanglingDot = regexp.MustCompile(`(?:\.\s*){2,}`)
 )
 
-// normalizeMTeamTitle 按站点标题规范修正主标题中的媒介写法。
-// 参数/返回：title 为源标题（写法沿用源站，可能是 Blu-ray / BLU-RAY / Bluray / Blu ray）；返回纠偏后的标题。
-// 失败场景：空标题原样返回；未命中时不做任何改动，避免影响其它 token。
+// normalizeMTeamTitle 按站点标题规范修正主标题：蓝光写法归一为 BluRay，并剔除帧率标记。
+// 参数/返回：title 为源标题（写法沿用源站，可能是 Blu-ray / BLU-RAY / Bluray / Blu ray，可能带 23.976fps）；
+// 返回纠偏后的标题。
+// 失败场景：空标题原样返回；未命中任何规则时不做改动。帧率是标题唯一内容时保留原标题，避免提交空名。
 // 副作用：无。
 func normalizeMTeamTitle(title string) string {
 	trimmed := strings.TrimSpace(title)
 	if trimmed == "" {
 		return trimmed
 	}
-	return reMTeamBluray.ReplaceAllString(trimmed, "BluRay")
+	return stripMTeamFrameRate(reMTeamBluray.ReplaceAllString(trimmed, "BluRay"))
+}
+
+// stripMTeamFrameRate 剔除标题中的帧率标记，并整理剔除后残留的分隔符。
+// 参数/返回：title 为待处理标题；不含帧率时原样返回，否则返回清理后的标题。
+// 失败场景：清理后标题为空（标题原本只有帧率）时返回原标题，避免提交空名被站点拒。
+// 副作用：无。
+func stripMTeamFrameRate(title string) string {
+	if !reMTeamFrameRateToken.MatchString(title) && !reMTeamFrameRateSuffix.MatchString(title) {
+		return title
+	}
+	// 紧贴分辨率的写法先处理：整段（含 p/i）一并替换，否则会留下 "2160p" 这种半截 token。
+	stripped := reMTeamFrameRateSuffix.ReplaceAllString(title, "$1")
+	// 独立 token 只保留前导分隔符（$1），帧率数字与 fps 一起丢弃。
+	stripped = reMTeamFrameRateToken.ReplaceAllString(stripped, "$1")
+	stripped = strings.Join(strings.Fields(stripped), " ")
+	stripped = reMTeamDanglingDot.ReplaceAllString(stripped, ".")
+	stripped = strings.ReplaceAll(stripped, ".-", "-")
+	stripped = strings.Trim(stripped, " .")
+	if stripped == "" {
+		return title
+	}
+	return stripped
 }
 
 // resolveMTeamIMDbLink 解析站点 imdb 字段，返回完整 IMDb 链接（站点实测存的就是完整链接）。

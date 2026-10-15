@@ -57,6 +57,25 @@ func TestExtractUploadNoticeFallbacks(t *testing.T) {
 			in:   `<html><body><h1>上传失败！</h1><p><b>标题</b>不能为空 &amp; 需含集数</p></body></html>`,
 			want: "上传失败！标题 不能为空 & 需含集数",
 		},
+		{
+			// 我堡（OurBits）实测返回：h2 标题 + id='stdmsg' 提示块，无错误关键词标题、无 <p> 正文。
+			name: "stdmsg 资质不足提示块",
+			in: `<table class="main" width="500"><tr><td class="embedded">
+<h2>资质不足</h2>
+<table width="100%" border="1" cellpadding="10"><tr><td class="text" id='stdmsg'>只有已经成功通过审核10个种子且当前待修改种子不超过2个（当前通过数：614）的用户才有权限直接发布,请提交<a href="/offers.php">候选</a></td></tr></table>
+</td></tr></table>`,
+			want: "资质不足：只有已经成功通过审核10个种子且当前待修改种子不超过2个（当前通过数：614）的用户才有权限直接发布,请提交 候选",
+		},
+		{
+			name: "stdmsg 中性文案不提取",
+			in:   `<html><body><td id='stdmsg'>感谢分享，请耐心等待审核</td></body></html>`,
+			want: "",
+		},
+		{
+			name: "详情页 stdmsg 不提取",
+			in:   `<html><body><td id='stdmsg'>该种子已被锁定，无权限下载</td><a href="details.php?id=999">详情</a></body></html>`,
+			want: "",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -84,5 +103,42 @@ func TestSummarizeResponseBodyFallsBackForNonErrorPage(t *testing.T) {
 	got := summarizeResponseBody(page)
 	if !strings.HasPrefix(got, "返回 HTML 页面 (title=") {
 		t.Fatalf("非错误页应回退到原始摘要，got: %q", got)
+	}
+}
+
+func TestSummarizeResponseBodyExtractsStdMsgDenial(t *testing.T) {
+	// 我堡（OurBits）实测整页：HTTP 200 + 无详情页链接，正文是 <h2>资质不足</h2> + <td id='stdmsg'>…</td>。
+	// 页头的 userdetails.php?id=61948 必须不被误判成「发布成功详情页」，否则提示会被整页 HTML 淹没。
+	page := `<!DOCTYPE html>
+<html lang="zh">
+<head><title>OurBits - Powered by NexusPHP</title></head>
+<body>
+<table class="mainouter" width="982"><tr><td id="nav_block" class="nav_bg text">
+<div id="nav"><ul id="mainmenu" class="menu"><li><a href="upload.php">发 布</a></li></ul></div>
+<input type="hidden" name="userId" id="myUserId" value="61948">
+<a href="userdetails.php?id=61948" class='VeteranUser_Name'><b>fenglaile</b></a>
+</td></tr>
+<tr><td id="outer" align="center" class="outer">
+<p><table border="0" cellpadding="10"><tr><td style='background: red'><b>你有1条新短讯！</b></td></tr></table></p><br />
+<table align="center" class="main" width="500" border="0" cellpadding="0" cellspacing="0"><tr><td class="embedded">
+<h2>资质不足</h2>
+<table width="100%" border="1" cellspacing="0" cellpadding="10"><tr><td class="text" id='stdmsg'>只有已经成功通过审核10个种子且当前待修改种子不超过2个（当前通过数：614）的用户才有权限直接发布,请提交<a href="/offers.php">候选</a></td></tr></table></td></tr></table>
+</td></tr></table>
+<div id="footer">(c) <a href="/">OurBits</a> Powered by <a href="aboutnexus.php">NexusPHP</a></div>
+</body></html>`
+
+	want := "站点错误提示: 资质不足：只有已经成功通过审核10个种子且当前待修改种子不超过2个（当前通过数：614）的用户才有权限直接发布,请提交 候选"
+	if got := summarizeResponseBody(page); got != want {
+		t.Fatalf("summarizeResponseBody 结果不符\nwant: %q\ngot:  %q", want, got)
+	}
+}
+
+func TestStdMsgNoticeSkipsPublishedDetailPage(t *testing.T) {
+	// 发布成功后跳详情页：页面里同样有 id='stdmsg'，不得当成失败原因。
+	page := `<html><body><table><tr><td id='stdmsg'>该种子已发布，感谢分享</td></tr></table>` +
+		`<a href="details.php?id=12345">详情</a></body></html>`
+
+	if got := extractUploadNotice(page); got != "" {
+		t.Fatalf("详情页 stdmsg 不应提取为错误提示, got: %q", got)
 	}
 }
