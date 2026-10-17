@@ -3,10 +3,13 @@ package workflow
 import (
 	"fmt"
 	neturl "net/url"
+	"os"
 	"strings"
 
+	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/platform/logx"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
+	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	publishchecker "github.com/pt-nexus/server/internal/service/publish/checker"
 	publishdownloader "github.com/pt-nexus/server/internal/service/publish/downloader"
 	publishguard "github.com/pt-nexus/server/internal/service/publish/guard"
@@ -15,6 +18,23 @@ import (
 )
 
 const publishDetailsLogModule = "发布-详情回写"
+
+// EnvAllowEpisodePublish 是分集发布的全局总开关（第一级门禁）。
+//
+// 未配置或取值非 "true" 时，整个应用一律禁止发布带「分集」标签的种子 ——
+// 即便目标站点 YAML 声明了能力、用户在站点设置里也打开了开关。
+// 取值口径与项目既有环境变量一致（UPLOAD_TEST_MODE / DEV_ENV 等都是 os.Getenv(x) == "true"）。
+//
+// 该值在进程启动后不再变化，因此这里每次直接读环境变量即可，无需额外缓存或热更新机制。
+const EnvAllowEpisodePublish = "ALLOW_EPISODE_PUBLISH"
+
+// globalAllowsEpisodePublish 读取分集发布的全局总开关。
+// 参数/返回：无；返回环境变量是否为 true。
+// 说明：fail-closed —— 只有显式等于 "true" 才算开启；空值与其它取值一律视为关闭，
+// 这样即便 .env 漏配或拼错，也不会意外放开分集发布。
+func globalAllowsEpisodePublish() bool {
+	return os.Getenv(EnvAllowEpisodePublish) == "true"
+}
 
 // PublishExecutionInput 定义单站发布执行输入。
 type PublishExecutionInput struct {
@@ -114,7 +134,9 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		}
 	}
 
-	// 检查前端是否已确认跳过受限标签检查
+	// 检查前端是否已确认跳过受限标签检查。
+	// 注意：该旁路只对「禁转/限转」生效 —— 「分集」由站点 YAML 的 allow_episode_publish 裁决，
+	// 不接受前端逐次放行，否则配置就形同虚设。
 	skipRestrictedCheck := false
 	if v, ok := uploadData["skip_restricted_check"]; ok {
 		if b, isBool := v.(bool); isBool {
@@ -127,11 +149,61 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 	skipDupeCheck := payloadBoolFlag(input.Payload, "skip_dupe_check") ||
 		payloadBoolFlag(uploadData, "skip_dupe_check")
 
-	if !skipRestrictedCheck {
-		if restricted := publishuploader.DetectRestrictedTags(uploadData); len(restricted) > 0 {
+	if restricted := publishuploader.DetectRestrictedTags(uploadData); len(restricted) > 0 {
+		// 分集单独裁决：目标站点 YAML 写了 allow_episode_publish 才允许发布，默认拦截。
+		episodeTags := make([]string, 0, 1)
+		otherTags := make([]string, 0, len(restricted))
+		for _, tag := range restricted {
+			if processingtagging.IsEpisodeRestrictedTag(tag) {
+				episodeTags = append(episodeTags, tag)
+				continue
+			}
+			otherTags = append(otherTags, tag)
+		}
+		if len(episodeTags) > 0 {
+			// 分集发布是两级门禁，缺一不可：
+			//   ① 环境变量 ALLOW_EPISODE_PUBLISH —— 全局总开关。
+			//      未配置/非 true ⇒ 整个应用一律禁止分集发布（默认关闭，fail-closed）。
+			//   ② sites_data.json 的 allow_episode_publish —— 目标站点的开关。
+			//      不配置 / false ⇒ 该站一律禁止；只有显式写 true 才允许。
+			// 两级都为 true 才放行；任一为 false 都拦截。
+			siteCode := strings.TrimSpace(toStringAny(targetInfo["site"], strings.ToLower(targetSite)))
+			envAllows := globalAllowsEpisodePublish()
+			jsonAllows := config.SiteAllowsEpisodePublish(siteCode)
+
+			if !envAllows || !jsonAllows {
+				var message string
+				if !envAllows {
+					message = fmt.Sprintf(
+						"🚫 发布前标签限制: 检测到分集标签 %v，当前未开启分集发布功能",
+						episodeTags,
+					)
+				} else {
+					message = fmt.Sprintf(
+						"🚫 发布前标签限制: 检测到分集标签，不允许分集发布",
+					)
+				}
+				logx.Infof("发布-分集限制", "拦截发布 target=%s code=%s tags=%v env允许=%v json允许=%v",
+					targetNickname, siteCode, episodeTags, envAllows, jsonAllows)
+				return map[string]any{
+					"success":       false,
+					"logs":          message,
+					"message":       message,
+					"limit_reached": true,
+					"pre_check":     true,
+					"url":           nil,
+				}, 200
+			}
+			logx.Infof("发布-分集限制", "全局开关与站点配置均已开启，放行 target=%s code=%s", targetNickname, siteCode)
+		}
+		if len(otherTags) > 0 && !skipRestrictedCheck {
+			message := fmt.Sprintf("🚫 发布前标签限制: 检测到禁转/限转标签 %v", otherTags)
 			return map[string]any{
-				"success":       false,
-				"logs":          fmt.Sprintf("🚫 发布前标签限制: 检测到禁转/限转/分集标签 %v", restricted),
+				"success": false,
+				"logs":    message,
+				// 前端对 pre_check 响应统一读 message（见 publishFlow 的 result.message.replace），
+				// 缺字段会直接抛错，这里与分集分支保持一致。
+				"message":       message,
 				"limit_reached": true,
 				"pre_check":     true,
 				"url":           nil,

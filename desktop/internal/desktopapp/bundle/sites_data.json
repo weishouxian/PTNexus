@@ -1,6 +1,7 @@
 [
   {
     "site": "keepfrds",
+    "allow_episode_publish": false,
     "nickname": "月月",
     "base_url": "pt.keepfrds.com",
     "special_tracker_domain": null,
@@ -11,6 +12,7 @@
   },
   {
     "site": "pthome",
+    "allow_episode_publish": false,
     "nickname": "铂金家",
     "base_url": "pthome.net",
     "special_tracker_domain": null,
@@ -21,6 +23,7 @@
   },
   {
     "site": "m-team",
+    "allow_episode_publish": false,
     "nickname": "馒头",
     "base_url": "kp.m-team.cc",
     "special_tracker_domain": "manfuz",
@@ -32,6 +35,7 @@
   },
   {
     "site": "hdsky",
+    "allow_episode_publish": false,
     "nickname": "天空",
     "base_url": "hdsky.me",
     "special_tracker_domain": null,
@@ -42,6 +46,7 @@
   },
   {
     "site": "tjupt",
+    "allow_episode_publish": false,
     "nickname": "北洋园",
     "base_url": "tjupt.org",
     "special_tracker_domain": null,
@@ -52,6 +57,7 @@
   },
   {
     "site": "pterclub",
+    "allow_episode_publish": false,
     "nickname": "猫站",
     "base_url": "pterclub.net",
     "special_tracker_domain": null,
@@ -62,6 +68,7 @@
   },
   {
     "site": "hdhome",
+    "allow_episode_publish": false,
     "nickname": "家园",
     "base_url": "hdhome.org",
     "special_tracker_domain": null,
@@ -72,6 +79,7 @@
   },
   {
     "site": "btschool",
+    "allow_episode_publish": false,
     "nickname": "学校",
     "base_url": "pt.btschool.club",
     "special_tracker_domain": null,
@@ -82,6 +90,7 @@
   },
   {
     "site": "ourbits",
+    "allow_episode_publish": false,
     "nickname": "我堡",
     "base_url": "ourbits.club",
     "special_tracker_domain": null,
@@ -92,6 +101,7 @@
   },
   {
     "site": "torrentccf",
+    "allow_episode_publish": false,
     "nickname": "他吹吹风",
     "base_url": "et8.org",
     "special_tracker_domain": null,
@@ -102,6 +112,7 @@
   },
   {
     "site": "ttg",
+    "allow_episode_publish": false,
     "nickname": "TTG",
     "base_url": "totheglory.im",
     "special_tracker_domain": null,
@@ -112,6 +123,7 @@
   },
   {
     "site": "nanyangpt",
+    "allow_episode_publish": false,
     "nickname": "南洋",
     "base_url": "nanyangpt.com",
     "special_tracker_domain": null,
@@ -121,6 +133,7 @@
   },
   {
     "site": "hdcity",
+    "allow_episode_publish": false,
     "nickname": "城市",
     "base_url": "hdcity.city",
     "special_tracker_domain": "leniter",
@@ -130,6 +143,7 @@
   },
   {
     "site": "nicept",
+    "allow_episode_publish": false,
     "nickname": "老师",
     "base_url": "www.nicept.net",
     "special_tracker_domain": null,
@@ -139,6 +153,7 @@
   },
   {
     "site": "52pt",
+    "allow_episode_publish": false,
     "nickname": "52pt",
     "base_url": "52pt.site",
     "special_tracker_domain": null,
@@ -149,6 +164,7 @@
   },
   {
     "site": "eastgame",
+    "allow_episode_publish": false,
     "nickname": "吐鲁番",
     "base_url": "pt.eastgame.org",
     "special_tracker_domain": null,
@@ -158,6 +174,7 @@
   },
   {
     "site": "ssd",
+    "allow_episode_publish": false,
     "nickname": "不可说",
     "base_url": "springsunday.net",
     "special_tracker_domain": null,
@@ -168,6 +185,7 @@
   },
   {
     "site": "soulvoice",
+    "allow_episode_publish": false,
     "nickname": "聆音",
     "base_url": "pt.soulvoice.club",
     "special_tracker_domain": null,
@@ -177,6 +195,7 @@
   },
   {
     "site": "chdbits",
+    "allow_episode_publish": false,
     "nickname": "彩虹岛",
     "base_url": "ptchdbits.co",
     "special_tracker_domain": "rainbowisland,ptchdbits,chdbits",
@@ -187,6 +206,7 @@
   },
   {
     "site": "ptsbao",
+    "allow_episode_publish": false,
     "nickname": "烧包",
     "base_url": "ptsbao.club",
     "special_tracker_domain": null,
@@ -197,6 +217,7 @@
   },
   {
     "site": "hdarea",
+    "allow_episode_publish": false,
     "nickname": "好大",
     "base_url": "hdarea.club",
     "special_tracker_domain": null,
@@ -207,6 +228,7 @@
   },
   {
     "site": "hdtime",
+    "allow_episode_publish": false,
     "nickname": "HDtime",
     "base_url": "hdtime.org",
     "special_tracker_domain": null,
@@ -217,6 +239,7 @@
   },
   {
     "site": "1ptba",
+    "allow_episode_publish": false,
     "nickname": "1ptba",
     "base_url": "1ptba.com",
     "special_tracker_domain": null,
@@ -226,6 +249,7 @@
   },
   {
     "site": "hd4fans",
+    "allow_episode_publish": false,
     "nickname": "兽",
     "base_url": "pt.hd4fans.org",
     "special_tracker_domain": null,
@@ -236,6 +260,7 @@
   },
   {
     "site": "opencd",
+    "allow_episode_publish": false,
     "nickname": "皇后",
     "base_url": "open.cd",
     "special_tracker_domain": null,
@@ -246,6 +271,7 @@
   },
   {
     "site": "joyhd",
+    "allow_episode_publish": false,
     "nickname": "开心",
     "base_url": "www.joyhd.net",
     "special_tracker_domain": null,
@@ -256,6 +282,7 @@
   },
   {
     "site": "dmhy",
+    "allow_episode_publish": false,
     "nickname": "幼儿园",
     "base_url": "u2.dmhy.org",
     "special_tracker_domain": null,
@@ -266,6 +293,7 @@
   },
   {
     "site": "upxin",
+    "allow_episode_publish": false,
     "nickname": "好多油",
     "base_url": "pt.upxin.net",
     "special_tracker_domain": null,
@@ -276,6 +304,7 @@
   },
   {
     "site": "oshen",
+    "allow_episode_publish": false,
     "nickname": "奥申",
     "base_url": "www.oshen.win",
     "special_tracker_domain": null,
@@ -285,6 +314,7 @@
   },
   {
     "site": "discfan",
+    "allow_episode_publish": false,
     "nickname": "蝶粉",
     "base_url": "discfan.net",
     "special_tracker_domain": null,
@@ -295,6 +325,7 @@
   },
   {
     "site": "byr",
+    "allow_episode_publish": false,
     "nickname": "北邮人",
     "base_url": "byr.pt",
     "special_tracker_domain": null,
@@ -305,6 +336,7 @@
   },
   {
     "site": "dicmusic",
+    "allow_episode_publish": false,
     "nickname": "海豚",
     "base_url": "dicmusic.com",
     "special_tracker_domain": "52dic",
@@ -314,6 +346,7 @@
   },
   {
     "site": "skyeysnow",
+    "allow_episode_publish": false,
     "nickname": "天雪",
     "base_url": "skyey2.com",
     "special_tracker_domain": null,
@@ -323,6 +356,7 @@
   },
   {
     "site": "pt",
+    "allow_episode_publish": false,
     "nickname": "葡萄",
     "base_url": "pt.sjtu.edu.cn",
     "special_tracker_domain": null,
@@ -332,6 +366,7 @@
   },
   {
     "site": "hdroute",
+    "allow_episode_publish": false,
     "nickname": "路",
     "base_url": "www.hdroute.org",
     "special_tracker_domain": null,
@@ -341,6 +376,7 @@
   },
   {
     "site": "haidan",
+    "allow_episode_publish": false,
     "nickname": "海胆",
     "base_url": "www.haidan.video",
     "special_tracker_domain": null,
@@ -351,6 +387,7 @@
   },
   {
     "site": "hdfans",
+    "allow_episode_publish": false,
     "nickname": "红豆饭",
     "base_url": "hdfans.org",
     "special_tracker_domain": null,
@@ -361,6 +398,7 @@
   },
   {
     "site": "dragonhd",
+    "allow_episode_publish": false,
     "nickname": "龙之家",
     "base_url": "www.dragonhd.xyz",
     "special_tracker_domain": null,
@@ -371,6 +409,7 @@
   },
   {
     "site": "hitpt",
+    "allow_episode_publish": false,
     "nickname": "百川",
     "base_url": "www.hitpt.com",
     "special_tracker_domain": null,
@@ -380,6 +419,7 @@
   },
   {
     "site": "greatposterwall",
+    "allow_episode_publish": false,
     "nickname": "海豹",
     "base_url": "greatposterwall.com",
     "special_tracker_domain": null,
@@ -389,6 +429,7 @@
   },
   {
     "site": "hdpost",
+    "allow_episode_publish": false,
     "nickname": "普斯特",
     "base_url": "pt.hdpost.top",
     "special_tracker_domain": null,
@@ -398,6 +439,7 @@
   },
   {
     "site": "hudbt",
+    "allow_episode_publish": false,
     "nickname": "蝴蝶",
     "base_url": "hudbt.hust.edu.cn",
     "special_tracker_domain": null,
@@ -407,6 +449,7 @@
   },
   {
     "site": "audiences",
+    "allow_episode_publish": false,
     "nickname": "人人",
     "base_url": "audiences.me",
     "special_tracker_domain": null,
@@ -417,6 +460,7 @@
   },
   {
     "site": "piggo",
+    "allow_episode_publish": false,
     "nickname": "猪猪",
     "base_url": "piggo.me",
     "special_tracker_domain": null,
@@ -427,6 +471,7 @@
   },
   {
     "site": "wintersakura",
+    "allow_episode_publish": false,
     "nickname": "冬樱",
     "base_url": "wintersakura.net",
     "special_tracker_domain": null,
@@ -437,6 +482,7 @@
   },
   {
     "site": "hhanclub",
+    "allow_episode_publish": false,
     "nickname": "憨憨",
     "base_url": "hhanclub.net",
     "special_tracker_domain": null,
@@ -447,6 +493,7 @@
   },
   {
     "site": "pt0ffcc",
+    "allow_episode_publish": false,
     "nickname": "自由农场",
     "base_url": "pt.0ff.cc",
     "special_tracker_domain": null,
@@ -456,6 +503,7 @@
   },
   {
     "site": "redleaves",
+    "allow_episode_publish": false,
     "nickname": "红叶",
     "base_url": "leaves.red",
     "special_tracker_domain": null,
@@ -466,6 +514,7 @@
   },
   {
     "site": "ptchina",
+    "allow_episode_publish": false,
     "nickname": "铂金学院",
     "base_url": "ptchina.org",
     "special_tracker_domain": null,
@@ -475,6 +524,7 @@
   },
   {
     "site": "zhuque",
+    "allow_episode_publish": false,
     "nickname": "朱雀",
     "base_url": "zhuque.in",
     "special_tracker_domain": null,
@@ -485,6 +535,7 @@
   },
   {
     "site": "zmpt",
+    "allow_episode_publish": false,
     "nickname": "织梦",
     "base_url": "zmpt.cc",
     "special_tracker_domain": null,
@@ -495,6 +546,7 @@
   },
   {
     "site": "rousi",
+    "allow_episode_publish": false,
     "nickname": "肉丝",
     "base_url": "rousi.pro",
     "special_tracker_domain": "rousipt",
@@ -504,6 +556,7 @@
   },
   {
     "site": "monikadesign",
+    "allow_episode_publish": false,
     "nickname": "莫妮卡",
     "base_url": "monikadesign.uk",
     "special_tracker_domain": "anime-no-index",
@@ -513,6 +566,7 @@
   },
   {
     "site": "cyanbug",
+    "allow_episode_publish": false,
     "nickname": "大青虫",
     "base_url": "cyanbug.net",
     "special_tracker_domain": null,
@@ -522,6 +576,7 @@
   },
   {
     "site": "ubits",
+    "allow_episode_publish": false,
     "nickname": "UBits",
     "base_url": "ubits.club",
     "special_tracker_domain": null,
@@ -532,6 +587,7 @@
   },
   {
     "site": "pandapt",
+    "allow_episode_publish": false,
     "nickname": "熊猫",
     "base_url": "pandapt.net",
     "special_tracker_domain": null,
@@ -542,6 +598,7 @@
   },
   {
     "site": "carpt",
+    "allow_episode_publish": false,
     "nickname": "车站",
     "base_url": "carpt.net",
     "special_tracker_domain": null,
@@ -551,6 +608,7 @@
   },
   {
     "site": "dajiao",
+    "allow_episode_publish": false,
     "nickname": "打胶",
     "base_url": "dajiao.cyou",
     "special_tracker_domain": null,
@@ -560,6 +618,7 @@
   },
   {
     "site": "shadowflow",
+    "allow_episode_publish": false,
     "nickname": "影",
     "base_url": "star-space.net",
     "special_tracker_domain": null,
@@ -570,6 +629,7 @@
   },
   {
     "site": "agsv",
+    "allow_episode_publish": false,
     "nickname": "末日",
     "base_url": "pt.agsvpt.cn",
     "special_tracker_domain": null,
@@ -580,6 +640,7 @@
   },
   {
     "site": "ptvicomo",
+    "allow_episode_publish": false,
     "nickname": "象岛",
     "base_url": "ptvicomo.net",
     "special_tracker_domain": null,
@@ -590,6 +651,7 @@
   },
   {
     "site": "qingwapt",
+    "allow_episode_publish": false,
     "nickname": "青蛙",
     "base_url": "www.qingwapt.com",
     "special_tracker_domain": null,
@@ -601,6 +663,7 @@
   },
   {
     "site": "xingtan",
+    "allow_episode_publish": false,
     "nickname": "杏坛",
     "base_url": "xingtan.one",
     "special_tracker_domain": null,
@@ -610,6 +673,7 @@
   },
   {
     "site": "hdkyl",
+    "allow_episode_publish": false,
     "nickname": "麒麟",
     "base_url": "www.hdkyl.in",
     "special_tracker_domain": null,
@@ -620,6 +684,7 @@
   },
   {
     "site": "ilolicon",
+    "allow_episode_publish": false,
     "nickname": "爱萝莉",
     "base_url": "mua.xloli.cc",
     "special_tracker_domain": null,
@@ -629,6 +694,7 @@
   },
   {
     "site": "gtkpw",
+    "allow_episode_publish": false,
     "nickname": "GTK",
     "base_url": "pt.gtkpw.xyz",
     "special_tracker_domain": "gtkpw",
@@ -638,6 +704,7 @@
   },
   {
     "site": "wukongwendao",
+    "allow_episode_publish": false,
     "nickname": "悟空",
     "base_url": "wukongwendao.top",
     "special_tracker_domain": null,
@@ -647,6 +714,7 @@
   },
   {
     "site": "okpt",
+    "allow_episode_publish": false,
     "nickname": "OKPT",
     "base_url": "www.okpt.net",
     "special_tracker_domain": null,
@@ -656,6 +724,7 @@
   },
   {
     "site": "crabpt",
+    "allow_episode_publish": false,
     "nickname": "蟹黄堡",
     "base_url": "crabpt.vip",
     "special_tracker_domain": null,
@@ -666,6 +735,7 @@
   },
   {
     "site": "icc2022",
+    "allow_episode_publish": false,
     "nickname": "冰淇淋",
     "base_url": "www.icc2022.com",
     "special_tracker_domain": null,
@@ -675,6 +745,7 @@
   },
   {
     "site": "hddolby",
+    "allow_episode_publish": false,
     "nickname": "杜比",
     "base_url": "www.hddolby.com",
     "special_tracker_domain": null,
@@ -685,6 +756,7 @@
   },
   {
     "site": "kamept",
+    "allow_episode_publish": false,
     "nickname": "龟站",
     "base_url": "kamept.com",
     "special_tracker_domain": null,
@@ -694,6 +766,7 @@
   },
   {
     "site": "ptcafe",
+    "allow_episode_publish": false,
     "nickname": "咖啡",
     "base_url": "ptcafe.club",
     "special_tracker_domain": null,
@@ -703,6 +776,7 @@
   },
   {
     "site": "tosky",
+    "allow_episode_publish": false,
     "nickname": "ToSky",
     "base_url": "t.tosky.club",
     "special_tracker_domain": null,
@@ -712,6 +786,7 @@
   },
   {
     "site": "yemapt",
+    "allow_episode_publish": false,
     "nickname": "YemaPT",
     "base_url": "www.yemapt.org",
     "special_tracker_domain": null,
@@ -721,6 +796,7 @@
   },
   {
     "site": "ptlgs",
+    "allow_episode_publish": false,
     "nickname": "劳改所",
     "base_url": "ptlgs.org",
     "special_tracker_domain": "ptl",
@@ -731,6 +807,7 @@
   },
   {
     "site": "lemonhd",
+    "allow_episode_publish": false,
     "nickname": "柠檬不酸",
     "base_url": "lemonhd.club",
     "special_tracker_domain": "ilovelemonhd.me",
@@ -741,6 +818,7 @@
   },
   {
     "site": "njtupt",
+    "allow_episode_publish": false,
     "nickname": "浦园",
     "base_url": "njtupt.top",
     "special_tracker_domain": null,
@@ -750,6 +828,7 @@
   },
   {
     "site": "ptzone",
+    "allow_episode_publish": false,
     "nickname": "PTzone",
     "base_url": "ptzone.xyz",
     "special_tracker_domain": null,
@@ -759,6 +838,7 @@
   },
   {
     "site": "hdclone",
+    "allow_episode_publish": false,
     "nickname": "HDClone",
     "base_url": "pt.hdclone.top",
     "special_tracker_domain": null,
@@ -768,6 +848,7 @@
   },
   {
     "site": "kufei",
+    "allow_episode_publish": false,
     "nickname": "库非",
     "base_url": "kufei.org",
     "special_tracker_domain": null,
@@ -777,6 +858,7 @@
   },
   {
     "site": "ptlover",
+    "allow_episode_publish": false,
     "nickname": "AFun",
     "base_url": "www.ptlover.cc",
     "special_tracker_domain": null,
@@ -786,6 +868,7 @@
   },
   {
     "site": "hspt",
+    "allow_episode_publish": false,
     "nickname": "回声",
     "base_url": "hspt.club",
     "special_tracker_domain": null,
@@ -795,6 +878,7 @@
   },
   {
     "site": "sanpro",
+    "allow_episode_publish": false,
     "nickname": "伞",
     "base_url": "sanpro.pw",
     "special_tracker_domain": null,
@@ -804,6 +888,7 @@
   },
   {
     "site": "htpt",
+    "allow_episode_publish": false,
     "nickname": "海棠",
     "base_url": "www.htpt.cc",
     "special_tracker_domain": null,
@@ -813,6 +898,7 @@
   },
   {
     "site": "sewerpt",
+    "allow_episode_publish": false,
     "nickname": "下水道",
     "base_url": "sewerpt.com",
     "special_tracker_domain": null,
@@ -823,6 +909,7 @@
   },
   {
     "site": "bilibili",
+    "allow_episode_publish": false,
     "nickname": "RailgunPT",
     "base_url": "bilibili.download",
     "special_tracker_domain": null,
@@ -832,6 +919,7 @@
   },
   {
     "site": "gamegamept",
+    "allow_episode_publish": false,
     "nickname": "GGPT",
     "base_url": "www.gamegamept.com",
     "special_tracker_domain": null,
@@ -841,6 +929,7 @@
   },
   {
     "site": "raingfh",
+    "allow_episode_publish": false,
     "nickname": "雨",
     "base_url": "raingfh.top",
     "special_tracker_domain": null,
@@ -851,6 +940,7 @@
   },
   {
     "site": "xingyunge",
+    "allow_episode_publish": true,
     "nickname": "星陨阁",
     "base_url": "pt.xingyungept.org",
     "special_tracker_domain": null,
@@ -861,6 +951,7 @@
   },
   {
     "site": "cspt",
+    "allow_episode_publish": false,
     "nickname": "财神",
     "base_url": "cspt.top",
     "special_tracker_domain": null,
@@ -871,6 +962,7 @@
   },
   {
     "site": "fnp",
+    "allow_episode_publish": false,
     "nickname": "北极熊",
     "base_url": "fearnopeer.com",
     "special_tracker_domain": null,
@@ -880,6 +972,7 @@
   },
   {
     "site": "tmpt",
+    "allow_episode_publish": false,
     "nickname": "唐门",
     "base_url": "tmpt.top",
     "special_tracker_domain": null,
@@ -889,6 +982,7 @@
   },
   {
     "site": "mypt",
+    "allow_episode_publish": false,
     "nickname": "我的PT",
     "base_url": "cc.mypt.cc",
     "special_tracker_domain": null,
@@ -898,6 +992,7 @@
   },
   {
     "site": "pttime",
+    "allow_episode_publish": false,
     "nickname": "时间ptt",
     "base_url": "www.pttime.org",
     "special_tracker_domain": null,
@@ -907,6 +1002,7 @@
   },
   {
     "site": "lemon",
+    "allow_episode_publish": false,
     "nickname": "柠檬不甜",
     "base_url": "lemonhd.net",
     "special_tracker_domain": null,
@@ -916,6 +1012,7 @@
   },
   {
     "site": "13city",
+    "allow_episode_publish": false,
     "nickname": "13City",
     "base_url": "13city.org",
     "special_tracker_domain": null,
@@ -926,6 +1023,7 @@
   },
   {
     "site": "luckpt",
+    "allow_episode_publish": false,
     "nickname": "幸运",
     "base_url": "pt.luckpt.de",
     "special_tracker_domain": null,
@@ -936,6 +1034,7 @@
   },
   {
     "site": "siqi",
+    "allow_episode_publish": false,
     "nickname": "思齐",
     "base_url": "si-qi.xyz",
     "special_tracker_domain": null,
@@ -945,6 +1044,7 @@
   },
   {
     "site": "hxpt",
+    "allow_episode_publish": false,
     "nickname": "好学",
     "base_url": "www.hxpt.org",
     "special_tracker_domain": null,
@@ -955,6 +1055,7 @@
   },
   {
     "site": "ptskit",
+    "allow_episode_publish": false,
     "nickname": "PTSkit",
     "base_url": "pt.ptskit.org",
     "special_tracker_domain": "kqbhek",
@@ -964,6 +1065,7 @@
   },
   {
     "site": "cbg",
+    "allow_episode_publish": false,
     "nickname": "藏宝阁",
     "base_url": "cangbao.ge",
     "special_tracker_domain": null,
@@ -974,6 +1076,7 @@
   },
   {
     "site": "tokyo",
+    "allow_episode_publish": false,
     "nickname": "东京",
     "base_url": "www.tokyopt.xyz",
     "special_tracker_domain": null,
@@ -984,6 +1087,7 @@
   },
   {
     "site": "lajidui",
+    "allow_episode_publish": false,
     "nickname": "垃圾堆",
     "base_url": "pt.lajidui.top",
     "special_tracker_domain": null,
@@ -993,6 +1097,7 @@
   },
   {
     "site": "vcb",
+    "allow_episode_publish": false,
     "nickname": "VCB-Studio",
     "base_url": "VCB-Studio",
     "special_tracker_domain": null,
@@ -1002,6 +1107,7 @@
   },
   {
     "site": "beitai",
+    "allow_episode_publish": false,
     "nickname": "备胎",
     "base_url": "BeiTai",
     "special_tracker_domain": null,
@@ -1012,6 +1118,7 @@
   },
   {
     "site": "azusa",
+    "allow_episode_publish": false,
     "nickname": "梓喵",
     "base_url": "azusa.wiki",
     "special_tracker_domain": null,
@@ -1021,6 +1128,7 @@
   },
   {
     "site": "jpop",
+    "allow_episode_publish": false,
     "nickname": "鸡婆婆",
     "base_url": "jpopsuki.eu",
     "special_tracker_domain": null,
@@ -1031,6 +1139,7 @@
   },
   {
     "site": "playletpt",
+    "allow_episode_publish": false,
     "nickname": "PlayLet",
     "base_url": "playletpt.xyz",
     "special_tracker_domain": null,
@@ -1040,6 +1149,7 @@
   },
   {
     "site": "march",
+    "allow_episode_publish": false,
     "nickname": "三月传媒",
     "base_url": "duckboobee.org",
     "special_tracker_domain": null,
@@ -1050,6 +1160,7 @@
   },
   {
     "site": "hdbao",
+    "allow_episode_publish": false,
     "nickname": "红豆包",
     "base_url": "hdbao.cc",
     "special_tracker_domain": null,
@@ -1059,6 +1170,7 @@
   },
   {
     "site": "longpt",
+    "allow_episode_publish": false,
     "nickname": "龙PT",
     "base_url": "longpt.org",
     "special_tracker_domain": null,
@@ -1069,6 +1181,7 @@
   },
   {
     "site": "aling",
+    "allow_episode_publish": false,
     "nickname": "爱玲",
     "base_url": "pt.aling.de",
     "special_tracker_domain": null,
@@ -1078,6 +1191,7 @@
   },
   {
     "site": "cdfile",
+    "allow_episode_publish": false,
     "nickname": "CD File",
     "base_url": "pt.cdfile.org",
     "special_tracker_domain": null,
@@ -1088,6 +1202,7 @@
   },
   {
     "site": "tu88",
+    "allow_episode_publish": false,
     "nickname": "TU88",
     "base_url": "pt.tu88.men",
     "special_tracker_domain": null,
@@ -1097,6 +1212,7 @@
   },
   {
     "site": "ultrahd",
+    "allow_episode_publish": false,
     "nickname": "UltraHD",
     "base_url": "ultrahd.net",
     "special_tracker_domain": null,
@@ -1107,6 +1223,7 @@
   },
   {
     "site": "52movie",
+    "allow_episode_publish": false,
     "nickname": "52movie",
     "base_url": "www.52movie.top",
     "special_tracker_domain": null,
@@ -1116,6 +1233,7 @@
   },
   {
     "site": "ptfans",
+    "allow_episode_publish": false,
     "nickname": "PTFans",
     "base_url": "ptfans.cc",
     "special_tracker_domain": null,
@@ -1125,6 +1243,7 @@
   },
   {
     "site": "tey",
+    "allow_episode_publish": false,
     "nickname": "太乙",
     "base_url": "pt.tey.cc",
     "special_tracker_domain": null,
@@ -1134,6 +1253,7 @@
   },
   {
     "site": "itzmx",
+    "allow_episode_publish": false,
     "nickname": "itzmx",
     "base_url": "pt.itzmx.com",
     "special_tracker_domain": null,
@@ -1143,6 +1263,7 @@
   },
   {
     "site": "sunny",
+    "allow_episode_publish": false,
     "nickname": "Sunny",
     "base_url": "sunnypt.top",
     "special_tracker_domain": "sunnytk",
@@ -1153,6 +1274,7 @@
   },
   {
     "site": "ying",
+    "allow_episode_publish": false,
     "nickname": "樱花",
     "base_url": "pt.ying.us.kg",
     "special_tracker_domain": null,
@@ -1162,6 +1284,7 @@
   },
   {
     "site": "novahd",
+    "allow_episode_publish": false,
     "nickname": "NovaHD",
     "base_url": "pt.novahd.top",
     "special_tracker_domain": null,
@@ -1172,6 +1295,7 @@
   },
   {
     "site": "sbpt",
+    "allow_episode_publish": false,
     "nickname": "SBPT",
     "base_url": "sbpt.link",
     "special_tracker_domain": null,
@@ -1181,6 +1305,7 @@
   },
   {
     "site": "jivon",
+    "allow_episode_publish": false,
     "nickname": "未来幻境",
     "base_url": "nex.jivon.de",
     "special_tracker_domain": null,
@@ -1190,6 +1315,7 @@
   },
   {
     "site": "asmr",
+    "allow_episode_publish": false,
     "nickname": "ASMR",
     "base_url": "www.asmrpt.org",
     "special_tracker_domain": null,
@@ -1199,6 +1325,7 @@
   },
   {
     "site": "torrenthub",
+    "allow_episode_publish": false,
     "nickname": "TorrentHub",
     "base_url": "torrenthub.club",
     "special_tracker_domain": null,
@@ -1208,6 +1335,7 @@
   },
   {
     "site": "muxuege",
+    "allow_episode_publish": false,
     "nickname": "慕雪阁",
     "base_url": "pt.muxuege.org",
     "special_tracker_domain": null,
@@ -1217,6 +1345,7 @@
   },
   {
     "site": "dubhe",
+    "allow_episode_publish": false,
     "nickname": "天枢",
     "base_url": "dubhe.site",
     "special_tracker_domain": null,
@@ -1226,6 +1355,7 @@
   },
   {
     "site": "zrpt",
+    "allow_episode_publish": false,
     "nickname": "自然",
     "base_url": "zrpt.cc",
     "special_tracker_domain": null,
@@ -1235,6 +1365,7 @@
   },
   {
     "site": "momentpt",
+    "allow_episode_publish": false,
     "nickname": "瞬间",
     "base_url": "momentpt.top",
     "special_tracker_domain": null,
@@ -1244,6 +1375,7 @@
   },
   {
     "site": "tangpt",
+    "allow_episode_publish": false,
     "nickname": "躺平",
     "base_url": "www.tangpt.top",
     "special_tracker_domain": null,
@@ -1253,6 +1385,7 @@
   },
   {
     "site": "hdvideo",
+    "allow_episode_publish": false,
     "nickname": "HDvideo",
     "base_url": "hdvideo.top",
     "special_tracker_domain": null,
@@ -1263,6 +1396,7 @@
   },
   {
     "site": "mooko",
+    "allow_episode_publish": false,
     "nickname": "MooKo",
     "base_url": "mooko.org",
     "special_tracker_domain": null,
@@ -1272,6 +1406,7 @@
   },
   {
     "site": "baozi",
+    "allow_episode_publish": false,
     "nickname": "包子",
     "base_url": "p.t-baozi.cc",
     "special_tracker_domain": null,
@@ -1281,6 +1416,7 @@
   },
   {
     "site": "DS",
+    "allow_episode_publish": false,
     "nickname": "屌丝",
     "base_url": "dstudio.me",
     "special_tracker_domain": null,
@@ -1291,6 +1427,7 @@
   },
   {
     "site": "xdypt",
+    "allow_episode_publish": false,
     "nickname": "修道院",
     "base_url": "xdypt.vip",
     "special_tracker_domain": null,

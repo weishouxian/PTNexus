@@ -844,11 +844,14 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     isLoading.value = false
   }
 
-  // 受限标签确认：若原始数据包含受限标签，弹出确认对话框
+  // 受限标签确认：若原始数据包含禁转/限转标签，弹出确认对话框。
+  // 分集标签不在此列 —— 它由站点配置决定能否发布，这里提示也无法放行。
   const confirmRestrictedTags = async (): Promise<boolean> => {
-    const originalRestricted = initialRestrictedTags.value
+    const originalRestricted = initialRestrictedTags.value.filter((tag) =>
+      isTransferRestrictedTag(tag),
+    )
     const currentTags = torrentData.value.standardized_params.tags || []
-    const stillHasRestricted = currentTags.some((tag) => isRestrictedTag(tag))
+    const stillHasRestricted = currentTags.some((tag) => isTransferRestrictedTag(tag))
 
     if (originalRestricted.length === 0) {
       return true // 原本就没有受限标签，无需确认
@@ -860,9 +863,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     )
     if (removedTags.length > 0) {
       const tagLabels = [...new Set(
-        removedTags.map((t) =>
-          t.includes('禁转') ? '禁转' : t.includes('限转') ? '限转' : '分集',
-        ),
+        removedTags.map((t) => (t.includes('禁转') ? '禁转' : '限转')),
       )].join('/')
       try {
         await ElMessageBox.confirm(
@@ -888,14 +889,19 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     return true
   }
 
+  // 是否需要向后端申请禁转/限转的单次放行。
+  // 分集不在其中：后端对分集只认站点配置的 allow_episode_publish，不接受前端放行。
+  const hasTransferRestrictedTag = (): boolean => {
+    return initialRestrictedTags.value.some((tag) => isTransferRestrictedTag(tag))
+  }
+
   const handlePublish = async () => {
     // 受限标签确认
     const confirmed = await confirmRestrictedTags()
     if (!confirmed) return
 
-    // 若原始数据包含受限标签，添加跳过标记让后端放行
-    const hadRestricted = initialRestrictedTags.value.length > 0
-    if (hadRestricted) {
+    // 若原始数据包含禁转/限转标签，添加跳过标记让后端放行（分集不适用）
+    if (hasTransferRestrictedTag()) {
       torrentData.value.skip_restricted_check = true
     }
 
@@ -927,9 +933,8 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       return
     }
 
-    // 若原始数据包含受限标签，添加跳过标记让后端放行
-    const hadRestricted = initialRestrictedTags.value.length > 0
-    if (hadRestricted) {
+    // 若原始数据包含禁转/限转标签，添加跳过标记让后端放行（分集不适用）
+    if (hasTransferRestrictedTag()) {
       torrentData.value.skip_restricted_check = true
     }
 
@@ -1143,6 +1148,17 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       tag === 'tag.限转' ||
       tag === '分集' ||
       tag === 'tag.分集'
+    )
+  }
+
+  // 禁转/限转：用户可在界面上确认后逐次放行（skip_restricted_check）。
+  // 分集不走这条路 —— 它由站点配置 allow_episode_publish 裁决，后端不接受前端放行。
+  const isTransferRestrictedTag = (tag: string): boolean => {
+    return (
+      tag === '禁转' ||
+      tag === 'tag.禁转' ||
+      tag === '限转' ||
+      tag === 'tag.限转'
     )
   }
 
