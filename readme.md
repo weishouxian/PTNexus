@@ -256,6 +256,10 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.8（2026.10.17）
+
+- 优化：内部处理流程与稳定性改进
+
 ### v4.0.7（2026.10.14）
 
 - 新增：一种多站「选择源站点」弹窗中已缓存的站点支持一键删除缓存数据，删除后该站点回到未缓存状态可重新抓取

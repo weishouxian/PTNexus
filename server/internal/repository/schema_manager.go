@@ -1056,6 +1056,9 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 		"auto_seed_rules": {
 			{name: "seed_retention_minutes", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 			{name: "download_url", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
+			// only_free：仅下载免费种。默认 0（关闭）—— 保持既有规则行为不变。
+			// 开启后，详情页未识别出「免费」的条目一律跳过下载（含无法判定的情况）。
+			{name: "only_free", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "TINYINT(1) NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 		},
 		"auto_seed_items": {
 			{name: "rule_id", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},

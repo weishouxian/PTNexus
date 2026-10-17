@@ -1260,6 +1260,13 @@ func (s *Service) applyFetchedDetails(item *repository.AutoSeedItem, fetchResult
 	item.TorrentID = torrentID
 	item.SiteName = siteName
 	item.DetailURL = firstNonEmpty(toString(fetchResult["detail_url"], ""), item.DetailURL)
+	// 优惠判定结果来自抓取阶段（详情页 HTML 解析），用于「仅下载免费种」。
+	// 无论是否识别成功都标记 PromotionChecked=true，供 rejectReason 区分
+	// 「还没抓详情」与「抓过但页面没有优惠信息」。
+	item.PromotionChecked = true
+	item.PromotionKnown = boolFromAny(fetchResult["promotion_known"])
+	item.PromotionFree = boolFromAny(fetchResult["free"])
+	item.PromotionLabel = strings.TrimSpace(toString(fetchResult["promotion"], ""))
 	item.Name = firstNonEmpty(toString(row["title"], ""), toString(row["name"], ""), toString(fetchResult["name"], ""), item.Name)
 	item.Subtitle = firstNonEmpty(toString(row["subtitle"], ""), item.Subtitle)
 	item.ResourceType = firstNonEmpty(toString(row["type"], ""), item.ResourceType)
@@ -1424,6 +1431,16 @@ func rejectReason(rule *repository.AutoSeedRule, item *repository.AutoSeedItem) 
 	if rule == nil {
 		return ""
 	}
+	// 「仅下载免费种」：只在已抓过详情、拿到优惠判据之后才裁决 ——
+	// 抓取前的第一次 rejectReason 调用尚无判据，必须放行到抓取阶段。
+	if rule.OnlyFree && item.PromotionChecked && !item.PromotionFree {
+		if item.PromotionKnown {
+			return "因非免费种子跳过（规则仅下载免费种）"
+		}
+		// 页面里没有可识别的优惠信息：无法确认免费，按跳过处理并说明原因，
+		// 避免用户误以为是站点没有免费种，实际是解析没覆盖到该站点。
+		return "因未能确认免费（详情页未识别到优惠信息），规则仅下载免费种"
+	}
 	sizeGB := float64(item.SizeBytes) / 1024 / 1024 / 1024
 	if rule.MinSizeGB > 0 && item.SizeBytes > 0 && sizeGB < rule.MinSizeGB {
 		return "因大小限制"
@@ -1434,19 +1451,34 @@ func rejectReason(rule *repository.AutoSeedRule, item *repository.AutoSeedItem) 
 	return ""
 }
 
+// restrictedTagRejectReason 判断自动发种条目是否因受限标签被拒绝下载。
+//
+// 「禁转」「限转」一律不允许下载 —— 这是转种合规红线，与分集开关无关。
+// 「分集」则由全局总开关 ALLOW_EPISODE_PUBLISH 裁决：
+//   - 关闭（默认）⇒ 分集条目不下载，避免下载一堆无法发布的分集资源；
+//   - 开启 ⇒ 允许下载，后续发布仍要逐站判断（目标站的 sites_data.json allow_episode_publish）。
+//
+// 这里只做「是否下载」的判断，不涉及发布；因此不看具体站点配置（此时尚无目标站）。
 func restrictedTagRejectReason(item *repository.AutoSeedItem) string {
 	if item == nil {
 		return ""
 	}
+	allowEpisode := config.AllowsEpisodePublish()
 	for _, rawTag := range parseJSONStrings(item.TagsJSON) {
 		tag := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawTag), "tag."))
 		for _, restricted := range []string{"分集", "禁转", "限转"} {
-			if strings.Contains(tag, restricted) {
-				return fmt.Sprintf("因%s标签不允许下载", restricted)
+			if !strings.Contains(tag, restricted) {
+				continue
 			}
+			// 分集开关打开时放行分集标签；禁转/限转不受影响。
+			if restricted == "分集" && allowEpisode {
+				continue
+			}
+			return fmt.Sprintf("因%s标签不允许下载", restricted)
 		}
 	}
-	if autoSeedEpisodePattern.MatchString(item.Name) {
+	// RSS 标题带集号（S01E03 / EP03 / 第3集）同样按分集处理。
+	if autoSeedEpisodePattern.MatchString(item.Name) && !allowEpisode {
 		return "因分集标签不允许下载"
 	}
 	return ""
@@ -1476,11 +1508,17 @@ func shouldRetryAutoSeedItem(item *repository.AutoSeedItem) bool {
 // isRetryableAutoSeedRejectReason 判断失败原因是否属于可通过修复配置后恢复的错误。
 // 参数/返回：reason 为自动发种记录的失败原因；返回 true 表示下一轮 RSS 可以重新处理。
 // 失败场景：空原因或明确的规则过滤原因不允许重试。
+// 说明：历史因分集被拒的条目，只有在全局总开关已打开时才允许重试 ——
+// 开关仍关闭时重试只会被同样理由再拒一次，白白多抓一次详情。
 // 副作用：无。
 func isRetryableAutoSeedRejectReason(reason string) bool {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return false
+	}
+	// 分集拒绝：开关打开后才值得重试（否则必然再次被拒）。
+	if strings.Contains(reason, "因分集标签不允许下载") && config.AllowsEpisodePublish() {
+		return true
 	}
 	for _, marker := range []string{
 		"详情页数据抓取失败",

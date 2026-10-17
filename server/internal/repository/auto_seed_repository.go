@@ -45,6 +45,9 @@ type AutoSeedRule struct {
 
 	MinSizeGB       float64 `json:"min_size_gb" gorm:"column:min_size_gb"`
 	MaxSizeGB       float64 `json:"max_size_gb" gorm:"column:max_size_gb"`
+	// OnlyFree 为「仅下载免费种」开关：开启后，详情页未识别出免费的条目一律跳过。
+	// 默认 false，保证既有规则升级后行为不变。
+	OnlyFree        bool    `json:"only_free" gorm:"column:only_free"`
 	TypesJSON       string  `json:"types_json" gorm:"column:types_json"`
 	MediaJSON       string  `json:"media_json" gorm:"column:media_json"`
 	TagsJSON        string  `json:"tags_json" gorm:"column:tags_json"`
@@ -95,6 +98,14 @@ type AutoSeedItem struct {
 	// DeletedFromDownloader 运行时标记：种子已从下载器删除（不在 torrents 表也不在下载器任务列表）。
 	// 不持久化，仅由列表查询时 enrichItemSavePaths 回填，供前端显示"已删除"状态。
 	DeletedFromDownloader bool `json:"deleted_from_downloader,omitempty" gorm:"-"`
+
+	// 优惠判定结果，运行时字段不落库。
+	// PromotionChecked 区分「还没抓详情」与「抓过但没识别出来」——
+	// 前者不应触发「仅下载免费种」的拦截（此时尚无判据），后者才按「无法确认」跳过。
+	PromotionChecked bool   `json:"promotion_checked,omitempty" gorm:"-"`
+	PromotionKnown   bool   `json:"promotion_known,omitempty" gorm:"-"`
+	PromotionFree    bool   `json:"free,omitempty" gorm:"-"`
+	PromotionLabel   string `json:"promotion,omitempty" gorm:"-"`
 
 	TorrentID string `json:"torrent_id" gorm:"column:torrent_id"`
 	SiteName  string `json:"site_name" gorm:"column:site_name"`
@@ -198,6 +209,7 @@ func (r *AutoSeedRepository) UpdateRule(rule *AutoSeedRule) error {
 		"auto_organize":            rule.AutoOrganize,
 		"min_size_gb":              rule.MinSizeGB,
 		"max_size_gb":              rule.MaxSizeGB,
+		"only_free":                rule.OnlyFree,
 		"types_json":               rule.TypesJSON,
 		"media_json":               rule.MediaJSON,
 		"tags_json":                rule.TagsJSON,

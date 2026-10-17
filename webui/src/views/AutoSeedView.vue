@@ -331,6 +331,13 @@
             />
           </div>
         </el-form-item>
+        <el-form-item label="仅下载免费种">
+          <el-switch v-model="editingRule.only_free" />
+          <div class="form-tip">
+            开启后，详情页未识别出「免费」的条目一律跳过下载（含无法判定的情况）；其余筛选规则不受影响。
+            免费与否由详情页的优惠信息判定，关闭时保持原有行为。
+          </div>
+        </el-form-item>
         <el-form-item label="标签"
           ><el-input v-model="ruleTagsText" placeholder="多个用逗号分隔"
         /></el-form-item>
@@ -555,6 +562,8 @@ type Rule = {
   auto_organize: boolean
   min_size_gb: number
   max_size_gb: number
+  /** 仅下载免费种：开启后详情页未识别出免费的条目一律跳过 */
+  only_free: boolean
   types_json: string
   media_json: string
   tags_json: string
@@ -722,6 +731,8 @@ function emptyRule(): Rule {
     auto_organize: true,
     min_size_gb: 0,
     max_size_gb: 0,
+    // 默认关闭，保持既有规则行为不变
+    only_free: false,
     types_json: '[]',
     media_json: '[]',
     tags_json: '["PT Nexus","自动发种"]',

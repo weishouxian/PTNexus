@@ -3,7 +3,6 @@ package workflow
 import (
 	"fmt"
 	neturl "net/url"
-	"os"
 	"strings"
 
 	"github.com/pt-nexus/server/internal/config"
@@ -19,21 +18,16 @@ import (
 
 const publishDetailsLogModule = "发布-详情回写"
 
-// EnvAllowEpisodePublish 是分集发布的全局总开关（第一级门禁）。
-//
-// 未配置或取值非 "true" 时，整个应用一律禁止发布带「分集」标签的种子 ——
-// 即便目标站点 YAML 声明了能力、用户在站点设置里也打开了开关。
-// 取值口径与项目既有环境变量一致（UPLOAD_TEST_MODE / DEV_ENV 等都是 os.Getenv(x) == "true"）。
-//
-// 该值在进程启动后不再变化，因此这里每次直接读环境变量即可，无需额外缓存或热更新机制。
-const EnvAllowEpisodePublish = "ALLOW_EPISODE_PUBLISH"
+// EnvAllowEpisodePublish 是分集发布全局总开关的环境变量名。
+// 常量本体已下沉到 config 包（自动发种侧也要用），这里保留别名仅为兼容既有测试与调用方。
+// 新增用法请直接调用 config.AllowsEpisodePublish()。
+const EnvAllowEpisodePublish = config.EnvAllowEpisodePublish
 
-// globalAllowsEpisodePublish 读取分集发布的全局总开关。
+// globalAllowsEpisodePublish 读取分集发布的全局总开关（委托 config 包，保持单一真源）。
 // 参数/返回：无；返回环境变量是否为 true。
-// 说明：fail-closed —— 只有显式等于 "true" 才算开启；空值与其它取值一律视为关闭，
-// 这样即便 .env 漏配或拼错，也不会意外放开分集发布。
+// 说明：fail-closed —— 只有显式等于 "true" 才算开启。
 func globalAllowsEpisodePublish() bool {
-	return os.Getenv(EnvAllowEpisodePublish) == "true"
+	return config.AllowsEpisodePublish()
 }
 
 // PublishExecutionInput 定义单站发布执行输入。

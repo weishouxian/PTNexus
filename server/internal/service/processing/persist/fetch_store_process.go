@@ -53,8 +53,11 @@ type FetchStoreProcessResult struct {
 	SavePath           string
 	DownloaderID       string
 
-	Draft          *SeedDraft
-	ExtractMeta    extract.Meta
+	Draft       *SeedDraft
+	ExtractMeta extract.Meta
+	// Promotion 为从详情页判定出的优惠信息（是否免费）。
+	// 自动发种「仅下载免费种」需要它，故随结果一路带到上层响应里。
+	Promotion      extract.PromotionInfo
 	PipelineResult FetchPersistPipelineResult
 	LoggingResult  FetchFinalizeLoggingResult
 }
@@ -75,6 +78,9 @@ func RunFetchStoreProcess(input FetchStoreProcessInput, deps FetchStoreProcessDe
 	savePath := acquireResult.SavePath
 	downloaderID := acquireResult.DownloaderID
 	html := acquireResult.DetailHTML
+	// 优惠判定只读详情页 HTML，不发额外请求；无法判定时 Known=false，
+	// 由上层按「无法确认」处理，不会误当成「非免费」之外的其它语义。
+	promotion := extract.DetectPromotionFromDetail(html)
 
 	reviewExtract := extract.ExtractReviewData(input.ExtractorEngine, extract.Input{
 		SiteCode:      siteIdentifier,
@@ -150,6 +156,7 @@ func RunFetchStoreProcess(input FetchStoreProcessInput, deps FetchStoreProcessDe
 			DownloaderID:       downloaderID,
 			Draft:              draft,
 			ExtractMeta:        extractMeta,
+			Promotion:          promotion,
 		}, finalizeErr
 	}
 
@@ -182,6 +189,7 @@ func RunFetchStoreProcess(input FetchStoreProcessInput, deps FetchStoreProcessDe
 		DownloaderID:       downloaderID,
 		Draft:              draft,
 		ExtractMeta:        extractMeta,
+		Promotion:          promotion,
 		PipelineResult:     finalizeResult.PipelineResult,
 		LoggingResult:      finalizeResult.LoggingResult,
 	}, nil

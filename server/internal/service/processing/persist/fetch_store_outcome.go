@@ -140,6 +140,10 @@ func BuildFetchAndStoreOutcome(input FetchAndStoreOutcomeInput, deps FetchAndSto
 		response["name"] = torrentName
 		response["size_bytes"] = processResult.Meta.Size
 		response["hash"] = processResult.Meta.InfoHash
+		// 优惠信息：自动发种「仅下载免费种」的判据（抓取阶段已从详情页解析）。
+		response["promotion_known"] = processResult.Promotion.Known
+		response["free"] = processResult.Promotion.Free
+		response["promotion"] = processResult.Promotion.Label
 		return response, 200
 	}
 	screenshotReviewStatus := processingshared.NormalizeScreenshotReviewStatus(repairResult.ScreenshotReviewStatus)
@@ -149,5 +153,10 @@ func BuildFetchAndStoreOutcome(input FetchAndStoreOutcomeInput, deps FetchAndSto
 		"screenshot_review_status":    screenshotReviewStatus,
 		"screenshot_review_required":  processingshared.NeedsScreenshotManualReview(screenshotReviewStatus),
 		"screenshot_preview_required": repairResult.ScreenshotPreviewRequired,
+		// 无自定义响应构建器时的兜底分支，优惠信息同样要带上，
+		// 否则自动发种会因拿不到判据而无法执行「仅下载免费种」。
+		"promotion_known": processResult.Promotion.Known,
+		"free":            processResult.Promotion.Free,
+		"promotion":       processResult.Promotion.Label,
 	}, 200
 }
