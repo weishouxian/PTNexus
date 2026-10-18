@@ -143,12 +143,20 @@ func extractReviewDataFromHTMLWithSite(pageHTML, fallbackTitle string, siteCode 
 	if strings.TrimSpace(descrHTML) == "" {
 		descrHTML = extractElementInnerHTMLByID(page, "td", "kdescr")
 	}
+	// 剥掉站点模板注入的封面块：它与正文海报是同一张图，却会抢走海报锚点位置，
+	// 导致紧随其后的引用声明被误判成正文（详见 stripTemplateCoverFromDescr）。
+	var templateCoverURL string
+	descrHTML, templateCoverURL = stripTemplateCoverFromDescr(descrHTML)
 
 	descrBBCode := htmlToBBCode(descrHTML)
 	extraStatementBBCode := extractExtraTextBBCode(page)
 	statement, poster, body, screens, mediainfo, statementTags, ardtuDeclarations := extractDescriptionSections(descrHTML, descrBBCode, extraStatementBBCode)
 	result.Statement = statement
 	result.Poster = poster
+	// 封面块已剥离：正文里没有海报时用被剥的封面图兜底，避免海报字段丢失。
+	if strings.TrimSpace(result.Poster) == "" && templateCoverURL != "" {
+		result.Poster = "[img]" + templateCoverURL + "[/img]"
+	}
 	result.Screens = screens
 	if strings.TrimSpace(mediainfo) == "" {
 		mediainfo = extractMediaInfoFallbackFromPage(page)
@@ -1516,6 +1524,78 @@ func extractElementInnerHTMLByID(pageHTML, tagName, elementID string) string {
 		}
 		searchPos = startTagEnd
 	}
+}
+
+var (
+	// reTemplateCoverOpen 匹配简介容器首位的站点模板封面容器开启标签。
+	// luckpt 等站在 #kdescr 最前面注入 div.torrent-detail-poster（内含与正文同一张海报）。
+	reTemplateCoverOpen = regexp.MustCompile(`(?is)^\s*<div[^>]*class=["'][^"']*\btorrent-detail-poster\b[^"']*["'][^>]*>`)
+	// reTemplateCoverImgSrc 提取封面块内的图片地址，作为正文缺少海报时的兜底。
+	reTemplateCoverImgSrc = regexp.MustCompile(`(?is)<img[^>]+src\s*=\s*["']([^"']+)["']`)
+	// reHTMLDivToken 用于按嵌套层级定位封面块的闭合标签。
+	reHTMLDivToken = regexp.MustCompile(`(?is)</?div\b`)
+)
+
+// stripTemplateCoverFromDescr 剥掉详情页简介容器首位由站点模板注入的封面块，并返回其图片地址。
+// 参数/返回：descrHTML 为 #kdescr 内部 HTML；返回剥离后的 HTML 与封面图地址（无封面时地址为空）。
+// 说明：封面图与正文海报常是同一张，但它作为第一个 [img] 出现会让「海报之前 = 声明」的判定失效，
+// 把紧随其后的引用声明（fieldset → [quote]）误判进正文，随后又被正文的声明行清洗删掉，
+// 表现为源站声明整体丢失、正文里也找不到。
+// 失败场景：容器不在首位、块内含可见文字（不是纯封面）、闭合标签定位失败时原样返回。
+// 副作用：无，纯函数。
+func stripTemplateCoverFromDescr(descrHTML string) (string, string) {
+	trimmed := strings.TrimSpace(descrHTML)
+	if trimmed == "" {
+		return descrHTML, ""
+	}
+	open := reTemplateCoverOpen.FindStringIndex(trimmed)
+	if open == nil || open[0] != 0 {
+		return descrHTML, ""
+	}
+	end := templateCoverBlockEnd(strings.ToLower(trimmed), open[1])
+	if end <= open[1] {
+		return descrHTML, ""
+	}
+	block := trimmed[:end]
+	// 只剥「纯封面图」块：块内除图片外还有可见文字时不处理，避免把真正的内容一起删掉。
+	if plain := strings.TrimSpace(reAnyHTMLTag.ReplaceAllString(block, "")); plain != "" {
+		return descrHTML, ""
+	}
+	coverURL := ""
+	if img := reTemplateCoverImgSrc.FindStringSubmatch(block); len(img) >= 2 {
+		coverURL = strings.TrimSpace(stdhtml.UnescapeString(img[1]))
+	}
+	return strings.TrimSpace(trimmed[end:]), coverURL
+}
+
+// templateCoverBlockEnd 从开标签结束位置起按 div 嵌套层级找封面块闭合标签之后的下标。
+// 参数/返回：lowerHTML 为小写 HTML，start 为开标签「>」之后的位置；找不到闭合标签时返回 -1。
+func templateCoverBlockEnd(lowerHTML string, start int) int {
+	depth := 0
+	cursor := start
+	for cursor < len(lowerHTML) {
+		loc := reHTMLDivToken.FindStringIndex(lowerHTML[cursor:])
+		if loc == nil {
+			return -1
+		}
+		tokenStart := cursor + loc[0]
+		tokenEnd := cursor + loc[1]
+		closeOfTag := strings.IndexByte(lowerHTML[tokenEnd:], '>')
+		if closeOfTag < 0 {
+			return -1
+		}
+		next := tokenEnd + closeOfTag + 1
+		if strings.HasPrefix(lowerHTML[tokenStart:tokenEnd], "</") {
+			depth--
+			if depth <= 0 {
+				return next
+			}
+		} else {
+			depth++
+		}
+		cursor = next
+	}
+	return -1
 }
 
 func htmlToBBCode(fragment string) string {
