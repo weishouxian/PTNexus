@@ -1,5 +1,41 @@
 site_name: "SSD"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（springsunday.net/torrents.php，2026-10-18）：
+#  - search_area 为 0 标题 / 3 发布者 / 4 IMDb链接 / 5 豆瓣链接 → 豆瓣 + IMDb + 标题兜底。
+#  - IMDb / 豆瓣检索均接受 tt 前缀与纯数字（实测 1160419 与 tt1160419 结果相同）。
+#  - 筛选参数是「平铺名」：medium1 / standard2 / codec2 / audiocodec2 实测均生效，
+#    数组形式 medium[]=1 返回 0（不是忽略），故不能用 [] 写法。
+#  - type 段位是 501 电影 / 502 剧集（见下方 mappings），不是其它站的 401。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    douban: "5"
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium{value}"
+    resolution: "standard{value}"
+    video_codec: "codec{value}"
+    audio_codec: "audiocodec{value}"
+
+# ===== 发种（目标站）配置 =====
+# 实测（springsunday.net，2026-10-15）：
+#  - 标准 NexusPHP 站，6 个 select：type / source_sel / medium_sel / standard_sel / codec_sel / audiocodec_sel，无 team_sel。
+#  - source_sel 是「地区」（West(欧美)→source.western），不是来源性质，直接映射 source，无需 processing/static。
+#  - ⚠️ 该站普通会员「没有直接发布权限」：无参 upload.php 返回「对不起...你没有发布种子的权限」。
+#    只能发候选（upload.php?offer=1），候选机制是隐藏字段 <input type="hidden" name="offer" value="yes">。
+#    运行时合并隐藏字段 GET 的是无参 upload.php（拿不到 offer），故必须用 static_fields 固定提交 offer=yes。
+#  - 标签是 19 个【独立 checkbox】（name 各自独立、value 均为 1），不是 tags[] 数组，走 checkbox_tags。
+#    ⚠️ checkbox 的 value 是 "1" 不是 NexusPHP 默认 "yes"，需显式配 checkbox_tag_value: "1"。
+#  - 截图（url_vimages）/ 媒体信息（Media_BDInfo）是必填独立 textarea，海报（url_poster）独立 input。
+#  - 外链只有一个合并字段 url（标签「豆瓣/IMDb」），实测存完整链接（https://movie.douban.com/subject/27203080）。
+#  - 标签「中字」实测落库 subtitlezh=1（编辑页回显已勾选）。
+upload_file_field: "file"
+
 form_fields:
   category: "type"
   source: "source_sel"
@@ -7,6 +43,147 @@ form_fields:
   resolution: "standard_sel"
   video_codec: "codec_sel"
   audio_codec: "audiocodec_sel"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"
+  douban_url: "url"
+  picture: "url_poster"
+  screenshots: "url_vimages"
+  technical_info: "Media_BDInfo"
+
+# 独立 checkbox 型标签：PTNexus 标准标签值 → 站点 checkbox 字段名。
+# 命中即提交 <字段名>=<checkbox_tag_value>(=1)；未命中不提交该字段（服务端视为未勾选）。
+checkbox_tags:
+  "tag.自制": "selfcraft"
+  "tag.动画": "animation"
+  "tag.禁转": "exclusive"
+  "tag.合集": "pack"
+  "tag.完结": "pack"
+  "tag.原生": "untouched"
+  "tag.自购": "selfpurchase"
+  "tag.国语": "mandarin"
+  "tag.中字": "subtitlezh"
+  "tag.特效": "subtitlesp"
+  "tag.自译": "selfcompile"
+  "tag.杜比": "dovi"
+  "tag.DV": "dovi"
+  "tag.HDR10": "hdr10"
+  "tag.HDR10+": "hdr10plus"
+  "tag.菁彩HDR": "hdrvivid"
+  "tag.HLG": "hlg"
+  "tag.cc": "cc"
+  "tag.3d": "3d"
+  "tag.应求": "request"
+
+checkbox_tag_value: "1"
+
+# 固定提交「候选」标记：该站普通会员只能发候选，候选标志是隐藏字段 offer=yes，
+# 而运行时隐藏字段合并取不到它，必须显式提交。
+static_fields:
+  offer: "yes"
+
+# 兜底值：仅当标准化值缺失或未命中时使用。站点各维度都有 Other，兜底一律填 Other。
+mappings:
+  type:
+    "category.movie": "501"
+    "category.tv_series": "502"
+    "category.documentaries": "503"
+    "category.tv_shows": "505"
+    "category.sports": "506"
+    "category.mv": "507"
+    "category.music": "508"
+    "category.audiobook": "510"
+    "category.other": "509"
+    "default": "509"
+
+  source:
+    # 站点只有 10 个大区，无独立「子地区」项；西方/欧美国家统一归 West(欧美)=4，
+    # 港台复合值归 Hongkong(香港)=2（与 aling 惯例一致），东南亚（新加坡/马来）无对应区归 Other=99。
+    "source.china": "1"
+    "source.hongkong": "2"
+    "source.hongkong_taiwan": "2"
+    "source.taiwan": "3"
+    "source.western": "4"
+    "source.brazil": "4"
+    "source.canada": "4"
+    "source.europe": "4"
+    "source.france": "4"
+    "source.germany": "4"
+    "source.italy": "4"
+    "source.spain": "4"
+    "source.sweden": "4"
+    "source.denmark": "4"
+    "source.uk": "4"
+    "source.australia": "4"
+    "source.japan": "5"
+    "source.korea": "6"
+    "source.india": "7"
+    "source.russia": "8"
+    "source.thailand": "9"
+    "source.singapore": "99"
+    "source.malaysia": "99"
+    "source.other": "99"
+    "default": "99"
+
+  medium:
+    "medium.bluray": "1"
+    # UHD 原盘站点无独立项，归 Blu-ray(1)（原盘类）
+    "medium.uhd_bluray": "1"
+    "medium.uhd_diy": "1"
+    "medium.remux": "4"
+    "medium.minibd": "2"
+    "medium.bdrip": "6"
+    "medium.webdl": "7"
+    "medium.webrip": "8"
+    "medium.hdtv": "5"
+    "medium.tvrip": "9"
+    "medium.dvd": "3"
+    "medium.dvdrip": "10"
+    "medium.cd": "11"
+    "medium.other": "99"
+    "default": "99"
+
+  resolution:
+    "resolution.r2160p": "1"
+    "resolution.r1080p": "2"
+    "resolution.r1080i": "3"
+    "resolution.r720p": "4"
+    "resolution.sd": "5"
+    "resolution.other": "99"
+    "default": "99"
+
+  video_codec:
+    "video.h265": "1"
+    "video.h264": "2"
+    "video.vc1": "3"
+    "video.mpeg2": "4"
+    "video.av1": "5"
+    "video.other": "99"
+    "default": "99"
+
+  audio_codec:
+    "audio.dts_hd": "1"
+    # DTS 家族细分（MA/X/HR）站点归 DTS-HD(1)
+    "audio.dts_hd_ma": "1"
+    "audio.dts_hd_hr": "1"
+    "audio.dtsx": "1"
+    "audio.truehd": "2"
+    "audio.truehd_atmos": "2"
+    "audio.lpcm": "6"
+    "audio.dts": "3"
+    "audio.ddp": "11"
+    "audio.ddp_atmos": "11"
+    "audio.ac3": "4"
+    "audio.aac": "5"
+    "audio.flac": "7"
+    "audio.ape": "8"
+    "audio.wav": "9"
+    "audio.mp3": "10"
+    "audio.opus": "12"
+    "audio.av3a": "13"
+    "audio.other": "99"
+    "default": "99"
 
 source_parsers:
   source_params:
@@ -114,7 +291,7 @@ source_parsers:
     tag:
       "动画": "tag.动画"
       "禁转": "tag.禁转"
-      "合集": "tag.完结"
+      "合集": "tag.合集"
       "原生": "tag.原生"
       "国配": "tag.国语"
       "中字": "tag.中字"

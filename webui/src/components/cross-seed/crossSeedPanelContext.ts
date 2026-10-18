@@ -89,11 +89,15 @@ export interface BdinfoProgress {
 export interface SiteStatus {
   name: string
   site: string
+  /** 站点根地址（如 springsunday.net），用于跳转站内搜索页。 */
+  base_url?: string
   has_cookie: boolean
   has_passkey: boolean
   is_source: boolean
   is_target: boolean
   can_publish: boolean
+  /** 站点设置里是否开启了发布前查重（/api/sites/status 返回），用于展示「查重」标记 */
+  dupe_check_enabled?: boolean
   /** 站点自定义标签（站点管理里配置），发布时按标签一键勾选站点。 */
   tags?: string[]
   uses_public_publisher?: boolean
@@ -288,6 +292,8 @@ export interface CrossSeedPanelContext {
   handleCancelClick: () => void
   goToPublishPreviewStep: () => void
   handlePreviousStep: () => void
+  /** 步骤 2（选择发布站点）返回步骤 0「核对种子详情」编辑页。 */
+  handleBackToEditStep: () => void
   handleCompleteClick: () => void
   handleScrollOrNextStep: () => void
   handleEnqueue: () => Promise<void>

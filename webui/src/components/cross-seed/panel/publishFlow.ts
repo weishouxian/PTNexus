@@ -78,6 +78,8 @@ export type PublishFlowApi = {
   handlePublish: () => Promise<void>
   handleEnqueue: () => Promise<void>
   handlePreviousStep: () => void
+  /** 步骤 2（选择发布站点）一键回到步骤 0 的「核对种子详情」编辑页。 */
+  handleBackToEditStep: () => void
   handleCancelClick: () => void
   handleScrollOrNextStep: () => void
   handleCompleteClick: () => void
@@ -977,6 +979,19 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
   const handlePreviousStep = () => {
     if (activeStep.value > 0) {
       activeStep.value--
+    }
+  }
+
+  // 步骤 2 一键回到步骤 0 的「核对种子详情」编辑页（改标题/参数/简介后重新走一遍）。
+  // 顺带把内容区滚回顶部并清掉「已浏览完预览」的标记 —— 否则回到步骤 1 时
+  // 因为 scrollTop 还停在底部，checkIfScrolledToBottom 会立刻判定为已浏览完，
+  // 用户改了参数就被直接放行到步骤 2。
+  const handleBackToEditStep = () => {
+    activeStep.value = 0
+    isScrolledToBottom.value = false
+    const panelContent = document.querySelector('.panel-content')
+    if (panelContent) {
+      panelContent.scrollTop = 0
     }
   }
 
@@ -1943,6 +1958,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     handlePublish,
     handleEnqueue,
     handlePreviousStep,
+    handleBackToEditStep,
     handleCancelClick,
     handleScrollOrNextStep,
     handleCompleteClick,

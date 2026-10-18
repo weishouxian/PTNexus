@@ -175,6 +175,13 @@ func buildSearchURL(baseURL string, plan searchPlan, search string, filters map[
 	if trimmedBase == "" || trimmedSearch == "" {
 		return ""
 	}
+	// ⚠️ base_url 存的是裸域名（如 springsunday.net，不带 http/https 前缀）。
+	// 若不补协议，拼出来的 URL 会被浏览器当成相对路径（解析成 localhost:5173/springsunday.net/...）。
+	// 这里统一补 https://（与 acquire/fetch.normalizeSiteBaseURL 口径一致）；已带协议的原样保留。
+	lowerBase := strings.ToLower(trimmedBase)
+	if !strings.HasPrefix(lowerBase, "http://") && !strings.HasPrefix(lowerBase, "https://") {
+		trimmedBase = "https://" + trimmedBase
+	}
 	searchPath := strings.Trim(strings.TrimSpace(plan.SearchPath), "/")
 	if searchPath == "" {
 		searchPath = defaultDupeSearchPath

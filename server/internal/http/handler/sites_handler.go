@@ -66,6 +66,32 @@ func (h *SitesHandler) DupeOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "options": publishdupe.BuildSiteDupeOptions(siteCode)})
 }
 
+// DupeSearchURL 构造「查重跳转」用的站内搜索地址。
+// 参数/返回：query 参数 site / base_url / title / douban_id / imdb_id；
+// 返回 {"success":true,"urls":[{"label","url"},...]}。
+// 说明：与 dupe 校验共用同一套检索计划（豆瓣优先、IMDb 次之、标题兜底），
+// 前端点击「查重」标记后跳转到这些 URL 之一，让用户去站内核对是否重复。
+// 副作用：只读（加载站点配置，有缓存）。
+func (h *SitesHandler) DupeSearchURL(c *gin.Context) {
+	siteCode := strings.TrimSpace(c.Query("site"))
+	if siteCode == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点标识。"})
+		return
+	}
+	query := publishdupe.Query{
+		BaseURL:  strings.TrimSpace(c.Query("base_url")),
+		DoubanID: strings.TrimSpace(c.Query("douban_id")),
+		IMDbID:   strings.TrimSpace(c.Query("imdb_id")),
+		Title:    strings.TrimSpace(c.Query("title")),
+	}
+	urls := publishdupe.BuildDupeSearchURLs(siteCode, query)
+	if len(urls) == 0 {
+		c.JSON(http.StatusOK, gin.H{"success": true, "urls": []publishdupe.DupeSearchURLEntry{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "urls": urls})
+}
+
 func (h *SitesHandler) UpdateSite(c *gin.Context) {
 	payload := map[string]any{}
 	if err := c.ShouldBindJSON(&payload); err != nil {

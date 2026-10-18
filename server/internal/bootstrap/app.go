@@ -297,6 +297,7 @@ func registerRoutes(
 		api.POST("/sites/import", sitesHandler.ImportSites)
 		api.GET("/sites/cookie_sync_targets", sitesHandler.CookieSyncTargets)
 		api.GET("/sites/dupe_options", sitesHandler.DupeOptions)
+		api.GET("/sites/dupe_search_url", sitesHandler.DupeSearchURL)
 		api.POST("/sites/cookie_sync_batch", sitesHandler.BatchUpdateSiteCookies)
 		api.POST("/cookiecloud/sync", settingsHandler.CookieCloudSync)
 		api.POST("/test_connection", settingsHandler.TestConnection)

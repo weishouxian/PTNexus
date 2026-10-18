@@ -1180,6 +1180,26 @@
     font-weight: 600;
   }
 
+  /* 站点已开启发布前查重的标记：点击跳到站点管理的查重设置 */
+  .dupe-badge {
+    margin-left: 4px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 10px;
+    line-height: 1.4;
+    color: var(--el-color-primary);
+    background-color: var(--el-color-primary-light-9);
+    border: 1px solid var(--el-color-primary-light-7);
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .dupe-badge:hover {
+    color: #fff;
+    background-color: var(--el-color-primary);
+    border-color: var(--el-color-primary);
+  }
+
   .site-name-highlight-selected {
     color: #ffd8b0 !important;
   }

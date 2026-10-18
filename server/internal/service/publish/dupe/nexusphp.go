@@ -248,3 +248,43 @@ func checkNexusPHPSiteDupe(siteCode string, query Query, logModule string) (Resu
 	}
 	return outcome.Result, outcome.Detail, outcome.Err
 }
+
+// DupeSearchURLEntry 描述一段「查重跳转」可用的站内搜索 URL。
+type DupeSearchURLEntry struct {
+	// Label 为中文说明（如「豆瓣 ID 检索」），供前端展示多段时区分。
+	Label string `json:"label"`
+	// URL 为构造好的站内搜索地址。
+	URL string `json:"url"`
+}
+
+// BuildDupeSearchURLs 构造「查重跳转」用的站内搜索地址。
+//
+// 与 dupe 校验共用同一套检索计划（buildNexusPHPSearchPlans），因此跳转过去看到的
+// 就是 dupe 校验实际会查的那些关键字（豆瓣优先、IMDb 次之、标题兜底），
+// 且各站的 search_area 取值、search_path 都从 YAML 读取，不会前后端各写一份。
+//
+// 与真正校验的区别：这里**不带筛选参数**（类型/媒介/编码等）——跳转去人工核对
+// 要的是「这个片子的所有版本」，带筛选反而会漏看。故只按 ID/标题构造。
+//
+// 参数/返回：siteCode 为站点标识；query 为检索输入（只需 BaseURL/DoubanID/IMDbID/Title）；
+// 返回各段检索 URL（可能为空，表示没有可用于检索的关键字）。
+// 副作用：加载站点配置（有缓存）。
+func BuildDupeSearchURLs(siteCode string, query Query) []DupeSearchURLEntry {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(query.BaseURL), "/")
+	if trimmedBase == "" {
+		return nil
+	}
+	plans := buildNexusPHPSearchPlans(siteCode, query)
+	entries := make([]DupeSearchURLEntry, 0, len(plans))
+	for _, plan := range plans {
+		search := strings.TrimSpace(plan.Search)
+		if search == "" {
+			continue
+		}
+		plan = applySiteSearchEndpoint(siteCode, plan)
+		if url := buildSearchURL(trimmedBase, plan, search, nil); url != "" {
+			entries = append(entries, DupeSearchURLEntry{Label: plan.Label, URL: url})
+		}
+	}
+	return entries
+}

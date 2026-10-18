@@ -333,7 +333,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := sqlDB.Query("SELECT nickname, site, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY sort_order, nickname")
+	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY sort_order, nickname")
 	if err != nil {
 		return nil, err
 	}
@@ -350,6 +350,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 		result = append(result, map[string]any{
 			"name":                     toString(row["nickname"], ""),
 			"site":                     toString(row["site"], ""),
+			"base_url":                 toString(row["base_url"], ""),
 			"has_cookie":               toString(row["cookie"], "") != "",
 			"has_passkey":              toString(row["passkey"], "") != "",
 			"is_source":                migration == 1 || migration == 3,

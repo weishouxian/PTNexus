@@ -17,11 +17,15 @@ import "strings"
 //     筛选 cat{值} 与 source{值}（该站 medium 映射到上传的 source_sel）。
 //   - ourbits ：search_area 0/3/4/5（有豆瓣，5=豆瓣链接）→ 豆瓣 + IMDb + 标题；筛选为数组名 medium[]/standard[]。
 //   - chdbits ：search_area 0/1/3/4（无豆瓣）→ IMDb + 标题兜底；筛选为平铺名 medium1/standard1/audiocodec7。
+//   - ssd     ：springsunday.net（不可说）search_area 0/3/4/5（有豆瓣）→ 豆瓣 + IMDb + 标题；
+//     筛选为平铺名（medium1 生效、medium[] 返回 0）；type 段位是 501 电影/502 剧集（不是 401）。
+//     IMDb / 豆瓣检索均接受 tt 前缀与纯数字（实测 1160419 与 tt1160419 结果相同），无需特殊处理。
 const (
 	hdhomeDupeLogModule   = "发布-dupe校验-家园"
 	pterclubDupeLogModule = "发布-dupe校验-猫站"
 	ourbitsDupeLogModule  = "发布-dupe校验-我堡"
 	chdbitsDupeLogModule  = "发布-dupe校验-彩虹岛"
+	ssdDupeLogModule      = "发布-dupe校验-不可说"
 )
 
 // CheckHDHomeDupe 在 HDHome（家园）检索 dupe 候选。
@@ -52,6 +56,13 @@ func CheckChdbitsDupe(query Query) (Result, string, error) {
 	return checkNexusPHPSiteDupe("chdbits", query, chdbitsDupeLogModule)
 }
 
+// CheckSSDDupe 在 SSD（不可说，springsunday.net）检索 dupe 候选。
+// 参数/返回：query 为检索输入；返回命中结论、过程日志与错误。
+// 副作用：向站点发起 1~3 次 GET 请求。
+func CheckSSDDupe(query Query) (Result, string, error) {
+	return checkNexusPHPSiteDupe("ssd", query, ssdDupeLogModule)
+}
+
 // siteDupeLogModules 汇总各站点 dupe 校验的日志模块名。
 // 放在 dupe 包内作为唯一来源：站点适配器与通用钩子都从这里取，避免同一个名字在两处各写一遍。
 var siteDupeLogModules = map[string]string{
@@ -61,6 +72,7 @@ var siteDupeLogModules = map[string]string{
 	"pterclub":  pterclubDupeLogModule,
 	"ourbits":   ourbitsDupeLogModule,
 	"chdbits":   chdbitsDupeLogModule,
+	"ssd":       ssdDupeLogModule,
 }
 
 // LogModuleForSite 返回站点 dupe 校验的日志模块名（未接入的站点返回空串）。

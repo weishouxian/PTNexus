@@ -55,6 +55,9 @@
     <!-- 步骤 2 的按钮 -->
     <div v-if="activeStep === 2" class="button-group">
       <el-button @click="handleCancelClick" :disabled="isLoading">取消</el-button>
+      <el-button :disabled="isLoading || isEnqueueing" @click="handleBackToEditStep">
+        返回编辑页
+      </el-button>
       <el-button
         type="warning"
         @click="handleEnqueue"
@@ -96,6 +99,7 @@ const {
   handleCancelClick,
   goToPublishPreviewStep,
   handlePreviousStep,
+  handleBackToEditStep,
   handleCompleteClick,
   handleScrollOrNextStep,
   handleEnqueue,

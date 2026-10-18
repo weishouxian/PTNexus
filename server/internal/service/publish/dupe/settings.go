@@ -44,6 +44,8 @@ func CheckBySite(siteCode string, query Query) (Result, string, error) {
 		return CheckOurbitsDupe(query)
 	case "chdbits":
 		return CheckChdbitsDupe(query)
+	case "ssd":
+		return CheckSSDDupe(query)
 	default:
 		return Result{}, "", fmt.Errorf("站点 %s 未实现 dupe 检索", strings.TrimSpace(siteCode))
 	}

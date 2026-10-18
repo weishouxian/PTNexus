@@ -104,6 +104,14 @@
           }"
           >{{ site.name }}</span
         >
+        <!-- 站点已开启发布前查重：提供入口直达该站点的查重设置（不触发站点的选中/取消） -->
+        <span
+          v-if="site.dupe_check_enabled"
+          class="dupe-badge"
+          title="该站点已开启发布前查重，点击前往查重设置"
+          @click.stop="openDupeSettings(site.name)"
+          >查重</span
+        >
         <el-tooltip
           v-if="site.can_publish === false"
           content="该站点已设置为不可发种，请在站点管理中修改"
@@ -147,6 +155,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import axios from 'axios'
 import { InfoFilled } from '@element-plus/icons-vue'
 import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
@@ -160,6 +169,7 @@ const {
   selectAllTargetSites,
   clearAllTargetSites,
   allSitesStatus,
+  torrentData,
   getButtonType,
   isTargetSiteSelectable,
   isTransferForbidden,
@@ -195,5 +205,34 @@ const removeTagSites = (names: string[]) => {
   if (!names.length) return
   const dropped = new Set(names)
   selectedTargetSites.value = selectedTargetSites.value.filter((name) => !dropped.has(name))
+}
+
+// 点击「查重」标记：在新标签页打开该站点的搜索页，带 dupe 校验同款的检索条件。
+// 检索 URL 由后端 /api/sites/dupe_search_url 复用 dupe 的检索计划构造（豆瓣优先、IMDb 次之、标题兜底），
+// 保证跳转过去看到的与 dupe 校验实际查的一致，且各站 search_area 差异都在后端处理。
+// ⚠️ 必须 @click.stop 阻断冒泡（否则会同时触发站点按钮的选中/取消），
+// 且必须开新标签页 —— 转种面板是 AutoSeedView 的 overlay、无 keep-alive，路由跳转会整页卸载丢状态。
+const openDupeSettings = async (siteName: string) => {
+  const site = allSitesStatus.value.find((s) => s.name === siteName)
+  if (!site) return
+  const data = torrentData.value
+  const params: Record<string, string> = {
+    site: String(site.site || ''),
+    base_url: String(site.base_url || ''),
+    title: String(data?.original_main_title || ''),
+    douban_id: String(data?.douban_link || ''),
+    imdb_id: String(data?.imdb_link || ''),
+  }
+  try {
+    const res = await axios.get('/api/sites/dupe_search_url', { params })
+    const urls: Array<{ label: string; url: string }> = res.data?.urls || []
+    // 取第一段（豆瓣优先）跳转；没有可用关键字时静默返回。
+    const first = urls.find((u) => u.url)
+    if (first?.url) {
+      window.open(first.url, '_blank', 'noopener')
+    }
+  } catch (e) {
+    console.error('构造查重搜索地址失败:', e)
+  }
 }
 </script>

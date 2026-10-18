@@ -1,5 +1,27 @@
 site_name: "SSD"
 
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测（springsunday.net/torrents.php，2026-10-18）：
+#  - search_area 为 0 标题 / 3 发布者 / 4 IMDb链接 / 5 豆瓣链接 → 豆瓣 + IMDb + 标题兜底。
+#  - IMDb / 豆瓣检索均接受 tt 前缀与纯数字（实测 1160419 与 tt1160419 结果相同）。
+#  - 筛选参数是「平铺名」：medium1 / standard2 / codec2 / audiocodec2 实测均生效，
+#    数组形式 medium[]=1 返回 0（不是忽略），故不能用 [] 写法。
+#  - type 段位是 501 电影 / 502 剧集（见下方 mappings），不是其它站的 401。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    douban: "5"
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+    medium: "medium{value}"
+    resolution: "standard{value}"
+    video_codec: "codec{value}"
+    audio_codec: "audiocodec{value}"
+
 # ===== 发种（目标站）配置 =====
 # 实测（springsunday.net，2026-10-15）：
 #  - 标准 NexusPHP 站，6 个 select：type / source_sel / medium_sel / standard_sel / codec_sel / audiocodec_sel，无 team_sel。
