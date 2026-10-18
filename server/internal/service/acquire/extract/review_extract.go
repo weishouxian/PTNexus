@@ -1227,7 +1227,97 @@ func cleanSubtitleValue(raw string) string {
 	value = strings.TrimSpace(reSubtitleByBy.ReplaceAllString(value, ""))
 	value = strings.TrimSpace(reSubtitleByA.ReplaceAllString(value, ""))
 	value = strings.TrimSpace(reSubtitleToolID.ReplaceAllString(value, ""))
+	value = normalizeSubtitleBracketTags(value)
 	return strings.TrimSpace(value)
+}
+
+var (
+	// reSubtitleBracketTag 匹配副标题里的方括号段（半角 [] 与全角【】都识别），
+	// 连带前置空白一起吃掉，替换后不留双空格。
+	reSubtitleBracketTag = regexp.MustCompile(`[ \t]*(?:【([^【】]{1,80})】|\[([^\[\]]{1,80})\])`)
+	// subtitleMediaTagKeywords 判定方括号里的内容是否属于媒体属性标签（字幕/音轨/原盘/画质等）。
+	// 命中才把方括号改写成「 /内容」；不命中的视为片名、原名或宣传语的一部分原样保留，
+	// 例如 DS 的「借出去的魔力要用【分期还款】强制收回」「原名：貸した魔力は【リボ払い】で強制徴収」、
+	// hdsky 的「抢红 [张涵予 黎明 杜鹃 苍井空]」。
+	subtitleMediaTagKeywords = []string{
+		"字幕", "中字", "简繁", "繁中", "繁英", "简英", "双语", "国语", "粤语", "英语", "国配", "台配", "港配",
+		"配音", "音轨", "原盘", "压制", "重制", "内封", "内嵌", "外挂", "特效", "杜比", "全景声",
+		"DIY", "HDR", "HDR10", "Dolby", "Vision", "UHD", "4K", "1080", "2160",
+	}
+)
+
+// normalizeSubtitleBracketTags 把副标题里的【媒体标签】改写成「 /标签」：
+// 去掉方括号、保留内容，并在内容前加「/」，与副标题里「译名 / 译名」的分隔风格一致。
+// 参数/返回：value 为已做尾部清理的副标题；无方括号或内容不是媒体标签时原样返回。
+// 半角 [] 与全角【】使用同一套规则，例如「花开伊吕波 [内封中字]」→「花开伊吕波 /内封中字」。
+// 失败场景：无失败场景。
+// 副作用：无，纯函数。
+func normalizeSubtitleBracketTags(value string) string {
+	if !strings.ContainsAny(value, "【[") {
+		return value
+	}
+	matches := reSubtitleBracketTag.FindAllStringSubmatchIndex(value, -1)
+	if len(matches) == 0 {
+		return value
+	}
+
+	var builder strings.Builder
+	last := 0
+	for _, m := range matches {
+		if len(m) < 6 || m[0] < 0 {
+			continue
+		}
+		content := ""
+		if m[2] >= 0 {
+			content = value[m[2]:m[3]]
+		} else if m[4] >= 0 {
+			content = value[m[4]:m[5]]
+		}
+		content = strings.TrimSpace(content)
+		if content == "" || !isSubtitleMediaTag(content) {
+			continue
+		}
+		builder.WriteString(value[last:m[0]])
+		builder.WriteString(" /")
+		builder.WriteString(content)
+		// 方括号闭合后若紧跟正文（无空格），补一个空格，避免「…字幕基努·李维斯…」这类粘连。
+		if subtitleBracketNeedsSpace(value[m[1]:]) {
+			builder.WriteString(" ")
+		}
+		last = m[1]
+	}
+	if last == 0 {
+		return value
+	}
+	builder.WriteString(value[last:])
+	return builder.String()
+}
+
+// subtitleBracketNeedsSpace 判断方括号闭合后是否需要补空格：
+// 后续紧邻空白或标点分隔符时不补，紧邻正文时补。
+func subtitleBracketNeedsSpace(rest string) bool {
+	if rest == "" {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	if unicode.IsSpace(r) {
+		return false
+	}
+	return !strings.ContainsRune("|/\\，。、；：！？）」』】》)]}>,.;:!?", r)
+}
+
+// isSubtitleMediaTag 判断方括号里的内容是否属于媒体属性标签（大小写不敏感）。
+func isSubtitleMediaTag(content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if lower == "" {
+		return false
+	}
+	for _, keyword := range subtitleMediaTagKeywords {
+		if strings.Contains(lower, strings.ToLower(keyword)) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractSubtitleFromTable(pageHTML string) string {
