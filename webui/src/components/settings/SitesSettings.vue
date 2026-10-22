@@ -404,7 +404,7 @@
         >
           <template #default="scope">
             <el-tag
-              v-if="['hddolby', 'm-team', 'hdtime', 'rousi'].includes(scope.row.site)"
+              v-if="['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(scope.row.site)"
               :type="scope.row.has_passkey ? 'success' : 'danger'"
             >
               {{ scope.row.has_passkey ? '已配置' : '未配置' }}
@@ -577,7 +577,11 @@
           <el-input
             v-model="siteForm.passkey"
             :placeholder="
-              siteForm.site === 'm-team' ? '控制台 → 实验室 → 存取令牌（36 位 UUID）' : '站点的Passkey'
+              siteForm.site === 'm-team'
+                ? '控制台 → 实验室 → 存取令牌（36 位 UUID）'
+                : siteForm.site === 'colapt'
+                  ? '站点「账号 → API 密钥」生成的 Key（需 torrent.upload 权限）'
+                  : '站点的Passkey'
             "
           ></el-input>
           <div
@@ -586,6 +590,15 @@
             style="color: #409eff; font-weight: bold"
           >
             杜比/铂金家的passkey为种子详情页复制种子链接时downhash=后的部分
+          </div>
+          <div
+            v-else-if="siteForm.site === 'colapt'"
+            class="form-tip"
+            style="color: #409eff; font-weight: bold"
+          >
+            可乐PT 是自研 API 站（不是 NexusPHP，网页 Cookie 用不上）：这里要填「API
+            密钥」，到站点 账号 → API 密钥 生成一把带 torrent.upload
+            权限的永久 Key。生成前账号需先获得「自动发种」资格，否则站点会拒绝签发。
           </div>
           <div
             v-else-if="siteForm.site === 'm-team'"
@@ -1394,9 +1407,9 @@ const isSiteConfigComplete = (site: SiteConfig) => {
   const hasCookie = Boolean(site?.has_cookie)
   const hasPasskey = Boolean(site?.has_passkey)
   // 与 Passkey 列展示规则保持一致：大多数站点自动获取，仅少数站点需要手动配置
-  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi'].includes(site?.site)
-  // 肉丝站点不需要cookie，其他站点需要cookie
-  const needsCookie = site?.site !== 'rousi'
+  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(site?.site)
+  // 肉丝、可乐PT 不走 Cookie：肉丝用 passkey，可乐PT 用 API Key
+  const needsCookie = site?.site !== 'rousi' && site?.site !== 'colapt'
   return (!needsCookie || hasCookie) && (!needsPasskey || hasPasskey)
 }
 
@@ -1445,7 +1458,7 @@ const getCookieSortKey = (site: SiteConfig) => {
 }
 
 const getPasskeySortKey = (site: SiteConfig) => {
-  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi'].includes(site?.site)
+  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(site?.site)
   if (!needsPasskey) return 2 // 自动获取，放在已配置之后
   return site?.has_passkey ? 1 : 0
 }

@@ -1434,5 +1434,16 @@
     "group": null,
     "migration": 2,
     "speed_limit": 50
+  },
+  {
+    "site": "colapt",
+    "allow_episode_publish": true,
+    "nickname": "可乐",
+    "base_url": "www.colapt.com",
+    "special_tracker_domain": null,
+    "group": null,
+    "description": "ColaPT",
+    "migration": 2,
+    "speed_limit": 50
   }
 ]

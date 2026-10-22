@@ -73,6 +73,8 @@ func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 		return publishsites.PublishTCCF(input)
 	case "hxpt":
 		return publishsites.PublishHXPT(input)
+	case "colapt", "cola":
+		return publishsites.PublishColapt(input)
 	default:
 		return publisher.PublishPublic(input)
 	}

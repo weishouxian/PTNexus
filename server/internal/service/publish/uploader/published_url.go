@@ -124,6 +124,12 @@ func BuildDirectDownloadURLForPublished(baseURL string, passkey string, siteCode
 		return fmt.Sprintf("%s/download.php?id=%s&downhash=%s", strings.TrimRight(normalizedBase, "/"), id, trimmedPasskey)
 	case strings.Contains(trimmedSiteCode, "hdhome"):
 		return ""
+	case strings.Contains(trimmedSiteCode, "colapt"):
+		// 可乐PT 不是 NexusPHP：站点没有 download.php，种子直链只能走
+		// /api/v1/automation/torrents/{id}/download（需要 X-API-Key）或带账号 token 的
+		// /downloads/{token}/{id}，两者都无法拼成免鉴权直链。这里直接返回空，
+		// 避免拼出必然 404 的 download.php，也避免把 API Key 当 passkey 拼进下载器 URL 与日志。
+		return ""
 	case strings.Contains(trimmedSiteCode, "hdtime"):
 		if trimmedPasskey == "" {
 			return ""
