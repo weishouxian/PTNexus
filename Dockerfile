@@ -46,12 +46,31 @@ WORKDIR /src/server
 
 ENV GOPROXY=https://goproxy.cn,direct
 
+# Debian 软件源回退：境外构建机（OVH）直连官方源最快；国内机器（如 fnOS）访问
+# deb.debian.org 会被超时，导致 apt 索引全空、所有包 "Unable to locate"。
+# 这里先试官方源，失败自动切清华镜像；也可用 --build-arg DEBIAN_MIRROR=xxx 显式指定。
+# 注意两点：
+#   1) bookworm 起官方镜像用 deb822 格式的 debian.sources，老镜像才有 sources.list，两个都处理；
+#   2) apt-get update 遇到「部分源失败」退出码仍是 0，所以用输出里的 Err:/Failed to fetch 判定。
+ARG DEBIAN_MIRROR=""
+
 # 编译工具链按「构建机架构 → 目标架构」选择：
 #   同架构          → 本机 gcc（无需任何交叉包）
 #   amd64 → arm64  → gcc-aarch64-linux-gnu
 #   arm64 → amd64  → gcc-x86-64-linux-gnu
 RUN set -eux; \
-    apt-get update; \
+    if [ -n "${DEBIAN_MIRROR}" ]; then \
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" "$f"; fi; \
+      done; \
+    fi; \
+    if apt-get update -o Acquire::Retries=0 2>&1 | grep -qE "^Err:|W: Failed to fetch"; then \
+      echo "官方 Debian 源不可达，切换为 mirrors.tuna.tsinghua.edu.cn"; \
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then sed -i "s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g" "$f"; fi; \
+      done; \
+      apt-get update; \
+    fi; \
     apt-get install -y --no-install-recommends gcc g++ libc6-dev; \
     if [ "${TARGETARCH}" != "${BUILDARCH}" ]; then \
       case "${TARGETARCH}" in \
@@ -99,7 +118,22 @@ ENV PTNEXUS_BASE_DIR="/app/server"
 ENV PTNEXUS_DATA_DIR="/app/data"
 ENV PTNEXUS_BDINFO_DIR="/app/bdinfo/linux"
 
-RUN apt-get update && \
+# Debian 软件源回退，逻辑同 server-builder 阶段：官方源不通时自动切清华镜像。
+ARG DEBIAN_MIRROR=""
+
+RUN set -eux; \
+    if [ -n "${DEBIAN_MIRROR}" ]; then \
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then sed -i "s|deb.debian.org|${DEBIAN_MIRROR}|g" "$f"; fi; \
+      done; \
+    fi; \
+    if apt-get update -o Acquire::Retries=0 2>&1 | grep -qE "^Err:|W: Failed to fetch"; then \
+      echo "官方 Debian 源不可达，切换为 mirrors.tuna.tsinghua.edu.cn"; \
+      for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do \
+        if [ -f "$f" ]; then sed -i "s|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g" "$f"; fi; \
+      done; \
+      apt-get update; \
+    fi; \
     apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
