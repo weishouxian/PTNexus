@@ -165,6 +165,27 @@ func (s *SettingsService) DownloadersList(enabledOnly bool) []map[string]any {
 	return result
 }
 
+// DownloaderPassword 按下载器 ID 返回已保存的密码。
+// 参数/返回：id 为下载器唯一标识，未命中时返回空串。
+// 失败场景：id 为空或配置中不存在该下载器时返回空串。
+// 副作用：无副作用，仅从内存配置读取。
+func (s *SettingsService) DownloaderPassword(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	for _, raw := range toSlice(s.cfg.Get()["downloaders"]) {
+		downloader, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(toString(downloader["id"], "")) == id {
+			return toString(downloader["password"], "")
+		}
+	}
+	return ""
+}
+
 // DownloaderConfigs 返回下载器完整配置快照，供后端内部连接检测等流程使用。
 // 参数/返回：返回值按配置文件中的顺序排列，字段包含连接探测所需的 id/type/host/认证/代理开关等。
 // 失败场景：配置结构异常时会跳过异常项，不返回错误。

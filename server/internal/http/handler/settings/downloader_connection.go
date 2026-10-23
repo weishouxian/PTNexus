@@ -50,7 +50,13 @@ func (h *Handler) AllDownloaders(c *gin.Context) {
 		typ := strings.ToLower(strings.TrimSpace(handlerToString(payload["type"], "")))
 		host := strings.TrimSpace(handlerToString(payload["host"], ""))
 		username := handlerToString(payload["username"], "")
+		id := handlerToString(payload["id"], "")
 		password := handlerToString(payload["password"], "")
+		// 密码留空表示沿用已保存的密码：设置页读取配置时密码一律置空，
+		// 用户未重新输入时必须回查已保存值，否则测试连接会因为空密码认证失败。
+		if strings.TrimSpace(password) == "" {
+			password = h.settings.DownloaderPassword(id)
+		}
 		useProxy := handlerToBool(payload["use_proxy"], false)
 		proxyPort := handlerToInt(payload["proxy_port"], 9090)
 
@@ -65,7 +71,7 @@ func (h *Handler) AllDownloaders(c *gin.Context) {
 		}
 
 		downloader := downloaderclient.Downloader{
-			ID:        handlerToString(payload["id"], ""),
+			ID:        id,
 			Name:      name,
 			Type:      typ,
 			Host:      strings.TrimSpace(host),

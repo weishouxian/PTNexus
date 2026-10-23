@@ -68,6 +68,11 @@ var uploadNoticeDenialKeywords = []string{
 	"denied", "not allowed", "permission", "insufficient", "forbidden",
 }
 
+// uploadForbiddenHint 站点以 401/403 拒绝上传时给出的统一排查建议。
+// 单凭状态码分不清是登录态失效（Cookie 过期、被 WAF/人机校验拦截）还是账号本身没有发种权限，
+// 所以两种可能都必须写进提示，避免用户只去重登却忽略了权限问题。
+const uploadForbiddenHint = "请检查站点 Cookie 是否已失效，或当前账号是否具备发种权限"
+
 // rePublishDetailLink 命中即认为响应是发布成功后的详情页，此时页面里的 stdmsg 属中性提示而非失败原因。
 // 前导分隔符不可省略：用户资料页 userdetails.php?id=xxx 同样含 "details.php?id="，不设边界会被误判成发布成功。
 var rePublishDetailLink = regexp.MustCompile(`(?i)(^|[\s"'/=?&])details\.php\?id=\d+`)
@@ -81,6 +86,7 @@ type uploadFormFields struct {
 // 参数/返回：uploadURL/baseURL/cookie/fileField 为站点上传所需信息；torrentFile 为种子字节；formFields 为表单字段；
 // 返回发布详情页 URL、是否疑似“种子已存在”、本次尝试日志，以及错误。
 // 失败场景：HTTP 请求失败、服务端返回错误等；若站点仅提示“种子已存在”但未返回详情页，将按已存在成功处理。
+// HTTP 401/403 视为“站点拒绝/无权访问”，提示统一收敛为「检查 Cookie 是否失效或是否有发种权限」，不再倾倒整页 HTML。
 // 副作用：发起 HTTP 请求并读取响应正文。
 func TryUploadTorrent(uploadURL, baseURL, cookie, fileField string, torrentFile []byte, fileName string, formFields map[string]string) (string, bool, string, error) {
 	detailLines := []string{
@@ -213,6 +219,17 @@ func TryUploadTorrent(uploadURL, baseURL, cookie, fileField string, torrentFile 
 		}
 	}
 
+	if isUploadForbiddenStatus(resp.StatusCode) {
+		// 401/403 是「站点拒绝本次请求」，此时正文往往是 Cloudflare 人机校验页或 403 错误页，
+		// 整页 HTML 既无排查价值又会淹没真正的结论，因此只输出可执行的排查建议。
+		err = buildUploadForbiddenError(resp.StatusCode, bodyText, uploadNotice)
+		if !looksLikeCloudflareChallenge(bodyText) {
+			appendUploadRawResponse(&detailLines, bodyText)
+		}
+		detailLines = append(detailLines, fmt.Sprintf("尝试结论: %v", err))
+		return "", isExisting, buildDetail(), err
+	}
+
 	if responseDetail == "" {
 		responseDetail = "<empty response body>"
 	}
@@ -313,6 +330,10 @@ func fetchUploadFormFields(client *http.Client, baseURL string, cookie string) (
 		return uploadFormFields{}, err
 	}
 	defer resp.Body.Close()
+	if isUploadForbiddenStatus(resp.StatusCode) {
+		// 读上传页就 403/401，说明登录态或发种权限有问题，直接给出排查方向而不是干巴巴的状态码。
+		return uploadFormFields{}, fmt.Errorf("上传页响应状态异常: %d（%s）", resp.StatusCode, uploadForbiddenHint)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return uploadFormFields{}, fmt.Errorf("上传页响应状态异常: %d", resp.StatusCode)
 	}
@@ -646,6 +667,61 @@ func looksLikeUploadFormPage(text string) bool {
 func looksLikeHTMLResponse(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	return strings.HasPrefix(lower, "<!doctype html") || strings.Contains(lower, "<html")
+}
+
+// isUploadForbiddenStatus 判断上传响应状态码是否属于“被站点拒绝/无权访问”。
+// 参数/返回：statusCode 为 HTTP 状态码；401（未登录）与 403（无权限）返回 true。
+// 失败场景：无。
+// 副作用：无。
+func isUploadForbiddenStatus(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
+}
+
+// looksLikeCloudflareChallenge 判断响应正文是否为 Cloudflare 人机校验/拦截页。
+// 参数/返回：text 为响应正文；命中 Cloudflare challenge 特征时返回 true。
+// 失败场景：正文为空或为正常站点页面时返回 false。
+// 副作用：无。
+//
+// 背景：UBits 等站前置 Cloudflare，Cookie 失效或请求被判定为自动化时，upload.php 会直接返回 403 +
+// <title>Just a moment...</title> 的挑战页（正文是几十 KB 的混淆脚本）。这类页面必须单独识别，
+// 否则既会顶替掉「Cookie/权限」这个真实结论，也会把整页脚本写进发布日志。
+func looksLikeCloudflareChallenge(text string) bool {
+	sample := text
+	if len(sample) > 8192 {
+		sample = sample[:8192]
+	}
+	lower := strings.ToLower(sample)
+	if strings.TrimSpace(lower) == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"challenges.cloudflare.com",
+		"/cdn-cgi/challenge-platform",
+		"cf_chl_opt",
+		"cf-chl-",
+		"just a moment",
+		"checking your browser",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildUploadForbiddenError 生成 401/403 上传失败的提示文本。
+// 参数/返回：statusCode 为站点状态码；bodyText 为响应正文（用于识别人机校验页）；uploadNotice 为站点给出的失败原因（可为空）。
+// 失败场景：无，任何输入都会返回可读错误。
+// 副作用：无。
+func buildUploadForbiddenError(statusCode int, bodyText string, uploadNotice string) error {
+	if notice := strings.TrimSpace(uploadNotice); notice != "" {
+		// 站点已经写明了拒绝原因（如「你没有发布权限」），原样保留并附上排查建议。
+		return fmt.Errorf("HTTP %d 上传失败: %s（%s）", statusCode, notice, uploadForbiddenHint)
+	}
+	if looksLikeCloudflareChallenge(bodyText) {
+		return fmt.Errorf("HTTP %d 上传失败: 站点返回 Cloudflare 人机校验页面（Cookie 失效或请求被拦截时会出现），%s", statusCode, uploadForbiddenHint)
+	}
+	return fmt.Errorf("HTTP %d 上传失败: 站点拒绝了本次上传请求，%s", statusCode, uploadForbiddenHint)
 }
 
 func looksLikeUploadLoginResult(location string, body []byte) bool {

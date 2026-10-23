@@ -1,6 +1,8 @@
 package uploader
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -140,5 +142,128 @@ func TestStdMsgNoticeSkipsPublishedDetailPage(t *testing.T) {
 
 	if got := extractUploadNotice(page); got != "" {
 		t.Fatalf("详情页 stdmsg 不应提取为错误提示, got: %q", got)
+	}
+}
+
+// cloudflareChallengePage 简化自 UBits 实测返回：HTTP 403 + Cloudflare 挑战页。
+const cloudflareChallengePage = `<!DOCTYPE html><html lang="en-US"><head><title>Just a moment...</title>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script></head>
+<body><div id="cf-chl-widget"></div><noscript>Enable JavaScript and cookies to continue</noscript></body></html>`
+
+func TestLooksLikeCloudflareChallenge(t *testing.T) {
+	if !looksLikeCloudflareChallenge(cloudflareChallengePage) {
+		t.Fatalf("Cloudflare 挑战页应被识别")
+	}
+	if looksLikeCloudflareChallenge(`<html><body><h1>上传失败！</h1><p>标题不能为空</p></body></html>`) {
+		t.Fatalf("普通 NexusPHP 错误页不应被识别为 Cloudflare 挑战页")
+	}
+	if looksLikeCloudflareChallenge("") {
+		t.Fatalf("空正文不应被识别为 Cloudflare 挑战页")
+	}
+}
+
+func TestBuildUploadForbiddenError(t *testing.T) {
+	cases := []struct {
+		name    string
+		status  int
+		body    string
+		notice  string
+		wantSub []string
+	}{
+		{
+			name:    "403 Cloudflare 挑战页",
+			status:  403,
+			body:    cloudflareChallengePage,
+			wantSub: []string{"HTTP 403 上传失败", "Cloudflare", "Cookie 是否已失效", "发种权限"},
+		},
+		{
+			name:    "403 普通错误页",
+			status:  403,
+			body:    `<html><body>Forbidden</body></html>`,
+			wantSub: []string{"HTTP 403 上传失败", "站点拒绝了本次上传请求", "Cookie 是否已失效", "发种权限"},
+		},
+		{
+			name:    "站点自带拒绝原因优先",
+			status:  403,
+			body:    `<html><body>403</body></html>`,
+			notice:  "你没有发布种子的权限",
+			wantSub: []string{"你没有发布种子的权限", "Cookie 是否已失效", "发种权限"},
+		},
+		{
+			name:    "401 视为未登录",
+			status:  401,
+			body:    "",
+			wantSub: []string{"HTTP 401 上传失败", "Cookie 是否已失效"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := buildUploadForbiddenError(tc.status, tc.body, tc.notice)
+			if err == nil {
+				t.Fatalf("应返回错误")
+			}
+			msg := err.Error()
+			for _, sub := range tc.wantSub {
+				if !strings.Contains(msg, sub) {
+					t.Fatalf("错误提示缺少 %q，got: %q", sub, msg)
+				}
+			}
+			if strings.Contains(msg, "<!DOCTYPE") || strings.Contains(msg, "challenges.cloudflare.com") {
+				t.Fatalf("错误提示不应包含整页 HTML，got: %q", msg)
+			}
+		})
+	}
+}
+
+func TestIsUploadForbiddenStatus(t *testing.T) {
+	for _, code := range []int{401, 403} {
+		if !isUploadForbiddenStatus(code) {
+			t.Fatalf("状态码 %d 应判定为拒绝访问", code)
+		}
+	}
+	for _, code := range []int{200, 302, 400, 404, 500, 503} {
+		if isUploadForbiddenStatus(code) {
+			t.Fatalf("状态码 %d 不应判定为拒绝访问", code)
+		}
+	}
+}
+
+func TestTryUploadTorrentForbiddenReturnsActionableHint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/upload.php":
+			// 上传页也一起被 Cloudflare 拦下，走 fetchUploadFormFields 的 403 分支。
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(cloudflareChallengePage))
+		default:
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(cloudflareChallengePage))
+		}
+	}))
+	defer server.Close()
+
+	_, _, detail, err := TryUploadTorrent(
+		server.URL+"/takeupload.php",
+		server.URL,
+		"uid=1; pass=abc",
+		"file",
+		[]byte("d4:infod4:name1:aee"),
+		"test.torrent",
+		map[string]string{"name": "测试种子"},
+	)
+	if err == nil {
+		t.Fatalf("403 应返回错误")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Cookie 是否已失效") || !strings.Contains(msg, "发种权限") {
+		t.Fatalf("403 提示应给出 Cookie/权限排查方向，got: %q", msg)
+	}
+	if strings.Contains(msg, "<!DOCTYPE") {
+		t.Fatalf("403 提示不应倾倒整页 HTML，got: %q", msg)
+	}
+	// 上传页 403 的提示同样要能被看到（Cookie 失效时这里就是第一现场）。
+	if !strings.Contains(detail, "上传页响应状态异常: 403") {
+		t.Fatalf("详情日志应记录上传页 403，got: %q", detail)
 	}
 }
