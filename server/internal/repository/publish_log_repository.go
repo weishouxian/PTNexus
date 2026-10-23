@@ -2,6 +2,7 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -50,8 +51,12 @@ type PublishLogEntry struct {
 	QueueTaskID  *int64 `json:"queue_task_id" gorm:"column:queue_task_id"`
 	QueueGroupID string `json:"queue_group_id" gorm:"column:queue_group_id"`
 
-	TaskID     string `json:"task_id" gorm:"column:task_id"`
-	TorrentID  string `json:"torrent_id" gorm:"column:torrent_id"`
+	TaskID    string `json:"task_id" gorm:"column:task_id"`
+	TorrentID string `json:"torrent_id" gorm:"column:torrent_id"`
+	// Hash/Name 为「一种多站」列表关联键：Hash 对应 torrents.hash，Name 对应列表行的种子名。
+	// 历史记录这两列可能为空（补列之前写入的），聚合查询会按 hash 过滤，缺失的历史记录不参与列表着色。
+	Hash       string `json:"hash" gorm:"column:hash"`
+	Name       string `json:"name" gorm:"column:name"`
 	SourceSite string `json:"source_site" gorm:"column:source_site"`
 	TargetSite string `json:"target_site" gorm:"column:target_site"`
 
@@ -288,6 +293,8 @@ func (r *PublishLogRepository) UpsertByQueueTaskID(entry *PublishLogEntry) error
 		"queue_group_id":  entry.QueueGroupID,
 		"task_id":         entry.TaskID,
 		"torrent_id":      entry.TorrentID,
+		"hash":            strings.TrimSpace(entry.Hash),
+		"name":            strings.TrimSpace(entry.Name),
 		"source_site":     entry.SourceSite,
 		"target_site":     entry.TargetSite,
 		"downloader_id":   entry.DownloaderID,
@@ -489,6 +496,127 @@ func (r *PublishLogRepository) InvalidatePublishedByTorrentIDs(torrentIDs []stri
 		affected += result.RowsAffected
 	}
 	return affected, nil
+}
+
+// PublishSiteStatus 描述某颗种子在某个目标站点的发布状态聚合结果。
+// 用途：「一种多站」列表按站点着色（成功/失败/已存在）、显示发布次数角标、展开行内嵌明细表。
+type PublishSiteStatus struct {
+	TargetSite string `json:"target_site"`
+	// Status 为最新一条发布记录的 publish_logs.status（success/edited/exists/failed/pre_check_limit/invalidated/unknown）。
+	Status string `json:"status"`
+	// Count 为该种子发往该站点的历史记录条数（含失败重试），用于角标展示。
+	Count int64 `json:"count"`
+	// LastAt 为最新一条记录的完成时间（updated_at，回退 created_at）。
+	LastAt string `json:"last_at"`
+	// Logs 为最新一条记录的日志片段（已按 limit 截断），供内嵌明细表展示失败原因。
+	Logs      string `json:"logs"`
+	ResultURL string `json:"result_url"`
+	CostMS    int64  `json:"cost_ms"`
+	LogID     uint64 `json:"log_id"`
+}
+
+// PublishSiteStatusByHashes 按种子 hash 批量聚合各目标站点的最新发布状态。
+// 参数/返回：hashes 为种子 hash 列表（大小写与首尾空格不敏感、自动去重）；logsLimit 为日志片段截断长度（<=0 时取默认 400）。
+// 返回 hash（小写）→ 该种子各目标站点状态列表的映射；无匹配时返回空映射。
+// 失败场景：仓储/DB 未初始化或查询失败返回 error。
+// 副作用：只读 publish_logs。
+//
+// 实现说明：分两步（而非窗口函数），以兼容 MySQL 8 / PostgreSQL / SQLite 三方言：
+// ① GROUP BY (hash, target_site) 取 COUNT(*) 与 MAX(id)；
+// ② 按 MAX(id) 批量取回最新记录详情，日志在 SQL 侧用 SUBSTR 截断，避免把 LONGTEXT 整列拉回内存。
+func (r *PublishLogRepository) PublishSiteStatusByHashes(hashes []string, logsLimit int) (map[string][]PublishSiteStatus, error) {
+	result := map[string][]PublishSiteStatus{}
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return result, errors.New("publish log repo is nil")
+	}
+
+	lowered := compactLowerStrings(hashes)
+	if len(lowered) == 0 {
+		return result, nil
+	}
+	if logsLimit <= 0 {
+		logsLimit = 400
+	}
+
+	type aggregateRow struct {
+		Hash       string `gorm:"column:hash"`
+		TargetSite string `gorm:"column:target_site"`
+		Count      int64  `gorm:"column:cnt"`
+		LatestID   uint64 `gorm:"column:latest_id"`
+	}
+	aggregates := make([]aggregateRow, 0)
+	aggregateSQL := `
+		SELECT LOWER(TRIM(hash)) AS hash, target_site, COUNT(*) AS cnt, MAX(id) AS latest_id
+		FROM publish_logs
+		WHERE hash IS NOT NULL AND TRIM(hash) != '' AND LOWER(TRIM(hash)) IN ?
+		GROUP BY LOWER(TRIM(hash)), target_site
+	`
+	if err := r.store.DB.Raw(aggregateSQL, lowered).Scan(&aggregates).Error; err != nil {
+		return result, err
+	}
+	if len(aggregates) == 0 {
+		return result, nil
+	}
+
+	latestIDs := make([]uint64, 0, len(aggregates))
+	for _, row := range aggregates {
+		if row.LatestID > 0 {
+			latestIDs = append(latestIDs, row.LatestID)
+		}
+	}
+	if len(latestIDs) == 0 {
+		return result, nil
+	}
+
+	type latestRow struct {
+		ID         uint64 `gorm:"column:id"`
+		TargetSite string `gorm:"column:target_site"`
+		Status     string `gorm:"column:status"`
+		CreatedAt  string `gorm:"column:created_at"`
+		UpdatedAt  string `gorm:"column:updated_at"`
+		ResultURL  string `gorm:"column:result_url"`
+		CostMS     int64  `gorm:"column:cost_ms"`
+		Logs       string `gorm:"column:logs"`
+	}
+	latestByID := map[uint64]latestRow{}
+	latestRows := make([]latestRow, 0, len(latestIDs))
+	// SUBSTR 在 MySQL / PostgreSQL / SQLite 三方言中均可用（MySQL 视其为 SUBSTRING 同义词）。
+	// 截断长度用整数字面量内联而非占位符：三方言对函数参数位的类型推断不一致，占位符可能被当作字符串绑定而报错。
+	// logsLimit 为服务端常量（非用户输入），内联无注入风险。
+	detailSQL := fmt.Sprintf(`
+		SELECT id, target_site, status, created_at, updated_at, cost_ms, result_url,
+		       SUBSTR(COALESCE(logs, ''), 1, %d) AS logs
+		FROM publish_logs
+		WHERE id IN ?
+	`, logsLimit)
+	if err := r.store.DB.Raw(detailSQL, latestIDs).Scan(&latestRows).Error; err != nil {
+		return result, err
+	}
+	for _, row := range latestRows {
+		latestByID[row.ID] = row
+	}
+
+	for _, agg := range aggregates {
+		detail, ok := latestByID[agg.LatestID]
+		if !ok {
+			continue
+		}
+		lastAt := strings.TrimSpace(detail.UpdatedAt)
+		if lastAt == "" {
+			lastAt = strings.TrimSpace(detail.CreatedAt)
+		}
+		result[agg.Hash] = append(result[agg.Hash], PublishSiteStatus{
+			TargetSite: strings.TrimSpace(agg.TargetSite),
+			Status:     strings.TrimSpace(detail.Status),
+			Count:      agg.Count,
+			LastAt:     lastAt,
+			Logs:       strings.TrimSpace(detail.Logs),
+			ResultURL:  strings.TrimSpace(detail.ResultURL),
+			CostMS:     detail.CostMS,
+			LogID:      detail.ID,
+		})
+	}
+	return result, nil
 }
 
 // FindByIDs 按主键列表批量查询发种日志记录（仅返回 ID/Status/QueueTaskID）。

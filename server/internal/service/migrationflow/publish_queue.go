@@ -1025,12 +1025,15 @@ func (s *MigrateService) insertQueuedPublishLogs(tasks []repository.PublishQueue
 		}
 
 		entry := repository.PublishLogEntry{
-			Trigger:       strings.TrimSpace(task.Trigger),
-			Scene:         strings.TrimSpace(task.Scene),
-			QueueTaskID:   &taskID,
-			QueueGroupID:  strings.TrimSpace(task.GroupID),
-			TaskID:        strings.TrimSpace(task.TaskID),
-			TorrentID:     strings.TrimSpace(task.TorrentID),
+			Trigger:      strings.TrimSpace(task.Trigger),
+			Scene:        strings.TrimSpace(task.Scene),
+			QueueTaskID:  &taskID,
+			QueueGroupID: strings.TrimSpace(task.GroupID),
+			TaskID:       strings.TrimSpace(task.TaskID),
+			TorrentID:    strings.TrimSpace(task.TorrentID),
+			// Hash 从 context_json 快照提取（与发布进度页体积回填同一来源），
+			// 供「一种多站」列表把「排队中」的站点也着色出来；发布完成后 appendPublishLog 会再覆盖写入。
+			Hash:          strings.ToLower(extractPublishContextHash(task.ContextJSON)),
 			SourceSite:    s.normalizePublishLogSourceSite(task.SourceSite),
 			TargetSite:    strings.TrimSpace(task.TargetSite),
 			DownloaderID:  strings.TrimSpace(task.DownloaderID),

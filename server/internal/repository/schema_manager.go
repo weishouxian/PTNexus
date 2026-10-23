@@ -96,8 +96,124 @@ func (m *SchemaManager) EnsureSchema() error {
 	if err := m.backfillSeedParameterLastPublishAtFromPublishLogs(); err != nil {
 		logx.Warnf(schemaLogModule, "回填 seed_parameters.last_publish_at 失败 err=%v", err)
 	}
+	if err := m.backfillPublishLogHashes(); err != nil {
+		logx.Warnf(schemaLogModule, "回填 publish_logs.hash 失败 err=%v", err)
+	}
 
 	logx.Infof(schemaLogModule, "数据库结构校验完成 db_type=%s", m.store.DBType)
+	return nil
+}
+
+// publishLogHashBackfillBatch 为回填 publish_logs.hash 的单批更新条数。
+// 按主键 IN 批量更新，单批过大在部分驱动上会触发占位符数量上限。
+const publishLogHashBackfillBatch = 500
+
+// backfillPublishLogHashes 为历史发布日志回填 hash，供「一种多站」列表关联发布状态。
+// 参数/返回：无入参；返回查询或更新错误。
+// 失败场景：查询待回填记录、读取 seed_parameters 映射或批量更新失败时返回 error。
+// 副作用：更新 publish_logs.hash（仅原本为空的行）。
+//
+// 关联口径：publish_logs 只有 torrent_id（源站种子 id）与 title（发布标题），
+// 列表却按「种子名 + 体积」聚合并以 hash 着色，因此需要反查 seed_parameters 补 hash。
+// 仅回填「该 torrent_id 在 seed_parameters 中只对应唯一一个 hash」的记录：
+// 不同站点的种子 id 会互相撞车（生产库实测存在同一 torrent_id 对应多个 hash 的组），
+// 这类记录宁可不回填，也不能把别的种子的发布结果错标到当前种子上。
+//
+// 性能：先判是否有待回填行，为 0 直接返回，避免每次启动都做全量关联。
+func (m *SchemaManager) backfillPublishLogHashes() error {
+	if m == nil || m.store == nil || m.store.DB == nil {
+		return nil
+	}
+
+	type countRow struct {
+		Total int64 `gorm:"column:total"`
+	}
+	pending := countRow{}
+	if err := m.store.DB.Raw(`
+		SELECT COUNT(*) AS total FROM publish_logs
+		WHERE (hash IS NULL OR hash = '') AND torrent_id IS NOT NULL AND TRIM(torrent_id) != ''
+	`).Scan(&pending).Error; err != nil {
+		return err
+	}
+	if pending.Total == 0 {
+		return nil
+	}
+
+	type uniqueHashRow struct {
+		Tid  string `gorm:"column:tid"`
+		Hash string `gorm:"column:h"`
+	}
+	// 子查询包一层再用 hc 过滤：HAVING 引用 SELECT 别名在 PostgreSQL 下不合法，各方言统一走外层 WHERE。
+	uniqueRows := make([]uniqueHashRow, 0)
+	if err := m.store.DB.Raw(`
+		SELECT t.tid, t.h FROM (
+			SELECT TRIM(torrent_id) AS tid, MIN(hash) AS h, COUNT(DISTINCT LOWER(TRIM(hash))) AS hc
+			FROM seed_parameters
+			WHERE torrent_id IS NOT NULL AND TRIM(torrent_id) != ''
+			GROUP BY TRIM(torrent_id)
+		) t
+		WHERE t.hc = 1 AND t.h IS NOT NULL AND TRIM(t.h) != ''
+	`).Scan(&uniqueRows).Error; err != nil {
+		return err
+	}
+	if len(uniqueRows) == 0 {
+		return nil
+	}
+
+	hashByTorrentID := make(map[string]string, len(uniqueRows))
+	for _, row := range uniqueRows {
+		tid := strings.TrimSpace(row.Tid)
+		hash := strings.ToLower(strings.TrimSpace(row.Hash))
+		if tid == "" || hash == "" {
+			continue
+		}
+		hashByTorrentID[tid] = hash
+	}
+
+	type pendingRow struct {
+		ID  uint64 `gorm:"column:id"`
+		Tid string `gorm:"column:tid"`
+	}
+	pendingRows := make([]pendingRow, 0)
+	if err := m.store.DB.Raw(`
+		SELECT id, TRIM(torrent_id) AS tid FROM publish_logs
+		WHERE (hash IS NULL OR hash = '') AND torrent_id IS NOT NULL AND TRIM(torrent_id) != ''
+	`).Scan(&pendingRows).Error; err != nil {
+		return err
+	}
+
+	idsByHash := map[string][]uint64{}
+	for _, row := range pendingRows {
+		hash, ok := hashByTorrentID[strings.TrimSpace(row.Tid)]
+		if !ok || row.ID == 0 {
+			continue
+		}
+		idsByHash[hash] = append(idsByHash[hash], row.ID)
+	}
+	if len(idsByHash) == 0 {
+		return nil
+	}
+
+	updated := 0
+	for hash, ids := range idsByHash {
+		for start := 0; start < len(ids); start += publishLogHashBackfillBatch {
+			end := start + publishLogHashBackfillBatch
+			if end > len(ids) {
+				end = len(ids)
+			}
+			result := m.store.DB.Exec(
+				`UPDATE publish_logs SET hash = ? WHERE id IN ?`,
+				hash, ids[start:end],
+			)
+			if result.Error != nil {
+				return result.Error
+			}
+			updated += int(result.RowsAffected)
+		}
+	}
+
+	logx.Infof(schemaLogModule, "回填 publish_logs.hash 完成 pending=%d matched=%d unique_torrent_ids=%d",
+		pending.Total, updated, len(idsByHash))
 	return nil
 }
 
@@ -492,6 +608,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				queue_group_id VARCHAR(64),
 				task_id VARCHAR(64),
 				torrent_id VARCHAR(255),
+				hash VARCHAR(64),
+				name TEXT,
 				source_site VARCHAR(255),
 				target_site VARCHAR(255),
 				downloader_id VARCHAR(64),
@@ -723,6 +841,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				queue_group_id VARCHAR(64),
 				task_id VARCHAR(64),
 				torrent_id VARCHAR(255),
+				hash VARCHAR(64),
+				name TEXT,
 				source_site VARCHAR(255),
 				target_site VARCHAR(255),
 				downloader_id VARCHAR(64),
@@ -953,6 +1073,8 @@ func (m *SchemaManager) createTableSQLs() []string {
 				queue_group_id TEXT,
 				task_id TEXT,
 				torrent_id TEXT,
+				hash TEXT,
+				name TEXT,
 				source_site TEXT,
 				target_site TEXT,
 				downloader_id TEXT,
@@ -1276,6 +1398,10 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "queue_group_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
 			{name: "task_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
 			{name: "torrent_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(255)", "postgresql": "VARCHAR(255)"}},
+			// hash/name 为「一种多站」列表关联键：publish_logs 原本只有 torrent_id（源站种子 id）与 title（发布标题），
+			// 无法可靠映射回列表行（列表按「种子名 + 体积」聚合）。补这两列后可按 hash 批量聚合发布状态。
+			{name: "hash", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
+			{name: "name", definition: map[string]string{"sqlite": "TEXT", "mysql": "TEXT", "postgresql": "TEXT"}},
 			{name: "source_site", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(255)", "postgresql": "VARCHAR(255)"}},
 			{name: "target_site", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(255)", "postgresql": "VARCHAR(255)"}},
 			{name: "downloader_id", definition: map[string]string{"sqlite": "TEXT", "mysql": "VARCHAR(64)", "postgresql": "VARCHAR(64)"}},
@@ -1311,6 +1437,8 @@ func (m *SchemaManager) indexSpecs() []schemaIndexSpec {
 		{table: "publish_logs", name: "idx_publish_logs_queue_group_id", columns: []string{"queue_group_id"}},
 		// 兜底匹配用：早期批次发布日志没有 queue_task_id，只能按 task_id + 目标站点反查。
 		{table: "publish_logs", name: "idx_publish_logs_task_site", columns: []string{"task_id", "target_site"}},
+		// 「一种多站」列表按 hash 批量聚合各目标站的发布状态。
+		{table: "publish_logs", name: "idx_publish_logs_hash_site", columns: []string{"hash", "target_site"}},
 
 		{table: "scheduled_seed_tasks", name: "idx_sched_seed_status_next_run", columns: []string{"status", "next_run_at"}},
 		{table: "scheduled_seed_tasks", name: "idx_sched_seed_trigger_tag", columns: []string{"trigger_tag"}},

@@ -114,7 +114,7 @@
       <el-table-column type="expand" width="1">
         <template #default="props">
           <div class="expand-content">
-            <template v-for="siteName in sorted_all_sites" :key="siteName">
+            <template v-for="siteName in expandedSiteNames(props.row)" :key="siteName">
               <template v-if="props.row.sites[siteName]">
                 <!-- 对于未做种状态的站点，使用可点击的div而不是链接 -->
                 <div
@@ -129,10 +129,18 @@
                 >
                   <el-tag
                     effect="dark"
-                    :type="getTagType(props.row.sites[siteName])"
+                    :type="getTagType(props.row.sites[siteName], props.row, siteName)"
+                    :title="siteTagTooltip(props.row, siteName)"
                     style="text-align: center; width: 100%"
                   >
-                    {{ siteName }}
+                    <span class="site-tag-label">
+                      <span
+                        v-if="publishRecordForSite(props.row, siteName)"
+                        class="publish-mark"
+                        :class="`publish-mark--${publishRecordForSite(props.row, siteName)!.group}`"
+                        >{{ publishMarkOf(publishRecordForSite(props.row, siteName)!) }}</span
+                      >{{ siteName }}
+                    </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
                   </el-tag>
                 </div>
@@ -147,10 +155,18 @@
                 >
                   <el-tag
                     effect="dark"
-                    :type="getTagType(props.row.sites[siteName])"
+                    :type="getTagType(props.row.sites[siteName], props.row, siteName)"
+                    :title="siteTagTooltip(props.row, siteName)"
                     style="text-align: center"
                   >
-                    {{ siteName }}
+                    <span class="site-tag-label">
+                      <span
+                        v-if="publishRecordForSite(props.row, siteName)"
+                        class="publish-mark"
+                        :class="`publish-mark--${publishRecordForSite(props.row, siteName)!.group}`"
+                        >{{ publishMarkOf(publishRecordForSite(props.row, siteName)!) }}</span
+                      >{{ siteName }}
+                    </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
                   </el-tag>
                 </a>
@@ -167,18 +183,103 @@
                 >
                   <el-tag
                     effect="dark"
-                    :type="getTagType(props.row.sites[siteName])"
+                    :type="getTagType(props.row.sites[siteName], props.row, siteName)"
+                    :title="siteTagTooltip(props.row, siteName)"
                     style="text-align: center; width: 100%"
                   >
-                    {{ siteName }}
+                    <span class="site-tag-label">
+                      <span
+                        v-if="publishRecordForSite(props.row, siteName)"
+                        class="publish-mark"
+                        :class="`publish-mark--${publishRecordForSite(props.row, siteName)!.group}`"
+                        >{{ publishMarkOf(publishRecordForSite(props.row, siteName)!) }}</span
+                      >{{ siteName }}
+                    </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
                   </el-tag>
                 </div>
               </template>
+              <!-- 没有做种数据：若曾有发布记录，仍按发布状态着色（如发布失败/站点已存在） -->
               <template v-else>
-                <el-tag type="info" effect="plain">{{ siteName }}</el-tag>
+                <el-tag
+                  v-if="publishRecordForSite(props.row, siteName)"
+                  effect="dark"
+                  :type="getTagType(undefined, props.row, siteName)"
+                  :title="siteTagTooltip(props.row, siteName)"
+                  style="width: 100%"
+                >
+                  <span class="site-tag-label">
+                    <span
+                      class="publish-mark"
+                      :class="`publish-mark--${publishRecordForSite(props.row, siteName)!.group}`"
+                      >{{ publishMarkOf(publishRecordForSite(props.row, siteName)!) }}</span
+                    >{{ siteName }}
+                  </span>
+                </el-tag>
+                <el-tag v-else type="info" effect="plain">{{ siteName }}</el-tag>
               </template>
             </template>
+          </div>
+
+          <!-- 该种子的发布记录明细：发过哪些站点、结果、失败原因 -->
+          <div v-if="props.row.publish_sites && props.row.publish_sites.length" class="publish-detail">
+            <div class="publish-detail__header">
+              <span class="publish-detail__title">发布记录</span>
+              <span class="publish-detail__hint">
+                共 {{ props.row.publish_sites.length }} 个站点，同一站点多次发布取最新状态
+              </span>
+            </div>
+            <el-table
+              :data="props.row.publish_sites"
+              size="small"
+              border
+              max-height="230"
+              class="publish-detail__table"
+            >
+              <el-table-column prop="site" label="站点" width="150" />
+              <el-table-column label="状态" width="140" align="center">
+                <template #default="detail">
+                  <span class="publish-status-text" :class="`publish-status-text--${detail.row.group}`">
+                    {{ publishStatusLabel(detail.row) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="次数" width="70" align="center">
+                <template #default="detail">
+                  <span :title="`该站点共发布 ${detail.row.count} 次`">{{ detail.row.count }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="最后发布" width="165" align="center">
+                <template #default="detail">
+                  <span :title="detail.row.last_at || '未知'">
+                    {{ detail.row.last_at ? formatElapsedPublishTime(detail.row.last_at) : '-' }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="失败原因" min-width="280">
+                <template #default="detail">
+                  <span v-if="detail.row.reason" class="publish-reason" :title="detail.row.reason">
+                    {{ detail.row.reason }}
+                  </span>
+                  <span v-else class="publish-reason publish-reason--empty">-</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="详情" width="90" align="center">
+                <template #default="detail">
+                  <el-link
+                    v-if="detail.row.result_url"
+                    type="primary"
+                    :href="detail.row.result_url"
+                    target="_blank"
+                    :underline="false"
+                    @click.stop
+                  >
+                    发布页
+                  </el-link>
+                  <span v-else class="publish-reason--empty">-</span>
+                </template>
+              </el-table-column>
+            </el-table>
           </div>
         </template>
       </el-table-column>
@@ -428,6 +529,37 @@
                 : '未发种'
             }}
           </span>
+        </template>
+      </el-table-column>
+
+      <!-- 发布：各目标站点发布结果汇总（失败优先，点击展开行查看明细） -->
+      <el-table-column
+        v-if="isColumnVisible('publish_status')"
+        prop="publish_status"
+        label="发布"
+        width="152"
+        align="center"
+        header-align="center"
+      >
+        <template #header>
+          <div class="publish-header-title" title="各目标站点的发布结果汇总：✓成功 =已存在 ✗失败 ⏳进行中">
+            发布
+          </div>
+        </template>
+        <template #default="scope">
+          <div v-if="hasPublishRecords(scope.row)" class="publish-summary-cell">
+            <el-tooltip
+              v-for="item in publishSummaryBadges(scope.row)"
+              :key="item.group"
+              :content="item.tip"
+              placement="top"
+            >
+              <span class="publish-badge" :class="`publish-badge--${item.group}`">
+                <span class="publish-badge__icon">{{ item.icon }}</span>{{ item.count }}
+              </span>
+            </el-tooltip>
+          </div>
+          <span v-else class="publish-summary-empty">-</span>
         </template>
       </el-table-column>
 
@@ -1041,7 +1173,7 @@ import { useCrossSeedStore } from '@/stores/crossSeed'
 import { useSiteDataStore } from '@/stores/siteData'
 import { useTorrentsViewState } from '@/stores/torrentsViewState'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
-import type { ISourceInfo, Torrent, SiteData, Downloader } from '@/types'
+import type { ISourceInfo, Torrent, SiteData, Downloader, PublishSiteStatus, PublishStatusGroup } from '@/types'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
 import { ElMessage } from '@/utils/uiNotify'
 
@@ -1463,6 +1595,25 @@ const sorted_all_sites = computed(() => {
   return [...all_sites.value].sort(collator.compare)
 })
 
+/**
+ * 展开行要渲染的站点列表。
+ * all_discovered_sites 只统计「做种过」的站点，发布过但从未做种的站点（如发布失败、站点已存在）
+ * 不在其中；这里把该行 publish_sites 里的站点补进渲染列表，否则这些站点的发布结果在展开行看不到。
+ * 参数：row 为列表行。
+ * 返回：站点名数组（已排序，做种过的站点保持原顺序在前）。
+ */
+const expandedSiteNames = (row: Torrent): string[] => {
+  const base = sorted_all_sites.value
+  const published = (row.publish_sites || []).map((record) => (record.site || '').trim()).filter(Boolean)
+  if (published.length === 0) return base
+
+  const known = new Set(base.map((site) => site.toLowerCase()))
+  const collator = new Intl.Collator('zh-CN', { numeric: true })
+  const extra = published.filter((site) => !known.has(site.toLowerCase()))
+  if (extra.length === 0) return base
+  return [...base, ...Array.from(new Set(extra)).sort(collator.compare)]
+}
+
 const siteSearch = ref('')
 const filteredSiteOptions = computed(() => {
   if (!siteSearch.value) return sorted_all_sites.value
@@ -1526,12 +1677,14 @@ const torrentsColumns: ColumnDef[] = [
   { prop: 'state', label: '状态' },
   { prop: 'publish_at', label: '可发种时间' },
   { prop: 'last_publish_at', label: '最后发种时间' },
+  { prop: 'publish_status', label: '发布' },
   { prop: 'target_sites_count', label: '可转种' },
 ]
 
 const defaultTorrentsVisibleColumns = torrentsColumns.map((c) => c.prop)
 // 列结构版本：v2 起新增「类型 / 媒介 / 地区」列，老设置升级时补一次默认可见，之后完全由用户控制。
-const TORRENTS_COLUMNS_VERSION = 2
+// v3 起新增「发布」列（各目标站点发布成功/失败/已存在汇总）。
+const TORRENTS_COLUMNS_VERSION = 3
 const visibleColumns = ref<string[]>([...defaultTorrentsVisibleColumns])
 const isColumnVisible = (prop: string) => visibleColumns.value.includes(prop)
 
@@ -1626,7 +1779,7 @@ const loadUiSettings = async (forceRefresh = false) => {
       const savedColumns = [...settings.visible_columns]
       // 老设置（没有列结构版本号）补上新增的类型/媒介/地区列；保存过新版本的设置不再强制注入。
       if ((settings.columns_version ?? 1) < TORRENTS_COLUMNS_VERSION) {
-        for (const column of ['type', 'medium', 'source']) {
+        for (const column of ['type', 'medium', 'source', 'publish_status']) {
           if (!savedColumns.includes(column)) {
             savedColumns.push(column)
           }
@@ -2556,7 +2709,76 @@ const getLink = (siteData?: SiteData | null, siteName?: string | null): string |
   }
   return null
 }
-const getTagType = (siteData: SiteData) => {
+/** 发布状态分组 → ElementPlus 标签类型（决定站点标签底色）。 */
+const publishGroupTagType: Record<PublishStatusGroup, string> = {
+  success: 'success',
+  exists: 'primary',
+  failed: 'danger',
+  pending: 'warning',
+  void: 'info',
+  other: 'info',
+}
+
+/** 发布状态分组 → 标签内前缀符号，用于在色块上再叠一层形状区分（色弱也可辨）。 */
+const publishGroupMark: Record<PublishStatusGroup, string> = {
+  success: '✓',
+  exists: '=',
+  failed: '✗',
+  pending: '⋯',
+  void: '∅',
+  other: '?',
+}
+
+/** 发布状态分组 → 中文文案（内嵌明细表用）。 */
+const publishGroupLabel: Record<PublishStatusGroup, string> = {
+  success: '成功',
+  exists: '已存在',
+  failed: '失败',
+  pending: '进行中',
+  void: '已作废',
+  other: '未知',
+}
+
+/** 汇总徽标展示顺序：失败最需要被看到，放在最前。 */
+const publishSummaryOrder: PublishStatusGroup[] = ['failed', 'pending', 'exists', 'success', 'void', 'other']
+
+/**
+ * 站点名（小写）→ 发布记录的缓存。
+ * 展开行会按「全部站点 × 多次调用」查发布记录（138 站 × 4 处/站点），
+ * 每次 find 线性扫 publish_sites 会造成不必要的重复计算；按行对象缓存一张映射表即可。
+ * 用 WeakMap 是为了列表刷新后旧行对象自动释放，不需要手工清理。
+ */
+const publishRecordIndexCache = new WeakMap<Torrent, Map<string, PublishSiteStatus>>()
+
+/**
+ * 取某一行种子的指定站点发布记录。
+ * 参数：row 为列表行；siteName 为站点昵称（大小写不敏感）。
+ * 返回：命中的发布状态聚合，未发布过该站点时返回 undefined。
+ */
+const publishRecordForSite = (row: Torrent, siteName: string): PublishSiteStatus | undefined => {
+  if (!row.publish_sites || row.publish_sites.length === 0) return undefined
+  let index = publishRecordIndexCache.get(row)
+  if (!index) {
+    index = new Map<string, PublishSiteStatus>()
+    for (const record of row.publish_sites) {
+      const key = (record.site || '').trim().toLowerCase()
+      if (key && !index.has(key)) index.set(key, record)
+    }
+    publishRecordIndexCache.set(row, index)
+  }
+  return index.get(siteName.trim().toLowerCase())
+}
+
+/**
+ * 站点标签类型：有发布记录时以发布结果着色（成功/已存在/失败/进行中），
+ * 否则退回原有的做种状态着色逻辑。
+ * 参数：siteData 为该站点的做种数据（可能不存在）；row/siteName 用于查发布记录。
+ * 返回：ElementPlus 标签类型字符串。
+ */
+const getTagType = (siteData?: SiteData, row?: Torrent, siteName?: string) => {
+  const record = row && siteName ? publishRecordForSite(row, siteName) : undefined
+  if (record) return publishGroupTagType[record.group] || 'info'
+  if (!siteData) return 'info'
   if (siteData.state === '未做种') {
     return 'danger'
   } else if (siteData.state === '不存在') {
@@ -2566,6 +2788,64 @@ const getTagType = (siteData: SiteData) => {
   } else if (siteData.state === '做种中') {
     return 'primary'
   } else return 'info'
+}
+
+/** 取发布状态标签内展示的前缀符号。 */
+const publishMarkOf = (record: PublishSiteStatus) => publishGroupMark[record.group] || '?'
+
+/** 取发布状态的中文文案。 */
+const publishStatusLabel = (record: PublishSiteStatus) => {
+  const base = publishGroupLabel[record.group] || record.status || '未知'
+  // 精确状态与分组名不同时（如 pre_check_limit 属「失败」组），把原始状态补在括号里便于排查。
+  const rawStatus = (record.status || '').trim()
+  if (!rawStatus || record.group === 'other') return base
+  const sameAsGroup =
+    (record.group === 'success' && (rawStatus === 'success' || rawStatus === 'edited')) ||
+    (record.group === 'exists' && rawStatus === 'exists') ||
+    (record.group === 'failed' && rawStatus === 'failed') ||
+    (record.group === 'pending' && rawStatus === 'queued') ||
+    (record.group === 'void' && rawStatus === 'invalidated')
+  return sameAsGroup ? base : `${base}（${rawStatus}）`
+}
+
+/**
+ * 站点标签的悬浮提示：有发布记录时展示发布结果、次数、时间与失败原因。
+ * 参数：row 为列表行；siteName 为站点昵称。
+ * 返回：提示文本，无发布记录时返回空串（不显示提示）。
+ */
+const siteTagTooltip = (row: Torrent, siteName: string): string => {
+  const record = publishRecordForSite(row, siteName)
+  if (!record) return ''
+  const parts = [`${siteName}：${publishStatusLabel(record)}`]
+  if (record.count > 1) parts.push(`共发布 ${record.count} 次`)
+  if (record.last_at) parts.push(`最后发布 ${record.last_at}`)
+  if (record.reason) parts.push(`原因：${record.reason}`)
+  return parts.join('｜')
+}
+
+/** 判断该行是否存在任何发布记录。 */
+const hasPublishRecords = (row: Torrent) => Boolean(row.publish_sites && row.publish_sites.length)
+
+/**
+ * 生成列表「发布」列的汇总徽标（按失败优先顺序）。
+ * 参数：row 为列表行。
+ * 返回：{ group, icon, count, tip } 数组，无记录时返回空数组。
+ */
+const publishSummaryBadges = (row: Torrent) => {
+  const summary = row.publish_summary
+  if (!summary) return []
+  const badges: { group: PublishStatusGroup; icon: string; count: number; tip: string }[] = []
+  for (const group of publishSummaryOrder) {
+    const count = summary[group] || 0
+    if (count <= 0) continue
+    badges.push({
+      group,
+      icon: publishGroupMark[group] || '?',
+      count,
+      tip: `${publishGroupLabel[group] || group}：${count} 个站点`,
+    })
+  }
+  return badges
 }
 
 const getDownloaderName = (downloaderId: string | null) => {
@@ -3052,6 +3332,183 @@ watch(visibleColumns, () => {
   align-items: center;
   line-height: 1.2;
   padding: 0;
+}
+
+/* 站点标签内的「发布状态前缀符号」：色块本身已按状态着色，符号再叠一层形状区分。 */
+.site-tag-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.publish-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  margin-right: 2px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.publish-mark--success {
+  color: #3a9e4a;
+}
+
+.publish-mark--exists {
+  color: #2f6fd0;
+}
+
+.publish-mark--failed {
+  color: #d9363e;
+}
+
+.publish-mark--pending {
+  color: #c78012;
+}
+
+.publish-mark--void,
+.publish-mark--other {
+  color: #8a8f99;
+}
+
+/* 列表「发布」列：各状态计数徽标。 */
+.publish-header-title {
+  display: inline-block;
+  cursor: help;
+}
+
+.publish-summary-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.publish-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 0 5px;
+  height: 18px;
+  border-radius: 9px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  border: 1px solid transparent;
+}
+
+.publish-badge__icon {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.publish-badge--success {
+  color: #2f8f43;
+  background: #eaf7ec;
+  border-color: #bfe3c6;
+}
+
+.publish-badge--exists {
+  color: #2f6fd0;
+  background: #eaf1fc;
+  border-color: #c2d6f5;
+}
+
+.publish-badge--failed {
+  color: #d9363e;
+  background: #fdecec;
+  border-color: #f5c2c4;
+}
+
+.publish-badge--pending {
+  color: #b8790f;
+  background: #fdf5e6;
+  border-color: #f0d9a8;
+}
+
+.publish-badge--void,
+.publish-badge--other {
+  color: #7a7f88;
+  background: #f2f3f5;
+  border-color: #dcdfe6;
+}
+
+.publish-summary-empty {
+  color: #b1b5bd;
+}
+
+/* 展开行内嵌的发布记录明细表 */
+.publish-detail {
+  padding: 8px 20px 12px;
+  background-color: #fafcff;
+  border-top: 1px dashed #e4e8ef;
+}
+
+.publish-detail__header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.publish-detail__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #3d4450;
+}
+
+.publish-detail__hint {
+  font-size: 12px;
+  color: #909399;
+}
+
+.publish-detail__table {
+  background: #fff;
+}
+
+.publish-status-text {
+  font-weight: 600;
+}
+
+.publish-status-text--success {
+  color: #2f8f43;
+}
+
+.publish-status-text--exists {
+  color: #2f6fd0;
+}
+
+.publish-status-text--failed {
+  color: #d9363e;
+}
+
+.publish-status-text--pending {
+  color: #b8790f;
+}
+
+.publish-status-text--void,
+.publish-status-text--other {
+  color: #7a7f88;
+}
+
+.publish-reason {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: #4a5058;
+}
+
+.publish-reason--empty {
+  color: #b1b5bd;
 }
 
 .el-table__row,

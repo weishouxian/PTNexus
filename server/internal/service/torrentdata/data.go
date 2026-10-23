@@ -233,6 +233,10 @@ func (s *TorrentDataService) GetData(params TorrentsDataParams) (map[string]any,
 	}
 	paginated := filtered[start:end]
 
+	// 只为当前页回填发布状态：聚合查询按 hash 批量进行，页外数据无需加载。
+	// 放在分页之后而非筛选之前，是为了避免全量（可能上万行）都去查一次 publish_logs。
+	s.attachPublishStatus(paginated)
+
 	uniquePaths := collectUniqueStrings(torrentRows, func(row repository.TorrentRecord) string {
 		return row.SavePath
 	})
