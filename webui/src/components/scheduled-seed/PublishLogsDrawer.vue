@@ -62,7 +62,7 @@
 
         <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            <span v-if="row.status === 'failed' && row.logs" class="fail-reason">{{ row.logs }}</span>
+            <span v-if="failureReason(row)" class="fail-reason">{{ failureReason(row) }}</span>
             <el-button
               v-else-if="row.logs"
               size="small"
@@ -92,6 +92,7 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
 import axios from 'axios'
+import { resolvePublishFailureReason } from '@/utils/publishReason'
 
 type PublishLogRow = {
   id: number | string
@@ -153,6 +154,10 @@ const formatStatus = (status: string) => {
   if (status === 'invalidated') return '已作废'
   return status || '未知'
 }
+
+/** 失败记录的失败原因（从日志里抽取，非失败状态返回空串）。 */
+const failureReason = (row: PublishLogRow): string =>
+  resolvePublishFailureReason(row.status, row.logs, 120)
 
 const formatDateTime = (raw: string) => {
   const trimmed = (raw || '').trim()

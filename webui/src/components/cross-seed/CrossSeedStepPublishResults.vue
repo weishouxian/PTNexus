@@ -110,6 +110,18 @@
               </div>
             </div>
             <h4 class="card-title">{{ result.siteName }}</h4>
+
+            <!-- 失败原因：直接写在卡片里，不必点开日志才知道为什么失败（dupe 有专门区块，不重复展示） -->
+            <div
+              v-if="
+                result.displayStatus === 'error' && !result.dupe_blocked && failureText(result)
+              "
+              class="card-message"
+              :title="failureText(result)"
+            >
+              {{ failureText(result) }}
+            </div>
+
             <div v-if="result.displayStatus === 'waiting'" class="status-tag">
               <el-tag size="small" class="waiting-tag">{{ result.message || '等待中' }}</el-tag>
             </div>
@@ -239,6 +251,7 @@ import {
   Warning,
 } from '@element-plus/icons-vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
+import type { PublishDisplayResult } from './crossSeedPanelContext'
 
 const {
   publishProgress,
@@ -259,6 +272,17 @@ const {
   isReAddingFailedSites,
   failedDownloaderSites,
 } = useCrossSeedPanelContext()
+
+/**
+ * 卡片内展示的失败原因文案。
+ * message 来自日志清洗（末行形如「发布结果：发布到 UBits 失败: HTTP 403 …」），
+ * 这里去掉统一前缀，让卡片里直接是真正的原因。
+ */
+const failureText = (result: PublishDisplayResult): string => {
+  const raw = String(result.message ?? '').trim()
+  if (!raw) return ''
+  return raw.replace(/^发布结果[：:]\s*/, '')
+}
 </script>
 
 <style scoped>
@@ -287,6 +311,25 @@ const {
   margin-left: 6px;
   padding: 0;
   height: auto;
+}
+
+/* 卡片内的失败原因：最多 4 行，超出省略，悬浮看全文（完整日志走「查看日志」） */
+.card-message {
+  width: 100%;
+  margin: 0 0 6px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: 1px solid #fde2e2;
+  background: #fef0f0;
+  color: #f56c6c;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: left;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
 }
 </style>
 

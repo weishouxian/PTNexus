@@ -166,6 +166,16 @@
           </template>
         </el-table-column>
 
+        <!-- 失败原因：从日志里抽出「发布结果 / 站点错误提示」那一行，免得每次都要点开整段日志找原因 -->
+        <el-table-column label="失败原因" min-width="240" show-overflow-tooltip>
+          <template #default="scope">
+            <span v-if="failureReason(scope.row)" class="failure-reason">
+              {{ failureReason(scope.row) }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+
         <el-table-column label="下载器" width="160" align="center">
           <template #default="scope">
             <div class="status-tags">
@@ -276,6 +286,7 @@ import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import LogViewerCard from '@/components/LogViewerCard.vue'
 import type { Downloader } from '@/types'
 import { ElMessage } from '@/utils/uiNotify'
+import { resolvePublishFailureReason } from '@/utils/publishReason'
 
 const emits = defineEmits(['ready'])
 
@@ -428,6 +439,10 @@ const formatTrigger = (trigger: string) => {
   if (trigger === 'manual') return '手动'
   return trigger || '未知'
 }
+
+/** 失败记录的失败原因（从日志里抽取，非失败状态返回空串）。 */
+const failureReason = (row: PublishLogRow): string =>
+  resolvePublishFailureReason(row.status, row.logs, 120)
 
 const formatScene = (scene: string) => {
   if (scene === 'multi_site') return '一种多站'
@@ -951,6 +966,21 @@ watch(
   align-items: center;
   width: 100%;
   height: 100%;
+}
+
+/* 失败原因：单行省略，悬浮看全文（完整日志仍走「日志」按钮） */
+.failure-reason {
+  display: block;
+  color: #f56c6c;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-muted {
+  color: #c0c4cc;
 }
 
 .action-buttons {

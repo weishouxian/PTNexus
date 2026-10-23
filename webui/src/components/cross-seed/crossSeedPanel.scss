@@ -1309,7 +1309,10 @@
 
   .result-card {
     width: 150px;
-    height: 150px;
+    /* 失败原因需要占一行，固定高度会把它挤出卡片，改为最小高度由内容撑开；
+       同一行内卡片由 grid 的 stretch 自动等高。 */
+    min-height: 150px;
+    height: auto;
     border-radius: 8px;
     border: 1px solid #e4e7ed;
     box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
