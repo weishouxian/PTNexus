@@ -367,7 +367,7 @@ func (s *MigrateService) appendPublishLog(payload map[string]any, ctxTaskID stri
 		QueueGroupID:  queueGroupID,
 		TaskID:        ctxTaskID,
 		TorrentID:     torrentID,
-		Hash:          resolvePublishedTorrentHash(payload, uploadData, result),
+		Hash:          s.resolvePublishLogHash(payload, uploadData, result, torrentID, queueTaskID),
 		Name:          resolvePublishLogSeedName(payload, uploadData),
 		SourceSite:    sourceSite,
 		TargetSite:    targetSite,
@@ -557,6 +557,37 @@ func resolvePublishedTorrentHash(payload map[string]any, uploadData map[string]a
 					return value
 				}
 			}
+		}
+	}
+	return ""
+}
+
+// resolvePublishLogHash 解析发种日志要落库的种子 hash（publish_logs.hash）。
+// 参数/返回：payload/uploadData/result 为发布链路数据；torrentID 为源种子 ID；queueTaskID 为队列任务 ID（可为 nil）。返回小写 hash，取不到时返回空串。
+// 失败场景：兜底查询失败时仅记录日志，不回传错误（日志落库不应因补 hash 失败而中断）。
+// 副作用：可能读取 publish_logs、seed_parameters。
+//
+// 解析顺序：① payload/upload_data/result 里的 hash（正常链路）；
+// ② 同一队列任务已落库记录的 hash（入队时写入，执行阶段 payload 可能缺 hash）；
+// ③ 按 torrent_id 反查 seed_parameters.hash（旧客户端/直接发布时最可靠）。
+// hash 是「一种多站」发布记录的聚合键（PublishSiteStatusByHashes 按 hash 分组），
+// 落空会让这条记录在列表里彻底消失，所以必须尽力补齐。
+func (s *MigrateService) resolvePublishLogHash(payload map[string]any, uploadData map[string]any, result map[string]any, torrentID string, queueTaskID *int64) string {
+	if hash := strings.ToLower(strings.TrimSpace(resolvePublishedTorrentHash(payload, uploadData, result))); hash != "" {
+		return hash
+	}
+	if s != nil && s.publishLogRepo != nil && queueTaskID != nil && *queueTaskID > 0 {
+		if existing, ok, err := s.publishLogRepo.FindLatestByQueueTaskID(*queueTaskID); err == nil && ok && existing != nil {
+			if hash := strings.ToLower(strings.TrimSpace(existing.Hash)); hash != "" {
+				return hash
+			}
+		}
+	}
+	if s != nil && s.repo != nil {
+		if hash, err := s.repo.FindSeedHashByTorrentID(torrentID); err == nil && hash != "" {
+			return hash
+		} else if err != nil {
+			logx.Warnf(publishLogModule, "按 torrent_id 补全发布日志 hash 失败 torrent_id=%s err=%v", torrentID, err)
 		}
 	}
 	return ""

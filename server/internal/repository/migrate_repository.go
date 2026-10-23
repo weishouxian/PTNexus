@@ -493,6 +493,37 @@ func (r *MigrateRepository) FindSeedPublishAtByTorrentID(torrentID string) (stri
 	return strings.TrimSpace(*row.PublishAt), nil
 }
 
+// FindSeedHashByTorrentID 按源种子 ID 反查 seed_parameters.hash。
+// 参数/返回：torrentID 为源种子 ID；返回小写 hash，空串表示库里没有可用 hash。
+// 失败场景：仓储未初始化或数据库查询失败时返回错误。
+// 副作用：仅读取 seed_parameters.hash，不修改数据。
+//
+// 用途：发种日志落库时若 payload/upload_data 里没有 hash（队列执行或旧客户端），
+// 用库里已知的 hash 兜底——publish_logs.hash 是「一种多站」发布记录的聚合键，
+// 落空的话这条失败记录不会出现在列表里。
+func (r *MigrateRepository) FindSeedHashByTorrentID(torrentID string) (string, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return "", errors.New("migrate repo is nil")
+	}
+	torrentID = strings.TrimSpace(torrentID)
+	if torrentID == "" {
+		return "", nil
+	}
+	row := struct {
+		Hash *string `gorm:"column:hash"`
+	}{}
+	query := `SELECT hash FROM seed_parameters
+		WHERE torrent_id = ? AND hash IS NOT NULL AND TRIM(hash) != ''
+		LIMIT 1`
+	if err := r.store.DB.Raw(query, torrentID).Scan(&row).Error; err != nil {
+		return "", err
+	}
+	if row.Hash == nil {
+		return "", nil
+	}
+	return strings.ToLower(strings.TrimSpace(*row.Hash)), nil
+}
+
 // UpdateTorrentDetailsAfterPublish 将目标站发布成功返回的详情页地址回写到 torrents.details。
 // 参数/返回：hashes/name 用于定位种子，downloaderID 与 siteNickname 用于缩小命中范围；返回实际更新行数。
 // 失败场景：仓储未初始化或数据库更新失败时返回错误；必要定位信息为空时返回 0。

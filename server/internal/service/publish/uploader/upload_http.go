@@ -619,15 +619,24 @@ func containsAnyKeyword(text string, keywords []string) bool {
 	return false
 }
 
+// uploadRawResponseLogLimit 限制写入日志的站点原始响应长度。
+// 站点报错时返回的整页 HTML（尤其 Cloudflare 挑战页）动辄几十上百 KB，原样落库会把
+// 后面紧跟的「尝试结论/发布结果」挤出详情摘要的截断窗口，日志页也会被淹没。
+const uploadRawResponseLogLimit = 2000
+
 func appendUploadRawResponse(detailLines *[]string, bodyText string) {
 	if detailLines == nil {
 		return
 	}
-	if strings.TrimSpace(bodyText) == "" {
+	trimmed := strings.TrimSpace(bodyText)
+	if trimmed == "" {
 		return
 	}
+	if len(trimmed) > uploadRawResponseLogLimit {
+		trimmed = truncateLogText(trimmed, uploadRawResponseLogLimit) + fmt.Sprintf("（原始响应共 %d 字节，已截断）", len(bodyText))
+	}
 	*detailLines = append(*detailLines, "--- [站点原始响应] ---")
-	*detailLines = append(*detailLines, bodyText)
+	*detailLines = append(*detailLines, trimmed)
 }
 
 func newUploadHTTPClient() *http.Client {

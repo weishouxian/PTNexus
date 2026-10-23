@@ -292,14 +292,17 @@ func (r *PublishLogRepository) UpsertByQueueTaskID(entry *PublishLogEntry) error
 		"scene":           entry.Scene,
 		"queue_group_id":  entry.QueueGroupID,
 		"task_id":         entry.TaskID,
-		"torrent_id":      entry.TorrentID,
-		"hash":            strings.TrimSpace(entry.Hash),
-		"name":            strings.TrimSpace(entry.Name),
-		"source_site":     entry.SourceSite,
-		"target_site":     entry.TargetSite,
-		"downloader_id":   entry.DownloaderID,
-		"title":           entry.Title,
-		"subtitle":        entry.Subtitle,
+		// 身份字段（hash/name/torrent_id/站点等）不允许被空值覆盖：
+		// 队列执行阶段偶尔拿不到这些值（payload 里没有 hash），直接覆盖会把入队时写入的
+		// hash 抹成空串；而「一种多站」发布记录是按 hash 聚合的，抹掉后这条失败记录就查不到了。
+		"torrent_id":      keepWhenBlank(entry.TorrentID, existing.TorrentID),
+		"hash":            keepWhenBlank(strings.TrimSpace(entry.Hash), existing.Hash),
+		"name":            keepWhenBlank(strings.TrimSpace(entry.Name), existing.Name),
+		"source_site":     keepWhenBlank(entry.SourceSite, existing.SourceSite),
+		"target_site":     keepWhenBlank(entry.TargetSite, existing.TargetSite),
+		"downloader_id":   keepWhenBlank(entry.DownloaderID, existing.DownloaderID),
+		"title":           keepWhenBlank(entry.Title, existing.Title),
+		"subtitle":        keepWhenBlank(entry.Subtitle, existing.Subtitle),
 		"status":          entry.Status,
 		"result_url":      entry.ResultURL,
 		"logs":            entry.Logs,
@@ -309,6 +312,17 @@ func (r *PublishLogRepository) UpsertByQueueTaskID(entry *PublishLogEntry) error
 	}
 
 	return r.store.DB.Model(&PublishLogEntry{}).Where("id = ?", existing.ID).Updates(updates).Error
+}
+
+// keepWhenBlank 在有新值时用新值，否则保留旧值。
+// 参数/返回：next 为本次要写入的值；previous 为库里已有的值；返回应写入的值。
+// 失败场景：无。
+// 副作用：无。
+func keepWhenBlank(next string, previous string) string {
+	if strings.TrimSpace(next) != "" {
+		return next
+	}
+	return previous
 }
 
 // UpdateStatusAndLogsByQueueTaskID 更新队列日志的状态与文本（若不存在则插入最小记录）。
@@ -508,22 +522,42 @@ type PublishSiteStatus struct {
 	Count int64 `json:"count"`
 	// LastAt 为最新一条记录的完成时间（updated_at，回退 created_at）。
 	LastAt string `json:"last_at"`
-	// Logs 为最新一条记录的日志片段（已按 limit 截断），供内嵌明细表展示失败原因。
+	// Logs 为最新一条记录的日志**尾部**片段（已按 limit 截断），供内嵌明细表提取失败原因。
 	Logs      string `json:"logs"`
 	ResultURL string `json:"result_url"`
 	CostMS    int64  `json:"cost_ms"`
 	LogID     uint64 `json:"log_id"`
 }
 
+// publishLogTailExpr 返回按数据库方言截取文本列**尾部** limit 个字符的 SQL 表达式。
+// 参数/返回：dbType 为 Store.DBType（mysql/postgres/sqlite/空）；column 为列名；limit 为保留字符数；返回可直接内联的 SQL 片段。
+// 失败场景：无（未知方言按 MySQL/PostgreSQL 语法兜底）。
+// 副作用：无。
+//
+// 为什么取尾部：发布流程把「发布结果：…」追加在日志最后一行，失败原因靠它提取；
+// 早先按头部截断，长日志（例如把站点返回的整页 HTML 写进日志）会把这一行切掉，
+// 前端「发布记录」里就退化成展示「站点响应摘要: 返回 HTML 页面…」这类过程行。
+func publishLogTailExpr(dbType string, column string, limit int) string {
+	if strings.EqualFold(strings.TrimSpace(dbType), "sqlite") {
+		// SQLite 的 SUBSTR 支持负数起点（从尾部开始计数），且没有 RIGHT()。
+		return fmt.Sprintf("SUBSTR(COALESCE(%s, ''), -%d)", column, limit)
+	}
+	// MySQL 的 RIGHT() 与 PostgreSQL 的 right() 都按字符计数。
+	return fmt.Sprintf("RIGHT(COALESCE(%s, ''), %d)", column, limit)
+}
+
 // PublishSiteStatusByHashes 按种子 hash 批量聚合各目标站点的最新发布状态。
-// 参数/返回：hashes 为种子 hash 列表（大小写与首尾空格不敏感、自动去重）；logsLimit 为日志片段截断长度（<=0 时取默认 400）。
+// 参数/返回：hashes 为种子 hash 列表（大小写与首尾空格不敏感、自动去重）；logsLimit 为日志片段保留的尾部字符数（<=0 时取默认 800）。
 // 返回 hash（小写）→ 该种子各目标站点状态列表的映射；无匹配时返回空映射。
 // 失败场景：仓储/DB 未初始化或查询失败返回 error。
 // 副作用：只读 publish_logs。
 //
 // 实现说明：分两步（而非窗口函数），以兼容 MySQL 8 / PostgreSQL / SQLite 三方言：
 // ① GROUP BY (hash, target_site) 取 COUNT(*) 与 MAX(id)；
-// ② 按 MAX(id) 批量取回最新记录详情，日志在 SQL 侧用 SUBSTR 截断，避免把 LONGTEXT 整列拉回内存。
+// ② 按 MAX(id) 批量取回最新记录详情，日志在 SQL 侧截断，避免把 LONGTEXT 整列拉回内存。
+//
+// 截断取**尾部**而非头部：「发布结果：…」这一行始终写在日志末尾，失败原因提取依赖它；
+// 取头部会把关键行切掉，导致详情表格里只剩下「站点响应摘要: 返回 HTML 页面…」这类过程行。
 func (r *PublishLogRepository) PublishSiteStatusByHashes(hashes []string, logsLimit int) (map[string][]PublishSiteStatus, error) {
 	result := map[string][]PublishSiteStatus{}
 	if r == nil || r.store == nil || r.store.DB == nil {
@@ -535,7 +569,7 @@ func (r *PublishLogRepository) PublishSiteStatusByHashes(hashes []string, logsLi
 		return result, nil
 	}
 	if logsLimit <= 0 {
-		logsLimit = 400
+		logsLimit = 800
 	}
 
 	type aggregateRow struct {
@@ -580,15 +614,15 @@ func (r *PublishLogRepository) PublishSiteStatusByHashes(hashes []string, logsLi
 	}
 	latestByID := map[uint64]latestRow{}
 	latestRows := make([]latestRow, 0, len(latestIDs))
-	// SUBSTR 在 MySQL / PostgreSQL / SQLite 三方言中均可用（MySQL 视其为 SUBSTRING 同义词）。
+	// 取日志尾部：MySQL / PostgreSQL 用 RIGHT(str, len)，SQLite 用负起点 SUBSTR（三者都按字符计数）。
 	// 截断长度用整数字面量内联而非占位符：三方言对函数参数位的类型推断不一致，占位符可能被当作字符串绑定而报错。
 	// logsLimit 为服务端常量（非用户输入），内联无注入风险。
 	detailSQL := fmt.Sprintf(`
 		SELECT id, target_site, status, created_at, updated_at, cost_ms, result_url,
-		       SUBSTR(COALESCE(logs, ''), 1, %d) AS logs
+		       %s AS logs
 		FROM publish_logs
 		WHERE id IN ?
-	`, logsLimit)
+	`, publishLogTailExpr(r.store.DBType, "logs", logsLimit))
 	if err := r.store.DB.Raw(detailSQL, latestIDs).Scan(&latestRows).Error; err != nil {
 		return result, err
 	}

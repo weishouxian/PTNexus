@@ -65,6 +65,24 @@ func extractPublishContextHash(contextJSON string) string {
 	return strings.TrimSpace(payload.Hash)
 }
 
+// extractPublishContextName 从发布队列任务的 context_json 中取出种子名称。
+// 参数/返回：contextJSON 为 publish_queue_tasks.context_json；返回 trim 后的 Name，解析失败或缺失时返回空串。
+// 失败场景：无（JSON 非法按缺失处理）。
+// 副作用：无。
+func extractPublishContextName(contextJSON string) string {
+	trimmed := strings.TrimSpace(contextJSON)
+	if trimmed == "" {
+		return ""
+	}
+	payload := struct {
+		Name string `json:"Name"`
+	}{}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Name)
+}
+
 // fillPublishQueueTaskSizes 为发布队列任务列表回填种子体积（按 context_json 里的 Hash 关联 torrents.size）。
 // 参数/返回：rows 为队列任务切片（原地修改）；无返回值。
 // 失败场景：体积来源未注入或查询失败时仅记录日志，不返回错误（列表仍正常展示）。

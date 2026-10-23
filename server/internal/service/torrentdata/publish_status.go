@@ -18,6 +18,11 @@ var publishResultLinePattern = regexp.MustCompile(`发布结果[：:]\s*(.+)`)
 // siteErrorLinePattern 匹配站点回传的错误提示行，例如「站点错误提示: 上传失败！数据缺失」。
 var siteErrorLinePattern = regexp.MustCompile(`站点错误提示[：:]\s*(.+)`)
 
+// publishReasonHTMLMarker 匹配原因文本里混进来的整页 HTML 起点。
+// 早先的发种日志会把站点返回的整页 HTML 原样写进「发布结果：…」行（Cloudflare 挑战页、
+// 报错页），直接透出会把前端表格塞满脚本文本，因此在标记处截断。
+var publishReasonHTMLMarker = regexp.MustCompile(`(?i)<!doctype|<html[\s>]|<head[\s>]|<body[\s>]`)
+
 // 发布状态分组：前端按分组决定站点标签颜色与汇总列计数。
 const (
 	publishGroupSuccess = "success" // 发布成功（success / edited）
@@ -58,6 +63,9 @@ func publishStatusGroup(status string) string {
 // ① 最后一条「发布结果：…」——成功/失败流程都会写，信息最聚焦；
 // ② 最后一条「站点错误提示：…」——站点直接拒绝时才有；
 // ③ 最后一个非空且非 `---` 分隔的行——兜底（如「未到可发种时间」这类单行日志）。
+//
+// 注意：logs 通常是**日志尾部**片段（见 repository.PublishSiteStatusByHashes），
+// 因此这里按行倒序找关键行是安全的；若片段起点落在某行中间，只会影响兜底分支。
 func extractPublishReason(logs string) string {
 	trimmed := strings.TrimSpace(logs)
 	if trimmed == "" {
@@ -66,10 +74,10 @@ func extractPublishReason(logs string) string {
 
 	lines := strings.Split(trimmed, "\n")
 	if value := lastPatternCapture(lines, publishResultLinePattern); value != "" {
-		return truncateRunes(value, publishStatusReasonLimit)
+		return truncateRunes(sanitizePublishReason(value), publishStatusReasonLimit)
 	}
 	if value := lastPatternCapture(lines, siteErrorLinePattern); value != "" {
-		return truncateRunes(value, publishStatusReasonLimit)
+		return truncateRunes(sanitizePublishReason(value), publishStatusReasonLimit)
 	}
 
 	for index := len(lines) - 1; index >= 0; index-- {
@@ -77,9 +85,25 @@ func extractPublishReason(logs string) string {
 		if line == "" || strings.HasPrefix(line, "---") {
 			continue
 		}
-		return truncateRunes(line, publishStatusReasonLimit)
+		return truncateRunes(sanitizePublishReason(line), publishStatusReasonLimit)
 	}
 	return ""
+}
+
+// sanitizePublishReason 去掉原因文本里混入的整页 HTML 片段，并清掉尾部多余的冒号/逗号。
+// 参数/返回：value 为原始原因文本；返回清理后的文本（可能为空串）。
+// 失败场景：无。
+// 副作用：无。
+func sanitizePublishReason(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	if loc := publishReasonHTMLMarker.FindStringIndex(trimmed); loc != nil {
+		trimmed = strings.TrimSpace(trimmed[:loc[0]])
+		trimmed = strings.TrimRight(trimmed, ":：,，;；、 ")
+	}
+	return trimmed
 }
 
 // lastPatternCapture 返回多行文本中最后一条命中正则的捕获组内容。
