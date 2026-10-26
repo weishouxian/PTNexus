@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
@@ -435,6 +438,41 @@ func resolveMediaTargetFromPath(path string) (string, error) {
 	return PickMediaTarget(trimmed)
 }
 
+// 集号识别正则：SxxEyy / EPxx / Exx / 第x集（与 tagging/episode_release.go 口径保持一致）。
+var (
+	reMediaSeasonEpisode = regexp.MustCompile(`(?i)[Ss](\d{1,2})[Ee](\d{1,3})`)
+	reMediaEpisodeLoose  = regexp.MustCompile(`(?i)\b(?:E[Pp]?|Episode)\s*0?(\d{1,3})\b`)
+	reMediaEpisodeCN     = regexp.MustCompile(`第\s*(\d{1,4})\s*[集话話期]`)
+)
+
+// mediaEpisodeKey 表示从文件名解析出的季/集号，用于剧集目录内取第一集。
+type mediaEpisodeKey struct {
+	season  int
+	episode int
+}
+
+// parseMediaEpisodeKey 尝试从文件名中解析季/集号，解析不到时返回 false。
+func parseMediaEpisodeKey(name string) (mediaEpisodeKey, bool) {
+	if m := reMediaSeasonEpisode.FindStringSubmatch(name); len(m) == 3 {
+		season, err1 := strconv.Atoi(m[1])
+		episode, err2 := strconv.Atoi(m[2])
+		if err1 == nil && err2 == nil {
+			return mediaEpisodeKey{season: season, episode: episode}, true
+		}
+	}
+	if m := reMediaEpisodeCN.FindStringSubmatch(name); len(m) == 2 {
+		if episode, err := strconv.Atoi(m[1]); err == nil {
+			return mediaEpisodeKey{season: 0, episode: episode}, true
+		}
+	}
+	if m := reMediaEpisodeLoose.FindStringSubmatch(name); len(m) == 2 {
+		if episode, err := strconv.Atoi(m[1]); err == nil {
+			return mediaEpisodeKey{season: 0, episode: episode}, true
+		}
+	}
+	return mediaEpisodeKey{}, false
+}
+
 func pickMediaEntry(savePath string, allowISO bool) (string, error) {
 	trimmed := strings.TrimSpace(savePath)
 	if trimmed == "" {
@@ -453,8 +491,13 @@ func pickMediaEntry(savePath string, allowISO bool) (string, error) {
 	}
 
 	allowedExt := supportedMediaExtensions(allowISO)
-	largest := ""
-	largestSize := int64(0)
+	type mediaFile struct {
+		path string
+		size int64
+		key  mediaEpisodeKey
+		has  bool
+	}
+	files := make([]mediaFile, 0, 8)
 	walkErr := filepath.WalkDir(trimmed, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil || d == nil || d.IsDir() {
 			return nil
@@ -467,19 +510,50 @@ func pickMediaEntry(savePath string, allowISO bool) (string, error) {
 		if statErr != nil {
 			return nil
 		}
-		if stat.Size() > largestSize {
-			largestSize = stat.Size()
-			largest = path
-		}
+		key, has := parseMediaEpisodeKey(d.Name())
+		files = append(files, mediaFile{path: path, size: stat.Size(), key: key, has: has})
 		return nil
 	})
 	if walkErr != nil {
 		return "", walkErr
 	}
-	if largest == "" {
+	if len(files) == 0 {
 		return "", fmt.Errorf("目录中未找到可分析的视频文件: %s", trimmed)
 	}
-	return largest, nil
+
+	// 电视剧/多集目录：至少 2 个文件能解析出集号时，按季/集号取第一集，
+	// 避免因「最大文件」恰好落在末集或番外上而取错 MediaInfo 源。
+	episodeFiles := make([]mediaFile, 0, len(files))
+	for _, f := range files {
+		if f.has {
+			episodeFiles = append(episodeFiles, f)
+		}
+	}
+	if len(episodeFiles) >= 2 {
+		sort.SliceStable(episodeFiles, func(i, j int) bool {
+			if episodeFiles[i].key.season != episodeFiles[j].key.season {
+				return episodeFiles[i].key.season < episodeFiles[j].key.season
+			}
+			if episodeFiles[i].key.episode != episodeFiles[j].key.episode {
+				return episodeFiles[i].key.episode < episodeFiles[j].key.episode
+			}
+			return episodeFiles[i].path < episodeFiles[j].path
+		})
+		logx.Infof(isoSessionLogModule, "剧集目录按集号取第一集 base=%s first=%s", trimmed, episodeFiles[0].path)
+		return episodeFiles[0].path, nil
+	}
+
+	// 非剧集目录：维持「取最大文件」的历史行为。
+	largest := files[0]
+	for _, f := range files[1:] {
+		if f.size > largest.size {
+			largest = f
+		}
+	}
+	if largest.size < 100*1024*1024 {
+		logx.Warnf(isoSessionLogModule, "选定最大视频文件不足 100MB，可能不是正片 base=%s file=%s", trimmed, largest.path)
+	}
+	return largest.path, nil
 }
 
 func supportedMediaExtensions(allowISO bool) map[string]struct{} {
