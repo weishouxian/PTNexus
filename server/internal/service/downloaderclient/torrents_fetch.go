@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -216,7 +217,51 @@ func (d Downloader) fetchQBTorrents() ([]TorrentSnapshot, error) {
 		})
 	}
 
+	// qBittorrent 的 torrents/info 列表接口不返回 comment（4.6.x 实测 include_comment 亦无效），
+	// 但源站详情地址（details.php?id=...）正是藏在种子的 comment 里。这里对 comment 缺失的
+	// 种子逐个调用 torrents/properties 补齐，避免非代理同步解析不到详情地址。
+	fillQBComments(client, result)
+
 	return result, nil
+}
+
+// fillQBComments 为 comment 为空的种子逐个调用 torrents/properties 补齐 comment。
+// 参数/返回：client 为已登录的 qB 客户端；snapshots 为待补全的快照切片（原地修改）。
+// 失败场景：单个种子 properties 请求失败时仅跳过，不影响整体同步。
+// 副作用：会向 qB 发起至多 len(snapshots) 次 properties 请求（受并发上限约束）。
+func fillQBComments(client *qbClient, snapshots []TorrentSnapshot) {
+	const concurrency = 8
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	for i := range snapshots {
+		if snapshots[i].Comment != "" {
+			continue
+		}
+		hash := snapshots[i].Hash
+		if hash == "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(idx int, h string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			params := url.Values{}
+			params.Set("hash", h)
+			body, err := client.Get("torrents/properties", params)
+			if err != nil {
+				return
+			}
+			var props map[string]any
+			if err := json.Unmarshal(body, &props); err != nil {
+				return
+			}
+			if comment := strings.TrimSpace(toString(props["comment"], "")); comment != "" {
+				snapshots[idx].Comment = comment
+			}
+		}(i, hash)
+	}
+	wg.Wait()
 }
 
 func (d Downloader) fetchTransmissionTorrents() ([]TorrentSnapshot, error) {
