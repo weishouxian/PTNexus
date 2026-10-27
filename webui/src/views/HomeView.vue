@@ -41,13 +41,8 @@
           <div class="rules-sub">分集：部分站点不允许转分集，且断种率较高。</div>
         </li>
         <li>
-          <el-tag type="warning" size="small" effect="dark">IP 网段限制</el-tag>
-          同网段下载器同时最多 <b>15</b> 个在上传种子可转；超过不可转。
-          <div class="rules-sub">不计入：添加超 <b>24h</b>、做种人数 <b>&gt; 5</b>；盒子不受限。</div>
-          <div class="rules-sub">
-            <el-tag type="warning" size="small" effect="dark">大小限制</el-tag>
-            一站多种<strong>批量</strong>转种不允许 &lt; <b>1GB</b>；一种多站<strong>单个</strong>转种不受限。
-          </div>
+          <el-tag type="warning" size="small" effect="dark">大小限制</el-tag>
+          一站多种<strong>批量</strong>转种不允许 &lt; <b>1GB</b>；一种多站<strong>单个</strong>转种不受限。
         </li>
       </ul>
     </el-card>

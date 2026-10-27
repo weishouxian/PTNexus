@@ -1204,6 +1204,8 @@ func (s *MigrateService) executePublishQueueTask(cfg publishQueueConfig, taskRec
 			return
 		}
 		if !stats.CanContinue {
+			// 注意：网段并发上限（同网段最多 15 个在上传种子）已移除，stats.CanContinue 恒为 true；
+			// 保留该分支仅为兼容旧数据/旧配置，正常不会再进入。
 			nextRunAt := time.Now().Add(time.Duration(clampInt(cfg.MonitorIntervalSec, 5, 3600)) * time.Second)
 			reason := strings.TrimSpace(stats.Message)
 			if reason == "" {

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,21 +19,10 @@ import (
 const (
 	seedingLimitGuardLogModule = "发布-预检查"
 
-	seedingLimitPath    = "/seeding-limit/check"
-	seedingLimitTimeout = 15 * time.Second
-
 	minSeedsThreshold    = 5
 	recentWindowSeconds  = int64(86400)
 	ratioIgnoreThreshold = 1.2
 )
-
-var maxRecentAdditions = 15
-
-func init() {
-	if os.Getenv("VIP") == "true" {
-		maxRecentAdditions = 999
-	}
-}
 
 func firstRootConfig(configs []map[string]any) map[string]any {
 	if len(configs) == 0 || configs[0] == nil {
@@ -43,23 +31,15 @@ func firstRootConfig(configs []map[string]any) map[string]any {
 	return configs[0]
 }
 
-type seedingLimitResponse struct {
-	Success     bool   `json:"success"`
-	CanContinue bool   `json:"can_continue"`
-	Message     string `json:"message"`
-	Error       string `json:"error"`
-}
-
-// SeedingLimitStats 表示发布前限制的统计快照（用于队列/监控线程判断是否触发下一任务）。
-// 注意：该统计仅走本地检查逻辑，不会调用远端预检查服务。
+// SeedingLimitStats 表示发布前统计快照（用于队列/监控线程的「发布节奏」触发条件判断）。
+// 注意：该统计仅走本地检查逻辑；网段并发上限已移除，CanContinue 恒为 true，仅供兼容保留。
 type SeedingLimitStats struct {
-	CanContinue      bool     `json:"can_continue"`
-	Message          string   `json:"message"`
-	SubnetID         string   `json:"subnet_id"`
-	Downloaders      []string `json:"downloaders"`
-	MonitoredCount   int      `json:"monitored_count"`
-	RecentCount      int      `json:"recent_count"`
-	MaxRecentAllowed int      `json:"max_recent_allowed"`
+	CanContinue    bool     `json:"can_continue"`
+	Message        string   `json:"message"`
+	SubnetID       string   `json:"subnet_id"`
+	Downloaders    []string `json:"downloaders"`
+	MonitoredCount int      `json:"monitored_count"`
+	RecentCount    int      `json:"recent_count"`
 }
 
 type seedingLimitGroupStats struct {
@@ -106,36 +86,18 @@ type transmissionResponse struct {
 	Result string `json:"result"`
 }
 
-// CheckDownloaderGate 检查下载器是否触发发布前限制。
-// 参数/返回：downloaderID 为下载器 ID；返回 canContinue 与 message；检查异常时默认放行（返回 true, ""）。
-// 失败场景：远端预检查不可用或本地检查异常时记录日志并默认放行。
-// 副作用：可能访问远端预检查接口（当 GO_SERVICE_URL 配置存在），并可能直接连接下载器执行本地检查。
-func CheckDownloaderGate(downloaderID string, rootConfigs ...map[string]any) (bool, string) {
-	trimmedID := strings.TrimSpace(downloaderID)
-	if trimmedID == "" {
-		return true, ""
-	}
-
-	if canContinue, message, checked := checkByRemoteGuard(trimmedID); checked {
-		return canContinue, message
-	}
-
-	return checkByLocalGuard(trimmedID, firstRootConfig(rootConfigs))
-}
-
 // CheckDownloaderGateStats 返回指定 downloader_id 对应网段组的限制统计信息（仅本地检查）。
 // 参数/返回：downloaderID 为下载器 ID；返回统计快照与 error。
 // 失败场景：读取配置失败、解析 host 失败或下载器连接失败等会返回 error。
 // 副作用：可能直连下载器拉取做种/暂停列表用于统计。
 func CheckDownloaderGateStats(downloaderID string, rootConfigs ...map[string]any) (SeedingLimitStats, error) {
 	stats := SeedingLimitStats{
-		CanContinue:      true,
-		Message:          "",
-		SubnetID:         "",
-		Downloaders:      []string{},
-		MonitoredCount:   0,
-		RecentCount:      0,
-		MaxRecentAllowed: maxRecentAdditions,
+		CanContinue:    true,
+		Message:        "",
+		SubnetID:       "",
+		Downloaders:    []string{},
+		MonitoredCount: 0,
+		RecentCount:    0,
 	}
 
 	trimmedID := strings.TrimSpace(downloaderID)
@@ -182,99 +144,13 @@ func CheckDownloaderGateStats(downloaderID string, rootConfigs ...map[string]any
 	}
 
 	groupStats := collectSeedingLimitGroupStats(subnetID, group)
-	canContinue, message := evaluateSeedingLimit(groupStats)
-	stats.CanContinue = canContinue
-	stats.Message = strings.TrimSpace(message)
+	// 网段并发上限已移除：不再因「过去 24h 新增做种数」阻止发布，统计仅供发布节奏判断。
+	stats.CanContinue = true
+	stats.Message = ""
 	stats.Downloaders = append([]string{}, groupStats.DownloaderNames...)
 	stats.MonitoredCount = groupStats.MonitoredCount
 	stats.RecentCount = groupStats.RecentCount
 	return stats, nil
-}
-
-func checkByRemoteGuard(downloaderID string) (bool, string, bool) {
-	baseURL := strings.TrimSpace(os.Getenv("GO_SERVICE_URL"))
-	if baseURL == "" {
-		return true, "", false
-	}
-
-	endpoint := strings.TrimRight(baseURL, "/") + seedingLimitPath
-
-	requestBody, _ := json.Marshal(map[string]string{"downloader_id": downloaderID})
-	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(requestBody))
-	if err != nil {
-		logx.Warnf(seedingLimitGuardLogModule, "构造预检查请求失败 downloader_id=%s err=%v", downloaderID, err)
-		return true, "", false
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: seedingLimitTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		logx.Warnf(seedingLimitGuardLogModule, "远端预检查请求失败 downloader_id=%s err=%v，将回退本地检查", downloaderID, err)
-		return true, "", false
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 240))
-		logx.Warnf(seedingLimitGuardLogModule, "远端预检查响应异常 downloader_id=%s status=%d body=%s，将回退本地检查", downloaderID, resp.StatusCode, strings.TrimSpace(string(body)))
-		return true, "", false
-	}
-
-	payload := seedingLimitResponse{}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		logx.Warnf(seedingLimitGuardLogModule, "远端预检查响应解析失败 downloader_id=%s err=%v，将回退本地检查", downloaderID, err)
-		return true, "", false
-	}
-	if !payload.Success {
-		logx.Warnf(seedingLimitGuardLogModule, "远端预检查返回失败 downloader_id=%s error=%s，将回退本地检查", downloaderID, strings.TrimSpace(payload.Error))
-		return true, "", false
-	}
-
-	return payload.CanContinue, strings.TrimSpace(payload.Message), true
-}
-
-func checkByLocalGuard(downloaderID string, rootConfig map[string]any) (bool, string) {
-	downloaders, err := loadDownloadersConfig(rootConfig)
-	if err != nil {
-		logx.Warnf(seedingLimitGuardLogModule, "加载下载器配置失败 downloader_id=%s err=%v", downloaderID, err)
-		return true, ""
-	}
-
-	target := findDownloaderByID(downloaders, downloaderID)
-	if target == nil {
-		logx.Warnf(seedingLimitGuardLogModule, "未找到下载器配置，跳过预检查 downloader_id=%s", downloaderID)
-		return true, ""
-	}
-	if target.UseProxy {
-		return true, ""
-	}
-
-	targetSubnet, err := resolveDownloaderSubnet(*target)
-	if err != nil {
-		logx.Warnf(seedingLimitGuardLogModule, "解析下载器地址失败，跳过预检查 downloader_id=%s host=%s err=%v", downloaderID, target.Host, err)
-		return true, ""
-	}
-
-	group := make([]seedingLimitDownloader, 0, len(downloaders))
-	for _, downloader := range downloaders {
-		if !downloader.Enabled || downloader.UseProxy {
-			continue
-		}
-		subnetID, parseErr := resolveDownloaderSubnet(downloader)
-		if parseErr != nil {
-			continue
-		}
-		if subnetID == targetSubnet {
-			group = append(group, downloader)
-		}
-	}
-
-	if len(group) == 0 {
-		return true, ""
-	}
-
-	return checkSeedingLimitForGroup(targetSubnet, group)
 }
 
 func loadDownloadersConfig(rootConfig map[string]any) ([]seedingLimitDownloader, error) {
@@ -338,15 +214,6 @@ func resolveDownloaderSubnet(downloader seedingLimitDownloader) (string, error) 
 	return fmt.Sprintf("%d.%d.%d", v4[0], v4[1], v4[2]), nil
 }
 
-func checkSeedingLimitForGroup(subnetID string, downloaders []seedingLimitDownloader) (bool, string) {
-	stats := collectSeedingLimitGroupStats(subnetID, downloaders)
-	canContinue, message := evaluateSeedingLimit(stats)
-	if canContinue {
-		logx.Infof(seedingLimitGuardLogModule, "本地预检查通过 subnet=%s.x monitored=%d recent=%d", subnetID, stats.MonitoredCount, stats.RecentCount)
-	}
-	return canContinue, message
-}
-
 func collectSeedingLimitGroupStats(subnetID string, downloaders []seedingLimitDownloader) seedingLimitGroupStats {
 	monitored := 0
 	recent := 0
@@ -369,22 +236,6 @@ func collectSeedingLimitGroupStats(subnetID string, downloaders []seedingLimitDo
 		MonitoredCount:  monitored,
 		RecentCount:     recent,
 	}
-}
-
-func evaluateSeedingLimit(stats seedingLimitGroupStats) (bool, string) {
-	if stats.RecentCount >= maxRecentAdditions {
-		message := fmt.Sprintf(
-			"网段 %s.x 内的下载器组（%s）在过去24h内添加且活跃/暂停的（做种人数>%d或分享率>%.1f不计算）种子共 %d 个 (上限 %d)。已暂停发布。",
-			stats.SubnetID,
-			strings.Join(stats.DownloaderNames, ", "),
-			minSeedsThreshold,
-			ratioIgnoreThreshold,
-			stats.RecentCount,
-			maxRecentAdditions,
-		)
-		return false, message
-	}
-	return true, ""
 }
 
 func checkDownloaderStatus(downloader seedingLimitDownloader) (int, int) {

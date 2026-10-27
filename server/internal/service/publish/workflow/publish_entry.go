@@ -11,7 +11,6 @@ import (
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 	publishchecker "github.com/pt-nexus/server/internal/service/publish/checker"
 	publishdownloader "github.com/pt-nexus/server/internal/service/publish/downloader"
-	publishguard "github.com/pt-nexus/server/internal/service/publish/guard"
 	publishpublisher "github.com/pt-nexus/server/internal/service/publish/publisher"
 	publishuploader "github.com/pt-nexus/server/internal/service/publish/uploader"
 )
@@ -245,14 +244,6 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 	}
 	if resolvedDownloaderID == "" {
 		return buildPreCheckFailure("缺少有效 downloaderId，已停止发布")
-	}
-
-	canContinue, limitMessage := publishguard.CheckDownloaderGate(resolvedDownloaderID, input.RootConfig)
-	if !canContinue {
-		if strings.TrimSpace(limitMessage) == "" {
-			limitMessage = "已触发限制"
-		}
-		return buildPreCheckFailure(limitMessage)
 	}
 
 	publishURL, directDownloadURL, logs, isExistingTorrent, uploadFormFields, publishErr := PublishTorrentToTarget(
