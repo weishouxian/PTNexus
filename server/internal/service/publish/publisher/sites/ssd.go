@@ -3,9 +3,12 @@ package sites
 import (
 	"strings"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
 	"github.com/pt-nexus/server/internal/service/publish/publisher"
 )
+
+const ssdPublishLogModule = "发布-SSD"
 
 // ssdPublisher 定义 SSD（不可说，springsunday.net）在公共表单发布流程上的差异步骤。
 // 站点形态：海报（url_poster）、截图（url_vimages）、媒体信息（Media_BDInfo）是独立必填字段，
@@ -14,7 +17,7 @@ type ssdPublisher struct {
 	publicSiteDefaults
 }
 
-// PublishSSD 执行 SSD 站点特殊发布流程（海报/截图/媒体信息字段分离，候选提交）。
+// PublishSSD 执行 SSD 站点特殊发布流程（海报/截图/媒体信息字段分离，直接正式发种）。
 // 参数/返回：input 提供站点信息、发布数据与通用字段；返回发布详情页 URL、是否疑似“种子已存在”、用于自动编辑的表单字段，以及发布过程日志。
 // 失败场景：同 Public 发布器；字段缺失会自动降级为空，不中断发布。
 // 副作用：读取本地种子文件并向目标站点发起上传请求；可选写入 data/tmp/torrents 参数落盘。
@@ -31,9 +34,11 @@ func (ssdPublisher) BuildDescription(input publisher.PublishInput) string {
 	return strings.TrimSpace(resolveUploadSection(input.UploadData, "statement"))
 }
 
-// AdjustFormFields 站点标题规范：SSD 要求主标题用「点号分隔」形态，
-// 源标题可能是空格分隔（如 "Operation Carwash ... 1080p WEB-DL H.264 AAC 2.0-CSWEB"），
-// 在此把主标题字段里的空格统一替换为点号。只改主标题，不动副标题/简介等其他字段。
+// AdjustFormFields 执行站点字段纠偏：
+//  1. 标题规范：SSD 要求主标题用「点号分隔」形态，源标题可能是空格分隔
+//     （如 "Operation Carwash ... 1080p WEB-DL H.264 AAC 2.0-CSWEB"），
+//     在此把主标题字段里的空格统一替换为点号。只改主标题，不动副标题/简介等其他字段。
+//  2. 国配标签：产地为中国（大陆/香港/台湾）时移除「国配」checkbox（见 applySSDMandarinRule）。
 func (ssdPublisher) AdjustFormFields(input publisher.PublishInput, formFields map[string]string) {
 	if formFields == nil {
 		return
@@ -43,10 +48,64 @@ func (ssdPublisher) AdjustFormFields(input publisher.PublishInput, formFields ma
 	if siteCfg != nil {
 		titleField = firstNonEmpty(siteCfg.FormFields["name"], titleField)
 	}
-	if strings.TrimSpace(formFields[titleField]) == "" {
+	if strings.TrimSpace(formFields[titleField]) != "" {
+		formFields[titleField] = normalizeSSDTitle(formFields[titleField])
+	}
+	applySSDMandarinRule(input.UploadData, siteCfg, formFields)
+}
+
+// applySSDMandarinRule 在产地为中国（大陆/香港/台湾）时移除「国配」标签。
+//
+// 站点把「国配」放在独立 checkbox `mandarin` 上（value=1，页面标签「国配 / 国语配音」）。
+// 华语片的中文音轨是原声、不是配音，再打「国配」属于误标，故按产地直接剔除该字段。
+// 字段名优先从站点 checkbox_tags 里「国配/国语」对应项读取，避免站点改名后硬编码失效。
+// 失败场景：uploadData 无标准化参数、产地非中国（大陆/香港/台湾）时直接返回。
+// 副作用：命中并已提交该字段时从 formFields 删除（未提交则不动）。
+func applySSDMandarinRule(uploadData map[string]any, siteCfg *publishmapping.SitePublishConfig, formFields map[string]string) {
+	if formFields == nil || !isSSDChineseOrigin(uploadData) {
 		return
 	}
-	formFields[titleField] = normalizeSSDTitle(formFields[titleField])
+	field := "mandarin"
+	if siteCfg != nil {
+		for _, key := range []string{"tag.国配", "tag.国语", "国配", "国语"} {
+			if mapped := strings.TrimSpace(siteCfg.CheckboxTags[key]); mapped != "" {
+				field = mapped
+				break
+			}
+		}
+	}
+	if _, exists := formFields[field]; !exists {
+		return
+	}
+	delete(formFields, field)
+	logx.Infof(ssdPublishLogModule, "产地为中国（含港台），已移除国配标签 field=%s", field)
+}
+
+// ssdChineseOriginKeys 是「产地属于中国」的标准化值集合（大陆 + 香港 + 台湾）。
+// 香港/台湾在站点上是独立产地项，但按业务口径都算华语原声区，不额外打「国配」。
+var ssdChineseOriginKeys = map[string]struct{}{
+	"source.china":           {},
+	"source.hongkong":        {},
+	"source.taiwan":          {},
+	"source.hongkong_taiwan": {},
+}
+
+// isSSDChineseOrigin 判断标准化产地是否属于中国（大陆/香港/台湾）。
+// 说明：键值大小写不敏感；source.hongkong_taiwan 是港台复合产地，一并纳入。
+func isSSDChineseOrigin(uploadData map[string]any) bool {
+	if uploadData == nil {
+		return false
+	}
+	standardized, _ := uploadData["standardized_params"].(map[string]any)
+	if standardized == nil {
+		return false
+	}
+	key := strings.ToLower(strings.TrimSpace(toStringAny(standardized["source"], "")))
+	if key == "" {
+		return false
+	}
+	_, ok := ssdChineseOriginKeys[key]
+	return ok
 }
 
 // normalizeSSDTitle 把标题里的空格替换为点号，并压缩连续空白。

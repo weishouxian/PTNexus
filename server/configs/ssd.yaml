@@ -26,9 +26,10 @@ dupe_check:
 # 实测（springsunday.net，2026-10-15）：
 #  - 标准 NexusPHP 站，6 个 select：type / source_sel / medium_sel / standard_sel / codec_sel / audiocodec_sel，无 team_sel。
 #  - source_sel 是「地区」（West(欧美)→source.western），不是来源性质，直接映射 source，无需 processing/static。
-#  - ⚠️ 该站普通会员「没有直接发布权限」：无参 upload.php 返回「对不起...你没有发布种子的权限」。
-#    只能发候选（upload.php?offer=1），候选机制是隐藏字段 <input type="hidden" name="offer" value="yes">。
-#    运行时合并隐藏字段 GET 的是无参 upload.php（拿不到 offer），故必须用 static_fields 固定提交 offer=yes。
+#  - 发种权限（2026-10-27 更新）：账号已有「直接发布权限」，无参 upload.php 正常返回发种表单，
+#    不再需要走候选（upload.php?offer=1）。此前普通会员无直发权限时靠 static_fields 固定提交 offer=yes
+#    伪造成候选，该 workaround 已移除——直接提交 upload.php 即为正式发种（非候选）。
+#    如站点日后回收直发权限，再恢复 static_fields: {offer: "yes"} 并改提交地址即可。
 #  - 标签是 19 个【独立 checkbox】（name 各自独立、value 均为 1），不是 tags[] 数组，走 checkbox_tags。
 #    ⚠️ checkbox 的 value 是 "1" 不是 NexusPHP 默认 "yes"，需显式配 checkbox_tag_value: "1"。
 #  - 截图（url_vimages）/ 媒体信息（Media_BDInfo）是必填独立 textarea，海报（url_poster）独立 input。
@@ -62,7 +63,7 @@ checkbox_tags:
   "tag.完结": "pack"
   "tag.原生": "untouched"
   "tag.自购": "selfpurchase"
-  "tag.国语": "mandarin"
+  "tag.国语": "mandarin" # 页面标签「国配/国语配音」；产地为中国(大陆/港台)时由 ssd.go:applySSDMandarinRule 主动剔除
   "tag.中字": "subtitlezh"
   "tag.特效": "subtitlesp"
   "tag.自译": "selfcompile"
@@ -77,11 +78,6 @@ checkbox_tags:
   "tag.应求": "request"
 
 checkbox_tag_value: "1"
-
-# 固定提交「候选」标记：该站普通会员只能发候选，候选标志是隐藏字段 offer=yes，
-# 而运行时隐藏字段合并取不到它，必须显式提交。
-static_fields:
-  offer: "yes"
 
 # 兜底值：仅当标准化值缺失或未命中时使用。站点各维度都有 Other，兜底一律填 Other。
 mappings:
