@@ -379,49 +379,50 @@ func DupeSearchAreas(siteCode string) map[string]string {
 
 // buildNexusPHPSearchPlans 按站点配置组装 NexusPHP 站点检索计划。
 //
-// 顺序与理由：
-//  1. 豆瓣 ID 检索（站点声明了 douban 范围且有豆瓣 ID 时）——精确度最高；
-//  2. IMDb 检索（站点声明了 imdb 范围且有 IMDb ID 时）；
-//  3. 标题检索兜底（站点声明了 title 范围时）——上面的 ID 都缺失或都未命中时使用。
+// 检索源优先级（互斥，只取第一个可用的，只查一次）：
+//  1. 豆瓣 ID（站点声明 douban 范围且有豆瓣 ID 时）——精确度最高；
+//  2. IMDb（站点声明 imdb 范围且有 IMDb ID 时）；
+//  3. 标题兜底（站点声明 title 范围时）——上面的 ID 都缺失时才用。
 //
-// 之所以「未命中就继续下一段」而不是只查一段：各站对 ID 的收录范围不同，
-// 多查一段只是多一次请求，漏查则可能把重复种子放行。
+// 注意：与「多段落依次降级」不同，这里是严格互斥——有豆瓣 ID 就只查豆瓣，
+// 绝不回落去查 IMDb / 标题（豆瓣 0 结果即视为「该片未收录」）。理由：
+// 外部 ID 的收录是站点决定的，一旦有豆瓣 ID，它就是最精确的定位，再拿 IMDb / 标题
+// 去查只会引入片名相近的噪声种子；漏查风险由「ID 本身精确」弥补。
 //
-// 参数/返回：siteCode 为站点标识；query 为检索输入；返回检索计划（可能为空，表示无可检索关键字）。
+// 参数/返回：siteCode 为站点标识；query 为检索输入；返回检索计划（0 或 1 段）。
 // 副作用：加载站点配置（有缓存）。
 func buildNexusPHPSearchPlans(siteCode string, query Query) []searchPlan {
 	areas := DupeSearchAreas(siteCode)
-	plans := make([]searchPlan, 0, 3)
 
 	if area := strings.TrimSpace(areas["douban"]); area != "" {
 		if id := ExtractDoubanID(query.DoubanID); id != "" {
-			plans = append(plans, searchPlan{
+			return []searchPlan{{
 				Label:      "豆瓣 ID 检索",
 				Search:     id,
 				SearchArea: area,
 				Filters:    query.Filters,
-			})
+			}}
 		}
 	}
 	if area := strings.TrimSpace(areas["imdb"]); area != "" {
 		if id := ExtractIMDbID(query.IMDbID); id != "" {
-			plans = append(plans, searchPlan{
+			return []searchPlan{{
 				Label:      "IMDb ID 检索",
 				Search:     id,
 				SearchArea: area,
 				Filters:    query.Filters,
-			})
+			}}
 		}
 	}
 	if area := strings.TrimSpace(areas["title"]); area != "" {
 		if keyword := DupeTitleSearchKeyword(query.Title); keyword != "" {
-			plans = append(plans, searchPlan{
+			return []searchPlan{{
 				Label:      "标题检索兜底",
 				Search:     keyword,
 				SearchArea: area,
 				Filters:    query.Filters,
-			})
+			}}
 		}
 	}
-	return plans
+	return nil
 }

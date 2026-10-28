@@ -493,7 +493,7 @@
   },
   {
     "site": "pt0ffcc",
-    "allow_episode_publish": false,
+    "allow_episode_publish": true,
     "nickname": "自由农场",
     "base_url": "pt.0ff.cc",
     "special_tracker_domain": null,
