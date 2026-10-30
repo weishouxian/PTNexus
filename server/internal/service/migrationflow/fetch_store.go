@@ -61,7 +61,7 @@ func (s *MigrateService) FetchAndStore(payload map[string]any) (map[string]any, 
 	fetchRepairDeps := processingrepair.FetchRepairDeps{
 		EmitLog:          s.emitLog,
 		RefreshMediainfo: s.refreshMediainfoAsync,
-		CSPTToken:        s.csptToken(),
+		PTGenTokens:      s.ptgenTokens(),
 		RootConfig:       rootConfig,
 	}
 

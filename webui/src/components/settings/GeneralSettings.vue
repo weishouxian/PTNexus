@@ -538,6 +538,53 @@
             </div>
 
             <div class="form-item" style="margin-bottom: 16px">
+              <div
+                style="
+                  display: flex;
+                  align-items: center;
+                  justify-content: space-between;
+                  margin-bottom: 6px;
+                "
+              >
+                <span
+                  style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px"
+                >
+                  豆影 PTGen API Key（免费 200 次/天）
+                </span>
+                <el-button
+                  type="primary"
+                  link
+                  @click="openDoubanInfoPage"
+                  style="white-space: nowrap"
+                >
+                  <el-icon style="margin-right: 4px">
+                    <Link />
+                  </el-icon>
+                  获取Key
+                </el-button>
+              </div>
+              <el-input
+                v-model="uploadForm.doubaninfo_appkey"
+                type="password"
+                placeholder="请输入豆影 API Key"
+                show-password
+              >
+                <template #prefix>
+                  <el-icon>
+                    <Key />
+                  </el-icon>
+                </template>
+              </el-input>
+              <el-text type="info" size="small" style="display: block; margin-top: 8px">
+                <el-icon size="12" style="vertical-align: middle; margin-right: 4px">
+                  <InfoFilled />
+                </el-icon>
+                豆影（doubaninfo.com）官方接口，配置后可在「PTGen 检测」中开启「豆影 PTGen」节点使用，
+                免费额度 200 次/天，可升级套餐扩容
+              </el-text>
+            </div>
+
+            <div class="form-item" style="margin-bottom: 16px">
               <div style="display: flex; align-items: center; gap: 12px">
                 <span
                   style="font-weight: 500; color: var(--el-text-color-regular); font-size: 13px"
@@ -1312,6 +1359,7 @@ const savingUpload = ref(false)
 const uploadForm = reactive({
   anonymous_upload: true, // 默认启用匿名上传
   cspt_ptgen_token: '', // 财神ptgen token
+  doubaninfo_appkey: '', // 豆影 API Key
   ratio_limiter_interval_seconds: 1800,
 })
 
@@ -1326,6 +1374,11 @@ const ratioLimiterIntervalMinutes = computed({
 // 打开财神PTGen网页获取Token
 const openCsptPtgenPage = () => {
   window.open('https://cspt.top/ptgen.php', '_blank')
+}
+
+// 打开豆影网页获取 API Key
+const openDoubanInfoPage = () => {
+  window.open('https://doubaninfo.com/user/dashboard.php', '_blank')
 }
 
 // ===== PTGen 节点检测 =====
@@ -1621,6 +1674,7 @@ const autoSaveCrossSeedSettings = async () => {
       publish_batch_concurrency_manual: settingsForm.publish_batch_concurrency_manual,
       // 同步带上 ptgen token，避免后端覆盖时丢失（后端已做 merge，但这里也保持完整）
       cspt_ptgen_token: uploadForm.cspt_ptgen_token,
+      doubaninfo_appkey: uploadForm.doubaninfo_appkey,
     }
 
     await axios.post('/api/settings/cross_seed', crossSeedSettings)
@@ -1727,6 +1781,11 @@ const fetchSettings = async () => {
     // 获取财神ptgen token（从cross_seed配置中读取）
     if (config.cross_seed && config.cross_seed.cspt_ptgen_token) {
       uploadForm.cspt_ptgen_token = config.cross_seed.cspt_ptgen_token
+    }
+
+    // 获取豆影 API Key（从cross_seed配置中读取）
+    if (config.cross_seed && config.cross_seed.doubaninfo_appkey) {
+      uploadForm.doubaninfo_appkey = config.cross_seed.doubaninfo_appkey
     }
 
     // 获取标签设置
@@ -2013,6 +2072,7 @@ const saveUploadSettings = async () => {
       default_downloader: settingsForm.default_downloader,
       auto_add_existing_to_downloader: settingsForm.auto_add_existing_to_downloader,
       cspt_ptgen_token: uploadForm.cspt_ptgen_token,
+      doubaninfo_appkey: uploadForm.doubaninfo_appkey,
       publish_batch_concurrency_mode: settingsForm.publish_batch_concurrency_mode,
       publish_batch_concurrency_manual: settingsForm.publish_batch_concurrency_manual,
     }

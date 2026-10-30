@@ -32,9 +32,17 @@ func (h *Handler) PostPTGenTest(c *gin.Context) {
 			crossSeed = loaded
 		}
 	}
+	tokens := map[string]string{}
 	csptToken := strings.TrimSpace(handlerToString(crossSeed["cspt_ptgen_token"], ""))
+	if csptToken != "" {
+		tokens["cspt_ptgen_token"] = csptToken
+	}
+	doubaninfoKey := strings.TrimSpace(handlerToString(crossSeed["doubaninfo_appkey"], ""))
+	if doubaninfoKey != "" {
+		tokens["doubaninfo_appkey"] = doubaninfoKey
+	}
 
-	results := processingrepair.TestPTGenNodes(doubanID, csptToken, crossSeed["ptgen_nodes"])
+	results := processingrepair.TestPTGenNodes(doubanID, tokens, crossSeed["ptgen_nodes"])
 	successCount := 0
 	for _, item := range results {
 		if item.Status == processingrepair.PTGenTestStatusSuccess {
@@ -43,12 +51,13 @@ func (h *Handler) PostPTGenTest(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":         true,
-		"douban_id":       doubanID,
-		"douban_url":      "https://movie.douban.com/subject/" + doubanID + "/",
-		"cspt_configured": csptToken != "",
-		"success_count":   successCount,
-		"total_count":     len(results),
-		"nodes":           results,
+		"success":               true,
+		"douban_id":             doubanID,
+		"douban_url":            "https://movie.douban.com/subject/" + doubanID + "/",
+		"cspt_configured":       csptToken != "",
+		"doubaninfo_configured": doubaninfoKey != "",
+		"success_count":         successCount,
+		"total_count":           len(results),
+		"nodes":                 results,
 	})
 }

@@ -28,7 +28,7 @@ func (s *MigrateService) MediaValidate(payload map[string]any) (map[string]any, 
 		GetRootConfig: func() map[string]any {
 			return rootConfig
 		},
-		GetCSPTToken: s.csptToken,
+		GetPTGenTokens: s.ptgenTokens,
 		GetSeedMedia: func(seedID string) string {
 			hash, torrentID, siteName, parseErr := processingpersist.ParseSeedID(seedID)
 			if parseErr != nil {
@@ -43,16 +43,22 @@ func (s *MigrateService) MediaValidate(payload map[string]any) (map[string]any, 
 	})
 }
 
-func (s *MigrateService) csptToken() string {
+func (s *MigrateService) ptgenTokens() map[string]string {
+	tokens := map[string]string{}
 	if s == nil || s.cfg == nil {
-		return ""
+		return tokens
 	}
 	root := s.cfg.Get()
 	crossSeed, ok := root["cross_seed"].(map[string]any)
 	if !ok {
-		return ""
+		return tokens
 	}
-	return strings.TrimSpace(processingshared.ToString(crossSeed["cspt_ptgen_token"], ""))
+	for _, key := range []string{"cspt_ptgen_token", "doubaninfo_appkey"} {
+		if value := strings.TrimSpace(processingshared.ToString(crossSeed[key], "")); value != "" {
+			tokens[key] = value
+		}
+	}
+	return tokens
 }
 
 func (s *MigrateService) RefreshMediainfoAsync(payload map[string]any) (map[string]any, int) {

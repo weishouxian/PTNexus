@@ -15,10 +15,10 @@ type MediaValidateDeps struct {
 }
 
 // ValidateMediaPayload 按类型执行截图/海报/简介/媒体信息校验与修复。
-// 参数/返回：payload 为前端提交参数；rootConfig 为运行配置；csptToken 为 PTGen 令牌；deps 为外部依赖回调。
+// 参数/返回：payload 为前端提交参数；rootConfig 为运行配置；tokens 为各 PTGen 节点鉴权密钥（键如 cspt_ptgen_token / doubaninfo_appkey）；deps 为外部依赖回调。
 // 失败场景：参数缺失、外部信息获取失败、自动修复失败会返回对应错误状态码。
 // 副作用：可能触发截图生成上传与外部站点请求。
-func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csptToken string, deps MediaValidateDeps) (map[string]any, int) {
+func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, tokens map[string]string, deps MediaValidateDeps) (map[string]any, int) {
 	mediaType := strings.TrimSpace(toStringAny(payload["type"], ""))
 	contentName := strings.TrimSpace(toStringAny(payload["content_name"], ""))
 	sourceInfo, _ := payload["source_info"].(map[string]any)
@@ -114,7 +114,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		return map[string]any{"success": true, "screenshots": ToBBCodeImages(urls)}, 200
 
 	case "poster":
-		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken, ptgenNodes)
+		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, tokens, ptgenNodes)
 		if errMsg != "" {
 			return map[string]any{"success": false, "error": errMsg}, 400
 		}
@@ -133,7 +133,7 @@ func ValidateMediaPayload(payload map[string]any, rootConfig map[string]any, csp
 		return resp, 200
 
 	case "intro":
-		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, csptToken, ptgenNodes)
+		result, errMsg := FetchMovieInfo(mediaType, contentName, subtitle, sourceInfo, tokens, ptgenNodes)
 		if errMsg != "" {
 			return map[string]any{"success": false, "error": errMsg}, 400
 		}

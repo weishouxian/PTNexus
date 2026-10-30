@@ -40,10 +40,10 @@ var (
 )
 
 // FetchMovieInfo 按 mediaType 获取海报或简介，并尽量补全 IMDb/豆瓣/TMDb 链接。
-// 参数/返回：mediaType 支持 poster/intro；sourceInfo 为已有外链来源；ptgenNodes 为 PTGen 节点启停配置（为空时使用默认配置）。
+// 参数/返回：mediaType 支持 poster/intro；sourceInfo 为已有外链来源；tokens 为各 PTGen 节点鉴权密钥（键如 cspt_ptgen_token / doubaninfo_appkey）；ptgenNodes 为 PTGen 节点启停配置（为空时使用默认配置）。
 // 失败场景：所有来源都无法返回有效数据时返回错误文案。
 // 副作用：会访问 PTGen、豆瓣、TMDb 等外部网络接口。
-func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[string]any, csptToken string, ptgenNodes []PTGenNodeSetting) (MovieInfoResult, string) {
+func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[string]any, tokens map[string]string, ptgenNodes []PTGenNodeSetting) (MovieInfoResult, string) {
 	result := MovieInfoResult{
 		IMDb:   NormalizeExternalLink(toStringAny(sourceInfo["imdb_link"], ""), reIMDbLink),
 		Douban: NormalizeExternalLink(toStringAny(sourceInfo["douban_link"], ""), reDoubanLink),
@@ -88,7 +88,7 @@ func FetchMovieInfo(mediaType, contentName, subtitle string, sourceInfo map[stri
 		backfillTMDbByIMDbIfNeeded(result.TMDb, result.IMDb, &tmdbBackfillAttempted, movieInfoLogModule, "初始外链互补后"),
 	)
 
-	format, formatIMDb, formatDouban, formatTMDb, errMsg := fetchPTGenFormat(result, csptToken, ptgenNodes)
+	format, formatIMDb, formatDouban, formatTMDb, errMsg := fetchPTGenFormat(result, tokens, ptgenNodes)
 	if errMsg == "" && strings.TrimSpace(format) != "" {
 		poster, intro, imdb, douban, tmdb := parseFormatContent(format, formatIMDb, formatDouban, formatTMDb)
 		result.IMDb = firstNonEmpty(imdb, result.IMDb)
@@ -240,7 +240,7 @@ func logFetchMovieInfoResult(mediaType, source string, result MovieInfoResult, n
 	)
 }
 
-func fetchPTGenFormat(links MovieInfoResult, csptToken string, ptgenNodes []PTGenNodeSetting) (string, string, string, string, string) {
+func fetchPTGenFormat(links MovieInfoResult, tokens map[string]string, ptgenNodes []PTGenNodeSetting) (string, string, string, string, string) {
 	resource := firstNonEmpty(links.Douban, links.TMDb, links.IMDb)
 	traceID := fmt.Sprintf("ptgen-%d", time.Now().UnixNano())
 	if resource == "" {
@@ -255,7 +255,7 @@ func fetchPTGenFormat(links MovieInfoResult, csptToken string, ptgenNodes []PTGe
 		return "", "", "", "", ""
 	}
 
-	candidates := BuildPTGenCandidates(resource, links.Douban, csptToken, ptgenNodes)
+	candidates := BuildPTGenCandidates(resource, links.Douban, tokens, ptgenNodes)
 	logx.Infof(
 		ptgenLogModule,
 		"开始请求 PTGen 流程ID=%s 候选数量=%d 资源链接=%s",

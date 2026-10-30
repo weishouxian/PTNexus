@@ -25,7 +25,7 @@ type PTGenNodeDefinition struct {
 	Description    string
 	NeedToken      bool
 	DefaultEnabled bool
-	BuildURL       func(resourceURL, doubanID, csptToken string) (string, string)
+	BuildURL       func(resourceURL, doubanID string, tokens map[string]string) (string, string)
 }
 
 // PTGenNodeTestResult 描述单个节点的检测结果。
@@ -68,8 +68,8 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		Description:    "cspt.top 官方接口，需在「转种设置」中配置 API Token（每日 100+ 次，随等级提升）",
 		NeedToken:      true,
 		DefaultEnabled: true,
-		BuildURL: func(resourceURL, _ string, csptToken string) (string, string) {
-			token := strings.TrimSpace(csptToken)
+		BuildURL: func(resourceURL, _ string, tokens map[string]string) (string, string) {
+			token := strings.TrimSpace(tokens["cspt_ptgen_token"])
 			if token == "" {
 				return "", "未配置财神 PTGen API Token"
 			}
@@ -81,11 +81,33 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		},
 	},
 	{
+		ID:             "doubaninfo",
+		Name:           "豆影 PTGen",
+		Description:    "doubaninfo.com 官方接口，需在「转种设置」中配置 API Key（免费 200 次/天，可升级套餐）",
+		NeedToken:      true,
+		DefaultEnabled: false,
+		BuildURL: func(resourceURL, _ string, tokens map[string]string) (string, string) {
+			key := strings.TrimSpace(tokens["doubaninfo_appkey"])
+			if key == "" {
+				return "", "未配置豆影 API Key"
+			}
+			resource := strings.TrimSpace(resourceURL)
+			if resource == "" {
+				return "", "缺少有效的资源链接"
+			}
+			return fmt.Sprintf(
+				"https://doubaninfo.com/api/v1_douban.php?key=%s&url=%s&format",
+				neturl.QueryEscape(key),
+				neturl.QueryEscape(resource),
+			), ""
+		},
+	},
+	{
 		ID:             "workers",
 		Name:           "PT-Nexus 自建 (Workers)",
 		Description:    "Cloudflare Workers 部署的 PTGen 实例，海外网络访问稳定",
 		DefaultEnabled: true,
-		BuildURL: func(resourceURL, _ string, _ string) (string, string) {
+		BuildURL: func(resourceURL, _ string, _ map[string]string) (string, string) {
 			return fmt.Sprintf("https://pt-nexus-ptgen.1395251710.workers.dev/api?url=%s", neturl.QueryEscape(resourceURL)), ""
 		},
 	},
@@ -94,7 +116,7 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		Name:           "PT-Nexus 自建 (dpdns)",
 		Description:    "原 sqing33.dpdns.org 域名已失效，DNS 解析不存在",
 		DefaultEnabled: false,
-		BuildURL: func(resourceURL, _ string, _ string) (string, string) {
+		BuildURL: func(resourceURL, _ string, _ map[string]string) (string, string) {
 			return fmt.Sprintf("https://pt-nexus-ptgen.sqing33.dpdns.org/api?url=%s", neturl.QueryEscape(resourceURL)), ""
 		},
 	},
@@ -103,7 +125,7 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		Name:           "HomeQian PTGen",
 		Description:    "第三方公益节点，接口常返回内部错误",
 		DefaultEnabled: false,
-		BuildURL: func(resourceURL, _ string, _ string) (string, string) {
+		BuildURL: func(resourceURL, _ string, _ map[string]string) (string, string) {
 			return fmt.Sprintf("https://ptgen.homeqian.top/?url=%s", neturl.QueryEscape(resourceURL)), ""
 		},
 	},
@@ -112,7 +134,7 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		Name:           "IYUU PTGen",
 		Description:    "第三方公益节点，常见返回「未查询到数据」",
 		DefaultEnabled: false,
-		BuildURL: func(resourceURL, _ string, _ string) (string, string) {
+		BuildURL: func(resourceURL, _ string, _ map[string]string) (string, string) {
 			return fmt.Sprintf("https://api.iyuu.cn/App.Movie.Ptgen?url=%s", neturl.QueryEscape(resourceURL)), ""
 		},
 	},
@@ -121,7 +143,7 @@ var builtinPTGenNodeDefinitions = []PTGenNodeDefinition{
 		Name:           "TJU PTGen",
 		Description:    "天津大学公益节点，仅支持豆瓣 ID，近期返回 502",
 		DefaultEnabled: false,
-		BuildURL: func(_, doubanID string, _ string) (string, string) {
+		BuildURL: func(_, doubanID string, _ map[string]string) (string, string) {
 			id := strings.TrimSpace(doubanID)
 			if id == "" {
 				return "", "该节点仅支持豆瓣 ID，缺少豆瓣 ID"
@@ -232,16 +254,19 @@ type PTGenCandidate struct {
 }
 
 // BuildPTGenCandidates 按启停配置与优先级构建 PTGen 候选请求列表。
-// 参数/返回：resourceURL 为待查询资源链接；doubanURL 用于提取豆瓣 ID；csptToken 为财神令牌；settings 为节点启停配置。
+// 参数/返回：resourceURL 为待查询资源链接；doubanURL 用于提取豆瓣 ID；tokens 为各节点鉴权密钥（键如 cspt_ptgen_token / doubaninfo_appkey）；settings 为节点启停配置。
 // 失败场景：resourceURL 为空或全部节点不可用时返回空列表。
 // 副作用：无。
-func BuildPTGenCandidates(resourceURL, doubanURL, csptToken string, settings []PTGenNodeSetting) []PTGenCandidate {
+func BuildPTGenCandidates(resourceURL, doubanURL string, tokens map[string]string, settings []PTGenNodeSetting) []PTGenCandidate {
 	resource := strings.TrimSpace(resourceURL)
 	if resource == "" {
 		return nil
 	}
 	if len(settings) == 0 {
 		settings = DefaultPTGenNodeSettings()
+	}
+	if tokens == nil {
+		tokens = map[string]string{}
 	}
 	doubanID := extractDoubanID(doubanURL)
 
@@ -255,7 +280,7 @@ func BuildPTGenCandidates(resourceURL, doubanURL, csptToken string, settings []P
 		if !ok || def.BuildURL == nil {
 			continue
 		}
-		target, reason := def.BuildURL(resource, doubanID, csptToken)
+		target, reason := def.BuildURL(resource, doubanID, tokens)
 		target = strings.TrimSpace(target)
 		if target == "" {
 			if reason != "" {
@@ -273,10 +298,13 @@ func BuildPTGenCandidates(resourceURL, doubanURL, csptToken string, settings []P
 }
 
 // TestPTGenNodes 并发检测全部内置节点对指定豆瓣 ID 的可用性。
-// 参数/返回：doubanID 为豆瓣 ID；csptToken 为财神令牌；rawSettings 为当前节点启停配置（仅用于回显 enabled）。
+// 参数/返回：doubanID 为豆瓣 ID；tokens 为各节点鉴权密钥（键如 cspt_ptgen_token / doubaninfo_appkey）；rawSettings 为当前节点启停配置（仅用于回显 enabled）。
 // 失败场景：豆瓣 ID 为空时所有节点返回 skipped。
 // 副作用：会对每个节点发起一次真实外部请求（含已停用节点，便于确认其是否恢复）。
-func TestPTGenNodes(doubanID, csptToken string, rawSettings any) []PTGenNodeTestResult {
+func TestPTGenNodes(doubanID string, tokens map[string]string, rawSettings any) []PTGenNodeTestResult {
+	if tokens == nil {
+		tokens = map[string]string{}
+	}
 	normalizedID := NormalizeDoubanIDInput(doubanID)
 	resourceURL := ""
 	if normalizedID != "" {
@@ -310,7 +338,7 @@ func TestPTGenNodes(doubanID, csptToken string, rawSettings any) []PTGenNodeTest
 			results[index] = result
 			continue
 		}
-		target, reason := def.BuildURL(resourceURL, normalizedID, csptToken)
+		target, reason := def.BuildURL(resourceURL, normalizedID, tokens)
 		target = strings.TrimSpace(target)
 		if target == "" {
 			result.Status = PTGenTestStatusSkipped

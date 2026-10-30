@@ -1,14 +1,10 @@
 package repair
 
-import (
-	"strings"
-)
-
 // MediaValidateEntryDeps 定义媒体校验入口流程依赖。
 type MediaValidateEntryDeps struct {
-	GetRootConfig func() map[string]any
-	GetCSPTToken  func() string
-	GetSeedMedia  func(seedID string) string
+	GetRootConfig  func() map[string]any
+	GetPTGenTokens func() map[string]string
+	GetSeedMedia   func(seedID string) string
 }
 
 // MediaValidateEntry 执行媒体校验入口流程，统一拼装运行配置与外部依赖。
@@ -22,11 +18,14 @@ func MediaValidateEntry(payload map[string]any, deps MediaValidateEntryDeps) (ma
 			rootConfig = cfg
 		}
 	}
-	csptToken := ""
-	if deps.GetCSPTToken != nil {
-		csptToken = strings.TrimSpace(deps.GetCSPTToken())
+	tokens := map[string]string{}
+	if deps.GetPTGenTokens != nil {
+		tokens = deps.GetPTGenTokens()
 	}
-	return ValidateMediaPayload(payload, rootConfig, csptToken, MediaValidateDeps{
+	if tokens == nil {
+		tokens = map[string]string{}
+	}
+	return ValidateMediaPayload(payload, rootConfig, tokens, MediaValidateDeps{
 		GetSeedMediaInfo: deps.GetSeedMedia,
 	})
 }

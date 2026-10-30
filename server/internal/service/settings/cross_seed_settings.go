@@ -20,6 +20,8 @@ func (s *SettingsService) GetCrossSeedSettings() map[string]any {
 		"auto_update_existing_torrent":     false,
 		"publish_batch_concurrency_mode":   "cpu",
 		"publish_batch_concurrency_manual": BatchPublishDefaultConcurrency,
+		"cspt_ptgen_token":                 "",
+		"doubaninfo_appkey":                "",
 	}
 	cfg := s.cfg.Get()
 	merged := mergeWithDefault(defaults, nestedMap(cfg, "cross_seed"))
