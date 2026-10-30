@@ -1407,8 +1407,10 @@ const sourceSelectionDialogVisible = ref<boolean>(false)
 const allSourceSitesStatus = ref<SiteStatus[]>([])
 
 const batchTargetSites = computed(() => {
+  // 与「定时发种」的目标站点清单保持一致：可发种 + 目标站 + 已配 Cookie 或 Passkey。
+  // 批量入队时后端不做凭据预检，但真正发种会卡在凭据缺失上，提前过滤避免用户踩坑。
   return allSourceSitesStatus.value
-    .filter((s) => s.is_target && s.can_publish)
+    .filter((s) => s.is_target && s.can_publish && (s.has_cookie || s.has_passkey))
     .map((s) => s.name)
 })
 

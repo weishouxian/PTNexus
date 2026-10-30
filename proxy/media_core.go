@@ -212,7 +212,7 @@ func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID
 		"--frames=1",
 		"--screenshot-high-bit-depth=yes",
 		"--screenshot-png-compression=0",
-		"--screenshot-tag-colorspace=yes",
+		"--screenshot-tag-colorspace=no",
 	}
 	if subtitleSID > 0 {
 		args = append(args, fmt.Sprintf("--sid=%d", subtitleSID), "--sub-visibility=yes")
@@ -231,6 +231,33 @@ func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID
 	return nil
 }
 
+// takeScreenshotDV captures a Dolby Vision source directly with ffmpeg's libplacebo filter and
+// writes a full-resolution PNG. mpv 0.35's default vo=gpu does not understand DV Profile 5's
+// IPTPQc2 color space and would produce wrong colors, so DV sources bypass mpv entirely.
+func takeScreenshotDV(videoPath, outputPath string, timePoint float64) error {
+	candidates := buildToneMapFilterCandidates(true, dvImageToneMapChainOptions)
+	_, output, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y", "-v", "error",
+			"-ss", fmt.Sprintf("%.3f", timePoint),
+			"-i", videoPath,
+			"-frames:v", "1",
+			"-an",
+			"-sn",
+			"-vf", candidate.Filter,
+			"-compression_level", "4",
+			"-pred", "mixed",
+			outputPath,
+		})
+		_, stderrStr, cmdErr := executeCommandWithTimeoutAndStderr(600*time.Second, "ffmpeg", args...)
+		return stderrStr, cmdErr
+	})
+	if err != nil {
+		return fmt.Errorf("ffmpeg DV screenshot failed: %v, stderr: %s", err, strings.TrimSpace(output))
+	}
+	return nil
+}
+
 // detectHDRFromVideo reports whether the video source should be treated as HDR.
 // It also covers Dolby Vision Profile 5 sources whose color metadata is missing: those carry no
 // bt2020/smpte2084 tags, so a tags-only check would classify them as SDR and skip tone mapping.
@@ -240,6 +267,21 @@ func detectHDRFromVideo(videoPath string) bool {
 		return false
 	}
 	return isHDRMetadataText(output)
+}
+
+// detectDolbyVisionFromVideo reports whether the video source is Dolby Vision (any profile).
+// mpv 0.35's default vo=gpu does not understand DV Profile 5's IPTPQc2 color space and would
+// produce wrong colors, so DV sources must be tone-mapped by ffmpeg's libplacebo filter instead.
+func detectDolbyVisionFromVideo(videoPath string) bool {
+	output, err := executeCommand("ffprobe", "-v", "error", "-show_streams", videoPath)
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "dovi") ||
+		strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") ||
+		containsDolbyVisionToken(lower)
 }
 
 // isHDRMetadataText classifies ffprobe output as HDR. Standard color tags and Dolby Vision
@@ -372,6 +414,17 @@ var imageToneMapChainOptions = toneMapChainOptions{
 	SDRFilter:      "format=rgb24",
 	HDRTail:        "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
 	FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+	OutRange:       "pc",
+}
+
+// dvImageToneMapChainOptions is the tone-mapping chain for Dolby Vision sources that outputs a
+// full-resolution PNG. DV Profile 5 (IPTPQc2) is not understood by mpv 0.35's default vo=gpu, so
+// these sources are tone-mapped directly by ffmpeg's libplacebo filter. The chain ends in rgb24 so
+// the encoder writes a PNG (matching the non-HDR path) instead of the legacy HDR JPEG output.
+var dvImageToneMapChainOptions = toneMapChainOptions{
+	SDRFilter:      "format=rgb24",
+	HDRTail:        "scale='min(3840,iw)':-2:flags=lanczos,format=rgb24",
+	FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,format=rgb24",
 	OutRange:       "pc",
 }
 

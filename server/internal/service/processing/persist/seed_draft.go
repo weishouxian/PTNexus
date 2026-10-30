@@ -420,6 +420,9 @@ func (d *SeedDraft) CompleteAndMapTags(siteIdentifier string, formatIsBDInfo boo
 		d.Subtitle = enriched
 	}
 
+	// 以 MediaInfo/BDInfo 的实际 HDR 标准为准，剔除源站误标的 HDR10/HDR10+（当本体实为菁彩HDR 时）。
+	rawTagCandidates = processingtagging.ReconcileHDRTagsWithMediaText(rawTagCandidates, d.Mediainfo, formatIsBDInfo)
+
 	mappedTags, unmappedTags := processingtagging.MapTagsToStandard(rawTagCandidates, siteIdentifier)
 	// 媒介已被碟结构纠偏收敛为原盘时，剔除随之失效的 Remux 标签（标签是从标题组件推的，不会自动跟随）。
 	if reconciled := processingtagging.ReconcileMediumTagsWithStandardMedium(mappedTags, d.Medium); len(reconciled) != len(mappedTags) {

@@ -110,7 +110,73 @@ func TestPublishSSDFields(t *testing.T) {
 	}
 }
 
-// TestPublishSSDMandarinRule 验证「产地为中国则不打国配标签」：
+// TestPublishSSDScreenshotMustBePNG 验证截图非 PNG（如 HDR 资源截图被压成 jpg）时，
+// 发种被确定性拒绝并返回 *publisher.PreCheckError（上层判为「预检查限制跳过」而非失败重试）。
+func TestPublishSSDScreenshotMustBePNG(t *testing.T) {
+	capture := func(t *testing.T, screenshots string) error {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasSuffix(r.URL.Path, "/upload.php"):
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				fmt.Fprint(w, `<html><head><title>SSD :: 发布</title></head><body>
+<form action="takeupload.php" method="post" enctype="multipart/form-data">
+<input type="file" name="file"/>
+<input type="text" name="name"/>
+</form></body></html>`)
+			case strings.HasSuffix(r.URL.Path, "/takeupload.php"):
+				http.Redirect(w, r, "/details.php?id=1", http.StatusFound)
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		t.Cleanup(srv.Close)
+
+		torrentPath := t.TempDir() + "/x.torrent"
+		if err := os.WriteFile(torrentPath, []byte("d8:announce0:4:infod4:name6:testee"), 0o644); err != nil {
+			t.Fatalf("写种子失败: %v", err)
+		}
+		input := publisher.PublishInput{
+			SiteCode:    "ssd",
+			BaseURL:     srv.URL,
+			Cookie:      "SPRINGID=test",
+			TargetName:  "不可说",
+			TorrentPath: torrentPath,
+			Title:       "Test Movie 2024 1080p WEB-DL H.265 AAC 2.0-GROUP",
+			MediaInfo:   "General\nFormat : Matroska",
+			UploadData: map[string]any{
+				"standardized_params": map[string]any{
+					"type":        "category.movie",
+					"source":      "source.western",
+					"medium":      "medium.webdl",
+					"resolution":  "resolution.r1080p",
+					"video_codec": "video.h265",
+					"audio_codec": "audio.aac",
+				},
+				"screenshots": screenshots,
+				"mediainfo":   "General\nFormat : Matroska",
+				"intro":       map[string]any{"statement": "CSWEB官组作品"},
+			},
+		}
+		_, err := PublishSSD(input)
+		return err
+	}
+
+	// 含 jpg 截图 → 必须拒绝为 PreCheckError。
+	err := capture(t, "[img]https://img.example/s1.png[/img]\n[img]https://img.example/s2.jpg[/img]")
+	if err == nil {
+		t.Fatal("含 jpg 截图应拒绝发种，实际通过")
+	}
+	if _, ok := publisher.AsPreCheckError(err); !ok {
+		t.Fatalf("非 PNG 截图应返回 *PreCheckError，实际=%T: %v", err, err)
+	}
+
+	// 全部 PNG → 正常通过。
+	if err := capture(t, "[img]https://img.example/s1.png[/img]\n[img]https://img.example/s2.png[/img]"); err != nil {
+		t.Fatalf("全 PNG 截图应正常发种，实际失败: %v", err)
+	}
+}
+
 // 中国大陆/香港/台湾/港台复合产地都不下发 mandarin；其他产地照常下发 mandarin=1。
 func TestPublishSSDMandarinRule(t *testing.T) {
 	capture := func(t *testing.T, source string) map[string]string {

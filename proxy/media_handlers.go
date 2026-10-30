@@ -176,13 +176,15 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tempDir)
 
 		videoHDR := detectHDRFromVideo(videoPath)
+		videoDV := detectDolbyVisionFromVideo(videoPath)
 		contentHDR := hasHDRKeyword(reqData.ContentName)
 		pathHDR := hasHDRKeyword(reqData.RemotePath)
 		videoIsHDR := videoHDR || contentHDR || pathHDR
 		log.Printf(
-			"screenshot source HDR detection: video=%s hdr=%t video_metadata=%t content_keyword=%t path_keyword=%t content_name=%q remote_path=%q",
+			"screenshot source HDR detection: video=%s hdr=%t dolby_vision=%t video_metadata=%t content_keyword=%t path_keyword=%t content_name=%q remote_path=%q",
 			filepath.Base(videoPath),
 			videoIsHDR,
+			videoDV,
 			videoHDR,
 			contentHDR,
 			pathHDR,
@@ -199,18 +201,30 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 			intermediatePngPath := filepath.Join(tempDir, "raw_"+fileName)
 			finalPngPath := filepath.Join(tempDir, fileName)
 
-			if err := takeScreenshot(videoPath, intermediatePngPath, point, subtitleSID); err != nil {
-				log.Printf("screenshot %d failed during capture: %v", i+1, err)
-				continue
+			// Dolby Vision 且无字幕：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2 色彩空间，
+			// 直接用 ffmpeg libplacebo 从源视频截图并色调映射，避免 mpv 出偏色图。
+			// DV 带字幕时退回 mpv（保证字幕烧录，颜色次之）。
+			if videoDV && subtitleSID <= 0 {
+				if err := takeScreenshotDV(videoPath, finalPngPath, point); err != nil {
+					log.Printf("screenshot %d failed during DV capture: %v", i+1, err)
+					continue
+				}
+				log.Printf("screenshot image captured (Dolby Vision): index=%d output=%s size_mb=%.2f", i+1, finalPngPath, fileSizeMB(finalPngPath))
+			} else {
+				if err := takeScreenshot(videoPath, intermediatePngPath, point, subtitleSID); err != nil {
+					log.Printf("screenshot %d failed during capture: %v", i+1, err)
+					continue
+				}
+				// mpv 已把 HDR（含 HDR10/HLG）色调映射为 SDR 像素，此处只做 PNG 压缩，不再二次映射。
+				finalImagePath, err := convertPngToOptimizedImage(intermediatePngPath, finalPngPath, false)
+				if err != nil {
+					log.Printf("screenshot %d failed during image optimization: %v", i+1, err)
+					continue
+				}
+				log.Printf("screenshot image optimized: index=%d hdr=%t output=%s size_mb=%.2f", i+1, videoIsHDR, finalImagePath, fileSizeMB(finalImagePath))
 			}
-			finalImagePath, err := convertPngToOptimizedImage(intermediatePngPath, finalPngPath, videoIsHDR)
-			if err != nil {
-				log.Printf("screenshot %d failed during image optimization: %v", i+1, err)
-				continue
-			}
-			log.Printf("screenshot image optimized: index=%d hdr=%t output=%s size_mb=%.2f", i+1, videoIsHDR, finalImagePath, fileSizeMB(finalImagePath))
 
-			uploadPath, err := preparePixhostUploadImage(finalImagePath)
+			uploadPath, err := preparePixhostUploadImage(finalPngPath)
 			if err != nil {
 				log.Printf("screenshot %d failed during upload image preparation: %v", i+1, err)
 				continue

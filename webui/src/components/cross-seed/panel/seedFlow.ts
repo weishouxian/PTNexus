@@ -2,6 +2,7 @@ import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
 import axios from 'axios'
 import { ElNotification } from '@/utils/uiNotify'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
+import { loadSelectedTargetSites, saveSelectedTargetSites } from '@/utils/targetSites'
 
 import type {
   ReverseMappings,
@@ -1303,6 +1304,20 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
       console.log(`已存在站点数量充足(${existingSitesCount}个)，跳过重新获取`)
     }
 
+    // 进入站点选择步骤时，若尚未选择任何目标站点，则带出「最近一次选择」的记忆
+    // （与定时发种共享同一份记忆），并过滤掉当前不可选的站点，避免带出失效选择。
+    if (selectedTargetSites.value.length === 0) {
+      const remembered = loadSelectedTargetSites()
+      if (remembered.length > 0) {
+        const selectable = new Set(
+          allSitesStatus.value
+            .filter((s) => s.is_target && s.can_publish !== false && isTargetSiteSelectable(s.name))
+            .map((s) => s.name),
+        )
+        selectedTargetSites.value = remembered.filter((name) => selectable.has(name))
+      }
+    }
+
     activeStep.value = 2
   }
 
@@ -1313,6 +1328,7 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
     } else {
       selectedTargetSites.value.push(siteName)
     }
+    saveSelectedTargetSites(selectedTargetSites.value)
   }
 
   const selectAllTargetSites = () => {
@@ -1320,10 +1336,12 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
       .filter((s) => s.is_target && s.can_publish !== false && isTargetSiteSelectable(s.name))
       .map((s) => s.name)
     selectedTargetSites.value = selectableSites
+    saveSelectedTargetSites(selectedTargetSites.value)
   }
 
   const clearAllTargetSites = () => {
     selectedTargetSites.value = []
+    saveSelectedTargetSites(selectedTargetSites.value)
   }
 
   return {

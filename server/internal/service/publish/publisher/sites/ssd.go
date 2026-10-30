@@ -1,6 +1,8 @@
 package sites
 
 import (
+	"net/url"
+	"path"
 	"strings"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
@@ -145,8 +147,12 @@ func (ssdPublisher) BuildExtraFormFields(input publisher.PublishInput) (map[stri
 	}
 
 	// 截图：从 screenshots 区块提取全部图片 URL，每行一个（站点 textarea 一图一行）。
+	// 站点硬性要求截图必须是 PNG，非 PNG（如 HDR 资源截图被压成 jpg）会转种报错，故此处直接拒绝。
 	if shots := resolveSSDScreenshots(uploadData); shots != "" {
 		extra[resolveFieldName("screenshots", "url_vimages")] = shots
+	}
+	if reason := ssdNonPNGScreenshotReason(uploadData); reason != "" {
+		return nil, publisher.NewPreCheckError(reason)
 	}
 
 	// 媒体信息：独立 textarea，取 MediaInfo 原文（优先级 input.MediaInfo > uploadData.mediainfo）。
@@ -183,4 +189,37 @@ func resolveSSDScreenshots(uploadData map[string]any) string {
 		return ""
 	}
 	return strings.Join(images, "\n")
+}
+
+// ssdNonPNGScreenshotReason 校验截图是否全部为 PNG，返回首个非 PNG 截图的原因说明。
+// 不可说（SSD）站点要求截图必须是 PNG 图片；HDR 资源截图在生成阶段会被色调映射压缩成 jpg，
+// 若直接提交会导致转种报错，故在此前置拦截。全部为 PNG 或无截图时返回空串。
+func ssdNonPNGScreenshotReason(uploadData map[string]any) string {
+	raw := resolveUploadSection(uploadData, "screenshots")
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	for _, imageURL := range extractImageURLsFromText(raw) {
+		if isPNGImageURL(imageURL) {
+			continue
+		}
+		return "不可说站点要求视频截图必须为 PNG 格式，检测到非 PNG 截图: " + imageURL
+	}
+	return ""
+}
+
+// isPNGImageURL 判断图片 URL 是否为 PNG：剥离 query/fragment 后按路径扩展名匹配 .png（大小写不敏感）。
+func isPNGImageURL(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		// 解析失败时退化为对原始串做后缀判断。
+		trimmed = strings.SplitN(trimmed, "?", 2)[0]
+		trimmed = strings.SplitN(trimmed, "#", 2)[0]
+		return strings.EqualFold(path.Ext(trimmed), ".png")
+	}
+	return strings.EqualFold(path.Ext(parsed.Path), ".png")
 }

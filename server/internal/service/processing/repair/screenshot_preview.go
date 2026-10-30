@@ -54,9 +54,138 @@ func ShouldUseScreenshotPreview(input ScreenshotGenerateInput) (bool, error) {
 	return inspection.SubtitleState != ScreenshotSubtitleStateConfirmedChinese, nil
 }
 
+// resolveMediaTextFromScreenshotInput 从截图输入里取出 MediaInfo/BDInfo 文本。
+// 优先 source_info.mediainfo，其次 payload.current_mediainfo / payload.mediainfo。
+func resolveMediaTextFromScreenshotInput(payload map[string]any, sourceInfo map[string]any) string {
+	if text := strings.TrimSpace(toStringAny(sourceInfo["mediainfo"], "")); text != "" {
+		return text
+	}
+	if text := strings.TrimSpace(toStringAny(payload["current_mediainfo"], "")); text != "" {
+		return text
+	}
+	return strings.TrimSpace(toStringAny(payload["mediainfo"], ""))
+}
+
+// mediaTextHasChineseSubtitle 判断 MediaInfo/BDInfo 文本里是否存在中文字幕。
+// 口径（严格区分字幕轨与音轨）：
+//   - MediaInfo：仅 Text 段（字幕轨）的 Language 字段值为 Chinese/中文/中字 才算；
+//   - BDInfo：仅 SUBTITLES 段的 Language 列为 Chinese/中文/中字 才算。
+// 音轨（Audio/AUDIO 段）的语言不参与判定，避免「国语配音 + 英文字幕」被误判为有中文字幕。
+// 匹配不区分大小写。
+func mediaTextHasChineseSubtitle(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+
+	// 先判定 BDInfo：SUBTITLES 段内出现中文标记（BDInfo 表格语言列在第 2 列）。
+	if idx := strings.Index(lower, "subtitles:"); idx >= 0 {
+		if bdInfoSubtitlesHasChinese(lower[idx+len("subtitles:"):]) {
+			return true
+		}
+	}
+
+	// 再判定 MediaInfo：Text 段（字幕轨）的 Language 字段值为中文标记。
+	if mediaInfoTextSectionHasChinese(lower) {
+		return true
+	}
+
+	return false
+}
+
+// bdInfoSubtitlesHasChinese 判断 BDInfo 的 SUBTITLES 段（从 `SUBTITLES:` 之后到下一个大写段头之前）是否含中文标记。
+func bdInfoSubtitlesHasChinese(section string) bool {
+	// 截断到下一个大写段头（FILES:/CHAPTERS:/DISC INFO: 等），避免跨段误判。
+	if stop := indexBDInfoNextSection(section); stop >= 0 {
+		section = section[:stop]
+	}
+	return mediaTextLanguageValueIsChinese(section)
+}
+
+// indexBDInfoNextSection 返回 SUBTITLES 段内下一个大写段头的位置。
+func indexBDInfoNextSection(section string) int {
+	for _, header := range []string{"\nfiles:", "\nchapters:", "\ndisc info:", "\nvideo:", "\naudio:", "\nplaylist report:", "\nquick summary:"} {
+		if idx := strings.Index(section, header); idx >= 0 {
+			return idx
+		}
+	}
+	return -1
+}
+
+// mediaInfoTextSectionHasChinese 判断 MediaInfo 的 Text 段（字幕轨）里是否有 Language 字段命中中文标记。
+func mediaInfoTextSectionHasChinese(lower string) bool {
+	lines := strings.Split(lower, "\n")
+	inTextSection := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// MediaInfo 段头：Text / Text #1 / Text #2 等。
+		if strings.HasPrefix(trimmed, "text") && !strings.Contains(trimmed, ":") {
+			inTextSection = true
+			continue
+		}
+		// 遇到其它段头（General/Video/Audio/Menu/Chapters）则离开 Text 段。
+		if isMediaInfoSectionHeader(trimmed) {
+			inTextSection = false
+			continue
+		}
+		if !inTextSection {
+			continue
+		}
+		// Text 段内：Language : Chinese / Language : 中文 等。
+		if !strings.HasPrefix(trimmed, "language") {
+			continue
+		}
+		rest := trimmed[len("language"):]
+		rest = strings.TrimLeft(rest, " \t")
+		if idx := strings.IndexAny(rest, ":："); idx >= 0 {
+			rest = rest[idx+1:]
+		}
+		if mediaTextLanguageValueIsChinese(rest) {
+			return true
+		}
+	}
+	return false
+}
+
+// isMediaInfoSectionHeader 判断是否 MediaInfo 段头行（General/Video/Audio/Text/Menu/Chapters，可带 #N）。
+func isMediaInfoSectionHeader(line string) bool {
+	for _, header := range []string{"general", "video", "audio", "menu", "chapters"} {
+		if line == header || strings.HasPrefix(line, header+" #") {
+			return true
+		}
+	}
+	return false
+}
+
+// mediaTextLanguageValueIsChinese 判断语言文本是否为中文标记（Chinese/中文/中字/chi/zho/cmn）。
+func mediaTextLanguageValueIsChinese(value string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	if v == "" {
+		return false
+	}
+	return strings.Contains(v, "chinese") ||
+		strings.Contains(v, "中文") ||
+		strings.Contains(v, "中字") ||
+		strings.Contains(v, "chi") ||
+		strings.Contains(v, "zho") ||
+		strings.Contains(v, "cmn")
+}
+
 func InspectScreenshotSubtitles(input ScreenshotGenerateInput) (ScreenshotSubtitleInspection, error) {
 	payload := input.Payload
 	sourceInfo := input.SourceInfo
+
+	// 优先用 MediaInfo/BDInfo 文本里的中文字幕信息直接判定，命中即确认中文，跳过 ffprobe/代理探测。
+	if mediaText := resolveMediaTextFromScreenshotInput(payload, sourceInfo); mediaText != "" {
+		if mediaTextHasChineseSubtitle(mediaText) {
+			logx.Infof(screenshotPreviewLogModule, "MediaInfo 文本命中中文字幕，直接确认中文 scene=截图预览判定")
+			return ScreenshotSubtitleInspection{
+				SubtitleState: ScreenshotSubtitleStateConfirmedChinese,
+			}, nil
+		}
+	}
+
 	savePath, downloaderID, torrentName, contentName, preferExactRemotePath := parseScreenshotSourceParams(input.RootConfig, payload, sourceInfo, input.ContentName)
 
 	downloader, decision, dErr := downloaderclient.DecideProxy(input.RootConfig, downloaderID)
@@ -442,6 +571,9 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，需改走 ffmpeg libplacebo 直截。
+	videoIsDV := detectDolbyVisionFromVideo(ffprobePath, targetResult.TargetFile)
+
 	type uploadJob struct {
 		Index    int
 		TimeStr  string
@@ -489,9 +621,21 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		timeStr := formatSecondHMS(point)
 		fileStem := fmt.Sprintf("s%d_%s", i+1, timeStr)
 		rawPNG := filepath.Join(tmpDir, "raw_"+fileStem+".png")
+		finalImagePath := filepath.Join(tmpDir, fileStem+".png")
 
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
+
+		// Dolby Vision 且无字幕：mpv 0.35 不识别 DV P5 的 IPTPQc2，改由 ffmpeg libplacebo 直截。
+		if videoIsDV && subtitleSID <= 0 {
+			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetResult.TargetFile, point, finalImagePath); err != nil {
+				logx.PlainInfof("❌ ffmpeg DV 截图失败: %s", sanitizeCommandErrForLog(err))
+				continue
+			}
+			logx.Infof(screenshotPreviewLogModule, "截图 DV 直截 scene=正式截图 index=%d output=%s", i+1, finalImagePath)
+			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
+			continue
+		}
 
 		if err := captureRawPNGWithMPV(mpvPath, targetResult.TargetFile, point, rawPNG, subtitleSID); err != nil {
 			logx.PlainInfof("❌ mpv 截图失败: %s", sanitizeCommandErrForLog(err))
@@ -502,29 +646,10 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 			continue
 		}
 
-		keywordHDR := hasScreenshotHDRKeyword(contentName) || hasScreenshotHDRKeyword(torrentName)
-		metadataHDR := false
-		if hdr, hdrErr := detectHDRFromPNG(ffprobePath, rawPNG); hdrErr == nil {
-			metadataHDR = hdr
-		} else {
-			logx.PlainInfof("   ⚠️ 检测 HDR 信息失败，假定为 SDR: %v", hdrErr)
-		}
-		isHDR := keywordHDR || metadataHDR
-		finalExt := ".png"
-		if isHDR {
-			finalExt = ".jpg"
-		}
-		finalImagePath := filepath.Join(tmpDir, fileStem+finalExt)
-		logx.Infof(screenshotPreviewLogModule, "截图 HDR 判定 scene=正式截图 index=%d keyword_hdr=%t metadata_hdr=%t hdr=%t output=%s", i+1, keywordHDR, metadataHDR, isHDR, finalImagePath)
-
-		if isHDR {
-			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用色调映射...")
-		} else {
-			logx.PlainInfof("   🎨 检测到 SDR 内容，应用标准 RGB 转换...")
-		}
-
+		// mpv 已将 HDR（含 HDR10/HLG）色调映射为 SDR 像素（截图 tag-colorspace 已关闭），
+		// 此处仅做 PNG 无损压缩，不再二次映射，避免发灰发暗。
 		startCompress := time.Now()
-		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, isHDR); err != nil {
+		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, false); err != nil {
 			logx.PlainInfof("❌ ffmpeg 压缩失败: %s", sanitizeCommandErrForLog(err))
 			continue
 		}
@@ -536,7 +661,7 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		if srcSize > 0 {
 			ratio = float64(dstSize) / float64(srcSize) * 100
 		}
-		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs | HDR: %v", float64(dstSize)/1024.0/1024.0, ratio, compressTime, isHDR)
+		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs", float64(dstSize)/1024.0/1024.0, ratio, compressTime)
 		jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 	}
 

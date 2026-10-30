@@ -635,6 +635,41 @@ func isAudioLanguageTagCandidate(bare string) bool {
 	return false
 }
 
+// ReconcileHDRTagsWithMediaText 以 MediaInfo/BDInfo 的实际 HDR 标准为准，剔除与之矛盾的 HDR 标签。
+// 规则：仅当媒体文本能解析出「HDR Vivid（菁彩HDR）」时才执行校正——菁彩HDR 与 HDR10/HDR10+
+// 是互斥的（一个片源要么是 Vivid、要么是 HDR10 家族，不会同时），源站常把 Vivid 片源误标成
+// HDR10/HDR10+，照搬会污染目标站的技术标签。
+// 与语种校正的差异：这里只做「菁彩HDR 优先」这一种互斥，不处理 DoVi 与 HDR10 的共存
+// （Dolby Vision 通常带 HDR10 基础层，二者可同时成立，不能误删）。
+// 参数/返回：tags 为原始标签列表（可能带 tag. 前缀）；mediaText/isBDInfo 为媒体文本；返回校正后的标签列表。
+// 失败场景：媒体文本为空、解析不出菁彩HDR 时原样返回，不做任何删减。
+// 副作用：无。
+func ReconcileHDRTagsWithMediaText(tags []string, mediaText string, isBDInfo bool) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+	hdr := processingmedia.ExtractHDRInfoFromMediaText(mediaText, isBDInfo)
+	upper := strings.ToUpper(strings.TrimSpace(hdr.StandardTag))
+	if !strings.Contains(upper, "VIVID") {
+		return tags
+	}
+
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		bare := strings.TrimSpace(tag)
+		if len(bare) >= 4 && strings.EqualFold(bare[:4], "tag.") {
+			bare = strings.TrimSpace(bare[4:])
+		}
+		bareUpper := strings.ToUpper(bare)
+		// 菁彩HDR 优先：丢弃与之互斥的 HDR10 / HDR10+ 标签。
+		if strings.Contains(bareUpper, "HDR10") {
+			continue
+		}
+		result = append(result, tag)
+	}
+	return result
+}
+
 func applySubtitleTagsFromTextSection(tags *[]string, lines []string) {
 	if tags == nil || len(lines) == 0 {
 		return

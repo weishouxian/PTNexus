@@ -19,6 +19,15 @@
   ],
   "history": [
     {
+      "version": "v4.0.10",
+      "date": "2026.10.30",
+      "changes": [
+        "修复：HDR（含杜比视界）视频截图发灰发暗——根因是 mpv 已把 HDR 色调映射为 SDR 后，ffmpeg 又按残留的 HDR 色彩标签二次映射了一遍。现改为 mpv 关闭色彩标签写入并只做 PNG 压缩（HDR10/HLG），杜比视界单独走 ffmpeg libplacebo 从源视频直截，彻底消除双重映射",
+        "修复：转种到不可说站点时校验截图必须为 PNG，非 PNG 直接判定发布失败（返回预检查错误，不会无限重试）",
+        "优化：截图是否需人工选图改为先取 MediaInfo/BDInfo 文本，判定字幕轨 Language 为 Chinese/中文/中字即确认有中文字幕、跳过人工选择（此前仅靠 ffprobe 字幕流标题关键词，易误入人工流程）"
+      ]
+    },
+    {
       "version": "v4.0.9",
       "date": "2026.10.23",
       "changes": [

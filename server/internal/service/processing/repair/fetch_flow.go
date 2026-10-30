@@ -639,7 +639,10 @@ func repairScreenshotsDuringFetch(
 		"content_name":   strings.TrimSpace(contentName),
 		"current_images": reviewData.Screens,
 	}
-	sourceInfo := map[string]any{"main_title": strings.TrimSpace(contentName)}
+	sourceInfo := map[string]any{
+		"main_title": strings.TrimSpace(contentName),
+		"mediainfo":  strings.TrimSpace(reviewData.Mediainfo),
+	}
 	usePendingReview, previewDecisionErr := ShouldUseScreenshotPreview(ScreenshotGenerateInput{
 		Payload:     payload,
 		SourceInfo:  sourceInfo,

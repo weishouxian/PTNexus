@@ -108,7 +108,7 @@ func (r *TorrentDataRepository) ListAllDiscoveredSites() ([]string, error) {
 	sitesSet := map[string]struct{}{}
 
 	var torrentSites []string
-	if err := r.store.DB.Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err != nil {
+	if err := r.store.DB.Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND state = '做种中' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err != nil {
 		return nil, err
 	}
 	for _, site := range torrentSites {

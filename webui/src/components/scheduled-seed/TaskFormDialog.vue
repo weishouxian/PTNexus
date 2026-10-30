@@ -159,6 +159,7 @@ import axios from 'axios'
 import { ElMessage } from '@/utils/uiNotify'
 import SiteTagChips from '@/components/SiteTagChips.vue'
 import SeedSelectDialog from './SeedSelectDialog.vue'
+import { loadSelectedTargetSites, saveSelectedTargetSites } from '@/utils/targetSites'
 
 type SeedItem = {
   torrent_id: string
@@ -319,6 +320,7 @@ const applyTagSites = (names: string[]) => {
   const merged = new Set(form.target_sites)
   names.forEach((name) => merged.add(name))
   form.target_sites = Array.from(merged)
+  saveSelectedTargetSites(form.target_sites)
 }
 
 // 再次点击已全选的标签：把这批站点移出已选，其余选择保留。
@@ -326,6 +328,7 @@ const removeTagSites = (names: string[]) => {
   if (!names.length) return
   const dropped = new Set(names)
   form.target_sites = form.target_sites.filter((name) => !dropped.has(name))
+  saveSelectedTargetSites(form.target_sites)
 }
 
 const toggleSite = (site: string) => {
@@ -335,19 +338,23 @@ const toggleSite = (site: string) => {
   } else {
     form.target_sites.push(site)
   }
+  saveSelectedTargetSites(form.target_sites)
 }
 
 // 从上一步「不可用已选站点」里移除（语义明确，不必借用 toggleSite 的取反逻辑）
 const removeSite = (site: string) => {
   form.target_sites = form.target_sites.filter((name) => name !== site)
+  saveSelectedTargetSites(form.target_sites)
 }
 
 const selectAllSites = () => {
   form.target_sites = siteList.value.map((s) => s.name)
+  saveSelectedTargetSites(form.target_sites)
 }
 
 const clearAllSites = () => {
   form.target_sites = []
+  saveSelectedTargetSites(form.target_sites)
 }
 
 const fetchSiteList = async () => {
@@ -423,6 +430,16 @@ const fetchSiteList = async () => {
       .filter(isUsableTargetSite)
     // 站点昵称理论上唯一，这里仍按名字去重：重复项会让 v-for 的 key 冲突
     siteList.value = Array.from(new Map(usableSites.map((site) => [site.name, site])).values())
+
+    // 新建任务且尚未手动选过站点时，带出「最近一次选择」的目标站点记忆（与批量发种共享同一份），
+    // 并只保留当前可用清单里的站点，避免带出失效选择。
+    if (!props.task && form.target_sites.length === 0) {
+      const remembered = loadSelectedTargetSites()
+      if (remembered.length > 0) {
+        const available = new Set(siteList.value.map((site) => site.name))
+        form.target_sites = remembered.filter((name) => available.has(name))
+      }
+    }
   } catch (e) {
     console.error('获取站点列表失败:', e)
     siteStatusLoaded.value = false

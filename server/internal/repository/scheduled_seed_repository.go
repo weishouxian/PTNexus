@@ -448,7 +448,7 @@ type SeedFilter struct {
 	SortOrder     string   // ascending / descending
 }
 
-// ListAllSeedSites 返回所有已发现站点列表（torrents 表 + sites 表有 cookie 的）。
+// ListAllSeedSites 返回当前正在做种的站点列表（torrents 表中 state = '做种中' 的记录）。
 func (r *ScheduledSeedRepository) ListAllSeedSites() ([]string, error) {
 	if r == nil || r.store == nil || r.store.DB == nil {
 		return nil, errors.New("scheduled seed repo is nil")
@@ -456,18 +456,8 @@ func (r *ScheduledSeedRepository) ListAllSeedSites() ([]string, error) {
 	sitesSet := map[string]struct{}{}
 
 	var torrentSites []string
-	if err := r.store.DB.Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err == nil {
+	if err := r.store.DB.Raw("SELECT DISTINCT sites FROM torrents WHERE sites IS NOT NULL AND sites != '' AND state = '做种中' AND (is_hidden = 0 OR is_hidden IS NULL)").Pluck("sites", &torrentSites).Error; err == nil {
 		for _, s := range torrentSites {
-			s = strings.TrimSpace(s)
-			if s != "" {
-				sitesSet[s] = struct{}{}
-			}
-		}
-	}
-
-	var sitesWithCookie []string
-	if err := r.store.DB.Raw("SELECT nickname FROM sites WHERE cookie IS NOT NULL AND cookie != ''").Pluck("nickname", &sitesWithCookie).Error; err == nil {
-		for _, s := range sitesWithCookie {
 			s = strings.TrimSpace(s)
 			if s != "" {
 				sitesSet[s] = struct{}{}

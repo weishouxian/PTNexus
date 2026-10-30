@@ -54,6 +54,9 @@ func RecomputeStandardTags(
 	//（屌丝站 Until We Meet Again 2026 S01 实例）。媒体文本无音轨语种线索时不改动。
 	rawTagCandidates = ReconcileAudioLanguageTagsWithMediaText(rawTagCandidates, mediainfo, isBDInfo)
 
+	// 以 MediaInfo/BDInfo 的实际 HDR 标准为准，剔除源站误标的 HDR10/HDR10+（当本体实为菁彩HDR 时）。
+	rawTagCandidates = ReconcileHDRTagsWithMediaText(rawTagCandidates, mediainfo, isBDInfo)
+
 	contentName := strings.TrimSpace(title)
 	if contentName == "" {
 		contentName = strings.TrimSpace(torrentNameForPath)

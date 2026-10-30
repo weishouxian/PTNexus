@@ -217,6 +217,9 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 	}
 	defer os.RemoveAll(tmpDir)
 
+	// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，需改走 ffmpeg libplacebo 直截。
+	videoIsDV := detectDolbyVisionFromVideo(ffprobePath, targetVideoFile)
+
 	type uploadJob struct {
 		Index    int
 		TimeStr  string
@@ -264,9 +267,21 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		timeStr := formatSecondHMS(point)
 		fileStem := fmt.Sprintf("s%d_%s", i+1, timeStr)
 		rawPNG := filepath.Join(tmpDir, "raw_"+fileStem+".png")
+		finalImagePath := filepath.Join(tmpDir, fileStem+".png")
 
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
+
+		// Dolby Vision 且无字幕：mpv 0.35 不识别 DV P5 的 IPTPQc2，改由 ffmpeg libplacebo 直截。
+		if videoIsDV && subtitleSID <= 0 {
+			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetVideoFile, point, finalImagePath); err != nil {
+				logx.PlainInfof("❌ ffmpeg DV 截图失败: %s", sanitizeCommandErrForLog(err))
+				continue
+			}
+			logx.Infof(screenshotValidateLogModule, "截图 DV 直截 scene=自动截图 index=%d output=%s", i+1, finalImagePath)
+			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
+			continue
+		}
 
 		if err := captureRawPNGWithMPV(mpvPath, targetVideoFile, point, rawPNG, subtitleSID); err != nil {
 			logx.PlainInfof("❌ mpv 截图失败: %s", sanitizeCommandErrForLog(err))
@@ -277,29 +292,10 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 			continue
 		}
 
-		keywordHDR := hasScreenshotHDRKeyword(contentName) || hasScreenshotHDRKeyword(torrentName)
-		metadataHDR := false
-		if hdr, hdrErr := detectHDRFromPNG(ffprobePath, rawPNG); hdrErr == nil {
-			metadataHDR = hdr
-		} else {
-			logx.PlainInfof("   ⚠️ 检测 HDR 信息失败，假定为 SDR: %v", hdrErr)
-		}
-		isHDR := keywordHDR || metadataHDR
-		finalExt := ".png"
-		if isHDR {
-			finalExt = ".jpg"
-		}
-		finalImagePath := filepath.Join(tmpDir, fileStem+finalExt)
-		logx.Infof(screenshotValidateLogModule, "截图 HDR 判定 scene=自动截图 index=%d keyword_hdr=%t metadata_hdr=%t hdr=%t output=%s", i+1, keywordHDR, metadataHDR, isHDR, finalImagePath)
-
-		if isHDR {
-			logx.PlainInfof("   🎨 检测到 HDR 原始内容，应用色调映射...")
-		} else {
-			logx.PlainInfof("   🎨 检测到 SDR 内容，应用标准 RGB 转换...")
-		}
-
+		// mpv 已将 HDR（含 HDR10/HLG）色调映射为 SDR 像素（截图 tag-colorspace 已关闭），
+		// 此处仅做 PNG 无损压缩，不再二次映射，避免发灰发暗。
 		startCompress := time.Now()
-		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, isHDR); err != nil {
+		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, false); err != nil {
 			logx.PlainInfof("❌ ffmpeg 压缩失败: %s", sanitizeCommandErrForLog(err))
 			continue
 		}
@@ -311,7 +307,7 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		if srcSize > 0 {
 			ratio = float64(dstSize) / float64(srcSize) * 100
 		}
-		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs | HDR: %v", float64(dstSize)/1024.0/1024.0, ratio, compressTime, isHDR)
+		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs", float64(dstSize)/1024.0/1024.0, ratio, compressTime)
 
 		// 上传不并发截图，但上传并发。
 		jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
@@ -641,6 +637,22 @@ func detectHDRFromPNG(ffprobePath string, pngPath string) (bool, error) {
 	return isHDRMetadataText(string(out)), nil
 }
 
+// detectDolbyVisionFromVideo 通过 ffprobe 判断视频源是否为 Dolby Vision（任意 profile）。
+// mpv 0.35 默认 vo=gpu 不识别 DV Profile 5 的 IPTPQc2 色彩空间，会产出偏色截图，
+// 故 DV 源需改走 ffmpeg libplacebo 直截做色调映射。
+func detectDolbyVisionFromVideo(ffprobePath, videoPath string) bool {
+	cmd := exec.Command(ffprobePath, "-v", "error", "-show_streams", "-select_streams", "v:0", videoPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(out))
+	return strings.Contains(lower, "dovi") ||
+		strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") ||
+		containsDolbyVisionToken(lower)
+}
+
 // isHDRMetadataText 根据 ffprobe 输出文本判断源是否为 HDR。
 // 参数/返回：text 为 ffprobe 的输出；返回是否按 HDR 处理。
 // 失败场景：无。
@@ -754,6 +766,8 @@ func isTokenSeparator(b byte) bool {
 }
 
 // hasScreenshotHDRKeyword 根据下载任务名称补充 HDR 判断，避免截图文件缺少色彩元数据时被误判为 SDR。
+// 注：mpv 截图已关闭 tag-colorspace，且 HDR10/HLG 由 mpv 自行色调映射、DV 走 ffmpeg libplacebo 直截，
+// 此函数当前无调用方，保留以备后续需要按资源名辅助判定时复用。
 func hasScreenshotHDRKeyword(value string) bool {
 	lower := strings.ToLower(strings.TrimSpace(value))
 	return strings.Contains(lower, "hdr") ||
@@ -770,7 +784,7 @@ func captureRawPNGWithMPV(mpvPath string, videoPath string, second float64, outp
 		"--frames=1",
 		"--screenshot-high-bit-depth=yes",
 		"--screenshot-png-compression=0",
-		"--screenshot-tag-colorspace=yes",
+		"--screenshot-tag-colorspace=no",
 		fmt.Sprintf("--o=%s", outputPath),
 	}
 	if subtitleSID > 0 {
@@ -955,6 +969,33 @@ func compressPNGWithFFmpeg(ffmpegPath string, srcPNG string, dstPNG string, isHD
 	})
 	if err != nil {
 		return fmt.Errorf("ffmpeg 执行失败: %s", formatFFmpegFailureOutput(output, err))
+	}
+	return nil
+}
+
+// captureDVPNGWithFFmpeg 从 Dolby Vision 源视频直接截取一帧并做色调映射，输出 PNG。
+// mpv 0.35 默认 vo=gpu 不识别 DV Profile 5 的 IPTPQc2 色彩空间，因此 DV 源跳过 mpv、
+// 由 ffmpeg 的 libplacebo 滤镜直接从源视频做 BT.2020/PQ → BT.709 转换，避免偏色。
+// 参数/返回：ffmpegPath 为 ffmpeg 路径；videoPath 为源视频；second 为截图时间点；dstPNG 为输出 PNG。
+func captureDVPNGWithFFmpeg(ffmpegPath string, videoPath string, second float64, dstPNG string) error {
+	candidates := buildToneMapFilterCandidates(true, pngToneMapChainOptions)
+	_, output, err := runToneMapFilterAttempts(dstPNG, candidates, func(candidate toneMapFilterCandidate) ([]byte, error) {
+		args := prependToneMapPreArgs(candidate, []string{
+			"-y", "-v", "error",
+			"-ss", fmt.Sprintf("%.3f", second),
+			"-i", videoPath,
+			"-frames:v", "1",
+			"-an",
+			"-sn",
+			"-vf", candidate.Filter,
+			"-compression_level", "4",
+			"-pred", "mixed",
+			dstPNG,
+		})
+		return exec.Command(ffmpegPath, args...).CombinedOutput()
+	})
+	if err != nil {
+		return fmt.Errorf("ffmpeg DV 截图失败: %s", formatFFmpegFailureOutput(output, err))
 	}
 	return nil
 }

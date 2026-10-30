@@ -159,6 +159,7 @@ import axios from 'axios'
 import { InfoFilled } from '@element-plus/icons-vue'
 import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
+import { saveSelectedTargetSites } from '@/utils/targetSites'
 
 const {
   autoUpdateExistingTorrent,
@@ -198,6 +199,7 @@ const applyTagSites = (names: string[]) => {
   const merged = new Set(selectedTargetSites.value)
   names.forEach((name) => merged.add(name))
   selectedTargetSites.value = Array.from(merged)
+  saveSelectedTargetSites(selectedTargetSites.value)
 }
 
 // 再次点击已全选的标签：把这批站点移出已选集合，其余选择保留。
@@ -205,6 +207,7 @@ const removeTagSites = (names: string[]) => {
   if (!names.length) return
   const dropped = new Set(names)
   selectedTargetSites.value = selectedTargetSites.value.filter((name) => !dropped.has(name))
+  saveSelectedTargetSites(selectedTargetSites.value)
 }
 
 // 点击「查重」标记：在新标签页打开该站点的搜索页，带 dupe 校验同款的检索条件。
