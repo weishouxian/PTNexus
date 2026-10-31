@@ -397,6 +397,49 @@ func (d Downloader) FetchVersion() (string, error) {
 	}
 }
 
+// SetLocation 更改已添加任务的保存位置（文件移动）。
+// 参数/返回：hashes 为下载器任务 hash；newPath 为目标保存目录；返回下载器接口错误。
+// 失败场景：hash 列表为空、newPath 为空、下载器连接/认证失败或接口异常时返回错误。
+// 副作用：会向下载器发起移动文件请求，任务文件将被转移到 newPath 目录。
+func (d Downloader) SetLocation(hashes []string, newPath string) error {
+	hashes = compactStrings(hashes)
+	newPath = strings.TrimSpace(newPath)
+	if len(hashes) == 0 {
+		return errors.New("hash 列表为空")
+	}
+	if newPath == "" {
+		return errors.New("目标保存路径不能为空")
+	}
+	switch d.Type {
+	case "qbittorrent":
+		if d.UseProxy {
+			return errors.New("代理下载器暂不支持更改保存位置，请在下载器设置中关闭代理后重试")
+		}
+		client, err := newQBClient(d)
+		if err != nil {
+			return err
+		}
+		if err := client.Login(); err != nil {
+			return err
+		}
+		values := url.Values{}
+		values.Set("hashes", strings.Join(hashes, "|"))
+		values.Set("location", newPath)
+		_, err = client.PostForm("torrents/setLocation", values)
+		return err
+	case "transmission":
+		client := newTransmissionClient(d)
+		_, err := client.Call("torrent-set-location", map[string]any{
+			"ids":      hashes,
+			"location": newPath,
+			"move":     true,
+		})
+		return err
+	default:
+		return fmt.Errorf("不支持的下载器类型: %s", d.Type)
+	}
+}
+
 func (d Downloader) AddTorrentURL(torrentURL, savePath string, paused bool, tags []string) error {
 	return d.AddTorrentURLWithOptions(torrentURL, savePath, AddTorrentOptions{
 		Paused: paused,

@@ -78,4 +78,5 @@ export interface Downloader {
   name: string
   enabled: boolean
   color?: string
+  common_paths?: string[]
 }

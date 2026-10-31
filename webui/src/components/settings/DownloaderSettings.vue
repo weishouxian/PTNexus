@@ -285,6 +285,30 @@
               </div>
             </div>
           </el-form-item>
+          <el-form-item label="常用路径">
+            <div class="common-paths-editor">
+              <div v-if="downloader.common_paths && downloader.common_paths.length > 0" class="common-paths-tags">
+                <el-tag
+                  v-for="(path, index) in downloader.common_paths"
+                  :key="index"
+                  closable
+                  @close="removeCommonPath(downloader, index)"
+                >
+                  {{ path }}
+                </el-tag>
+              </div>
+              <div class="common-paths-add-row">
+                <el-input
+                  v-model="commonPathInputs[downloader.id]"
+                  placeholder="例如：/downloads/movies"
+                  class="common-path-input"
+                  @keyup.enter="addCommonPath(downloader)"
+                />
+                <el-button :icon="Plus" @click="addCommonPath(downloader)">添加</el-button>
+              </div>
+              <span class="fetch-copies-hint">「更改保存位置」时可直接从这些路径中选取，也可手动输入其它路径。</span>
+            </div>
+          </el-form-item>
         </el-form>
       </el-card>
     </div>
@@ -334,7 +358,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessageBox } from 'element-plus'
 import { Plus, Delete, Select, Link, FolderOpened, Refresh } from '@element-plus/icons-vue'
@@ -360,6 +384,7 @@ type DownloaderConfig = {
   proxy_port: number
   color: string
   path_mappings: PathMapping[]
+  common_paths: string[]
   enable_ratio_limiter: boolean
   fetch_copies_before_delete: boolean
   publish_interval_minutes: number
@@ -377,6 +402,20 @@ type SettingsState = {
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null
+
+// 把后端返回的 common_paths 归一为去空去重的字符串数组。
+const parseCommonPaths = (raw: unknown): string[] => {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const item of raw) {
+    const path = typeof item === 'string' ? item.trim() : ''
+    if (!path || seen.has(path)) continue
+    seen.add(path)
+    result.push(path)
+  }
+  return result
+}
 
 const settings = ref<SettingsState>({
   downloaders: [],
@@ -508,6 +547,7 @@ const fetchSettings = async () => {
           typeof record.proxy_port === 'number' ? record.proxy_port : Number(record.proxy_port) || 9090,
         color: typeof record.color === 'string' && record.color.trim() ? record.color : deriveDownloaderColor(id),
         path_mappings: pathMappings,
+        common_paths: parseCommonPaths(record.common_paths),
         enable_ratio_limiter:
           typeof record.enable_ratio_limiter === 'boolean' ? record.enable_ratio_limiter : false,
         fetch_copies_before_delete:
@@ -577,6 +617,7 @@ const addDownloader = () => {
     proxy_port: 9090,
     color: deriveDownloaderColor(id),
     path_mappings: [], // 初始化空的路径映射数组
+    common_paths: [], // 常用保存路径
     enable_ratio_limiter: false, // 默认关闭出种限速
     fetch_copies_before_delete: false, // 默认直接删除，不读取下载器副本
     publish_interval_minutes: 0,
@@ -656,6 +697,23 @@ const addPathMapping = () => {
 
 const deletePathMapping = (index: number) => {
   currentPathMappings.value.splice(index, 1)
+}
+
+// 常用路径：每个下载器各自维护一个待输入的临时值，避免多个卡片共享输入框状态。
+const commonPathInputs = reactive<Record<string, string>>({})
+
+const addCommonPath = (downloader: DownloaderConfig) => {
+  const path = (commonPathInputs[downloader.id] || '').trim()
+  if (!path) return
+  if (!downloader.common_paths) downloader.common_paths = []
+  if (!downloader.common_paths.includes(path)) {
+    downloader.common_paths.push(path)
+  }
+  commonPathInputs[downloader.id] = ''
+}
+
+const removeCommonPath = (downloader: DownloaderConfig, index: number) => {
+  downloader.common_paths.splice(index, 1)
 }
 
 const savePathMappings = async () => {
@@ -914,6 +972,31 @@ const savePathMappings = async () => {
   color: #606266;
   white-space: nowrap;
   cursor: help;
+}
+
+/* 「常用路径」编辑器 */
+.common-paths-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.common-paths-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.common-paths-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.common-path-input {
+  flex: 1;
 }
 
 .switch-form-item {

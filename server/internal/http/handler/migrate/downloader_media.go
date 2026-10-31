@@ -23,6 +23,15 @@ func (h *Handler) AddToDownloader(c *gin.Context) {
 	c.JSON(status, result)
 }
 
+func (h *Handler) SetTorrentLocation(c *gin.Context) {
+	payload, ok := bindMapPayload(c)
+	if !ok {
+		return
+	}
+	result, status := h.service.SetTorrentLocation(payload)
+	c.JSON(status, result)
+}
+
 func (h *Handler) GetDownloaderInfo(c *gin.Context) {
 	requestID := c.GetString("request_id")
 	payload, ok := bindMapPayload(c)

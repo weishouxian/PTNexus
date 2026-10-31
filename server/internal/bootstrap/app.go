@@ -395,6 +395,7 @@ func registerRoutes(
 
 		migrateAPI.POST("/get_downloader_info", migrateHandler.GetDownloaderInfo)
 		migrateAPI.POST("/add_to_downloader", migrateHandler.AddToDownloader)
+		migrateAPI.POST("/set_torrent_location", migrateHandler.SetTorrentLocation)
 		migrateAPI.POST("/refresh_mediainfo_async", migrateHandler.RefreshMediainfoAsync)
 
 		migrateAPI.GET("/bdinfo_records", migrateHandler.BDInfoRecords)

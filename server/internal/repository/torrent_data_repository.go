@@ -490,6 +490,22 @@ func (r *TorrentDataRepository) DeleteTorrentsByHashes(hashes []string) (int64, 
 	return deleted, nil
 }
 
+// UpdateSavePathByHashes 更新 hash 列表对应记录的 save_path。
+// 参数/返回：hashes 为 torrents.hash（大小写与首尾空格不敏感、自动去重）；newPath 为新保存路径；返回受影响的记录数与错误。
+// 失败场景：数据库更新失败时返回 error；入参无有效值或 newPath 为空时返回 0 且不执行 SQL。
+// 副作用：将匹配 hash 的 torrents.save_path 更新为 newPath。
+func (r *TorrentDataRepository) UpdateSavePathByHashes(hashes []string, newPath string) (int64, error) {
+	cleaned := compactLowerStrings(hashes)
+	if len(cleaned) == 0 || strings.TrimSpace(newPath) == "" {
+		return 0, nil
+	}
+	result := r.store.DB.Exec("UPDATE torrents SET save_path = ? WHERE LOWER(TRIM(hash)) IN ?", strings.TrimSpace(newPath), cleaned)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 // ListSeedTorrentIDsByHashes 按种子 infohash 查询 seed_parameters 中的站点侧种子标识（torrent_id）。
 // 参数/返回：hashes 为 torrents.hash（大小写与首尾空格不敏感、自动去重）；返回命中的 torrent_id 列表（已去重）与 error。
 // 失败场景：DB 未初始化或查询失败时返回 error；入参无有效值时返回空列表，不执行 SQL。

@@ -610,6 +610,14 @@
             >
               转种
             </el-button>
+            <el-button
+              type="info"
+              size="small"
+              @click.stop="openChangeLocationDialog(scope.row)"
+              :disabled="!scope.row.hash || scope.row.downloaderIds?.length === 0"
+            >
+              改位置
+            </el-button>
 <!--            <el-button
               size="small"
               @click.stop="resolveTorrentUrl(scope.row)"
@@ -900,6 +908,63 @@
               @click="setSiteNotExist"
             >
               设为不存在
+            </el-button>
+          </div>
+        </div>
+      </el-card>
+    </div>
+
+    <!-- 更改保存位置弹窗 -->
+    <div
+      v-if="changeLocationDialogVisible"
+      class="filter-overlay"
+      @click.self="changeLocationDialogVisible = false"
+    >
+      <el-card class="filter-card" style="max-width: 560px">
+        <template #header>
+          <div class="filter-card-header">
+            <span>更改保存位置</span>
+            <el-button type="danger" circle @click="changeLocationDialogVisible = false" plain
+              >X</el-button
+            >
+          </div>
+        </template>
+        <div class="change-location-body">
+          <div class="torrent-name-container">
+            <p class="label">种子名称:</p>
+            <p class="torrent-name">{{ changeLocationTorrent?.name }}</p>
+          </div>
+          <p class="label">当前路径:</p>
+          <p class="torrent-name">{{ changeLocationTorrent?.save_path || '未知' }}</p>
+          <p class="label" style="margin-top: 12px">新保存路径:</p>
+          <el-select
+            v-model="newLocationPath"
+            class="location-path-select"
+            placeholder="选择常用路径，或直接输入新路径"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+          >
+            <el-option
+              v-for="path in changeLocationCommonPaths"
+              :key="path"
+              :label="path"
+              :value="path"
+            />
+          </el-select>
+          <p class="input-hint">
+            将调用下载器接口，把任务文件移动到新目录（移动后自动恢复做种）。目录必须存在于下载器所在主机上。
+          </p>
+          <div class="site-operation-buttons">
+            <el-button @click="changeLocationDialogVisible = false">取消</el-button>
+            <el-button
+              type="primary"
+              :loading="changingLocation"
+              :disabled="!newLocationPath || newLocationPath.trim() === ''"
+              @click="submitChangeLocation"
+            >
+              确定移动
             </el-button>
           </div>
         </div>
@@ -1589,6 +1654,27 @@ const selectedTorrentName = ref<string>('')
 const selectedSite = ref<OtherSite | null>(null)
 const newCommentInput = ref<string>('')
 
+// 更改保存位置弹窗相关
+const changeLocationDialogVisible = ref<boolean>(false)
+const changeLocationTorrent = ref<Torrent | null>(null)
+const newLocationPath = ref<string>('')
+const changingLocation = ref<boolean>(false)
+
+// 当前种子的下载器 ID，用于取常用路径。
+const changeLocationDownloaderId = computed(() => {
+  const row = changeLocationTorrent.value
+  if (!row) return ''
+  return (row.downloaderId || row.downloaderIds?.[0] || '').trim()
+})
+
+// 当前下载器配置的常用保存路径。
+const changeLocationCommonPaths = computed(() => {
+  const id = changeLocationDownloaderId.value
+  if (!id) return []
+  const downloader = allDownloadersList.value.find((d) => d.id === id)
+  return Array.isArray(downloader?.common_paths) ? downloader.common_paths : []
+})
+
 // 用于跟踪在源站点选择弹窗中进行IYUU查询的站点
 const sourceSiteQueryLoading = ref<Record<string, boolean>>({})
 
@@ -2049,6 +2135,74 @@ const deleteTorrentRow = async (row: Torrent) => {
     ElMessage.error(message)
   } finally {
     deletingRowHash.value = ''
+  }
+}
+
+// 更改保存位置相关
+const openChangeLocationDialog = (row: Torrent) => {
+  changeLocationTorrent.value = row
+  newLocationPath.value = row.save_path || ''
+  changeLocationDialogVisible.value = true
+}
+
+const submitChangeLocation = async () => {
+  const row = changeLocationTorrent.value
+  if (!row) return
+  const newPath = (newLocationPath.value || '').trim()
+  // 收集该资源（聚合行）的全部 hash：同一资源不同站点的种子 hash 不同，需一并移动。
+  // 优先用 hashes 数组（含所有站点/下载器的 hash），缺失时回退到单值 hash。
+  const hashes = Array.from(
+    new Set(
+      [...(row.hashes || []), row.hash || '']
+        .map((h) => (h || '').trim())
+        .filter(Boolean),
+    ),
+  )
+  // 取该种子的下载器：优先单值 downloaderId，否则取 downloaderIds 第一个（仅作数据库查不到时的回退）。
+  const downloaderId = (row.downloaderId || row.downloaderIds?.[0] || '').trim()
+  if (hashes.length === 0) {
+    ElMessage.warning('当前种子缺少 hash，无法更改位置')
+    return
+  }
+  if (!downloaderId) {
+    ElMessage.warning('当前种子未关联下载器，无法更改位置')
+    return
+  }
+  if (!newPath) {
+    ElMessage.warning('请输入新的保存路径')
+    return
+  }
+  if (newPath === row.save_path) {
+    ElMessage.warning('新路径与当前路径相同')
+    return
+  }
+
+  changingLocation.value = true
+  try {
+    const response = await axios.post('/api/migrate/set_torrent_location', {
+      downloader_id: downloaderId,
+      hashes,
+      new_path: newPath,
+    })
+    const result = response.data as { success?: boolean; message?: string; error?: string; moved_count?: number }
+    if (result.success) {
+      ElMessage.success(result.message || '保存位置已更改')
+      changeLocationDialogVisible.value = false
+      await fetchData()
+    } else {
+      ElMessage.error(result.message || result.error || '更改保存位置失败')
+    }
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string; error?: string } | undefined)?.message ||
+        (error.response?.data as { error?: string } | undefined)?.error ||
+        error.message)
+      : error instanceof Error
+        ? error.message
+        : '网络错误'
+    ElMessage.error(message)
+  } finally {
+    changingLocation.value = false
   }
 }
 
@@ -3802,6 +3956,30 @@ watch(visibleColumns, () => {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 20px;
+}
+
+/* 更改保存位置弹窗 */
+.change-location-body {
+  padding: 20px;
+}
+
+.change-location-body p {
+  margin: 10px 0;
+}
+
+.change-location-body .label {
+  font-weight: bold;
+}
+
+.change-location-body .input-hint {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 5px;
+  line-height: 1.4;
+}
+
+.location-path-select {
+  width: 100%;
 }
 
 /* 顶部「媒介 / 类型 / 地区」筛选下拉 */

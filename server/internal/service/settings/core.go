@@ -157,6 +157,9 @@ func (s *SettingsService) DownloadersList(enabledOnly bool) []map[string]any {
 			"enabled": enabled,
 			"color":   toString(downloader["color"], ""),
 		}
+		if paths := downloaderCommonPaths(downloader); len(paths) > 0 {
+			item["common_paths"] = paths
+		}
 		if enabledOnly {
 			delete(item, "enabled")
 		}
@@ -210,6 +213,25 @@ func (s *SettingsService) DownloaderConfigs() []map[string]any {
 			"use_proxy":  toBool(downloader["use_proxy"], false),
 			"proxy_port": toIntWithDefault(downloader["proxy_port"], 9090),
 		})
+	}
+	return result
+}
+
+// downloaderCommonPaths 提取单个下载器的「常用保存路径」列表（去空去重）。
+func downloaderCommonPaths(downloader map[string]any) []string {
+	raw := downloader["common_paths"]
+	seen := map[string]struct{}{}
+	result := make([]string, 0)
+	for _, item := range toSlice(raw) {
+		path := strings.TrimSpace(toString(item, ""))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		result = append(result, path)
 	}
 	return result
 }
