@@ -18,6 +18,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/service/colaptapi"
 	"github.com/pt-nexus/server/internal/service/mteamapi"
 )
 
@@ -117,6 +118,16 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		detailURL = buildDetailURL(baseURL, siteCode, trimmedID)
 	}
 	logx.Infof(sourceDownloadLogModule, "详情页地址已确定 source_site=%s torrent_id=%s detail_url=%s", siteName, trimmedID, detailURL)
+
+	// 可乐PT 是纯 SPA + 自研 JSON API：详情页里既没有下载链接也没有可解析字段，
+	// 下载必须先用 API Key 申请下载授权，再按授权 ID 拉 .torrent，因此完全跳过候选链接流程。
+	if colaptapi.IsSite(siteCode, baseURL, detailURL) {
+		body, apiErr := downloadColaptTorrent(baseURL, passkey, cookie, trimmedID, siteName)
+		if apiErr != nil {
+			return "", detailURL, nil, apiErr
+		}
+		return persistTorrentFile(siteCode, trimmedID, detailURL, siteName, body)
+	}
 
 	// YemaPT 为 UmiJS SPA + 自研 REST API：详情页是前端 hash 路由，
 	// 无法通过静态 HTML 解析下载链接，需先换取 token 再拼接 download1 直链。
@@ -229,20 +240,56 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		return "", detailURL, nil, lastErr
 	}
 
+	return persistTorrentFile(siteCode, trimmedID, detailURL, siteName, torrentBytes)
+}
+
+// persistTorrentFile 把下载到的种子写入运行期临时目录并返回统一结果。
+// 参数/返回：siteCode 为站点代码（用于文件名），torrentID 为用户输入的种子标识，detailURL 为详情页地址，
+// siteName 为站点昵称（仅日志），body 为种子二进制；返回文件路径、详情页地址、种子内容与错误。
+// 失败场景：创建目录或写文件失败。
+// 副作用：在 data/tmp/torrents 写入临时文件。
+func persistTorrentFile(siteCode, torrentID, detailURL, siteName string, body []byte) (string, string, []byte, error) {
 	paths := config.ResolveRuntimePaths()
 	torrentDir := filepath.Join(paths.DataDir, "tmp", "torrents")
 	if err := os.MkdirAll(torrentDir, 0o755); err != nil {
-		logx.Errorf(sourceDownloadLogModule, "创建临时目录失败 source_site=%s torrent_id=%s dir=%s err=%v", siteName, trimmedID, torrentDir, err)
+		logx.Errorf(sourceDownloadLogModule, "创建临时目录失败 source_site=%s torrent_id=%s dir=%s err=%v", siteName, torrentID, torrentDir, err)
 		return "", detailURL, nil, err
 	}
-	fileName := fmt.Sprintf("%s-%s-%d.torrent", sanitizeTorrentFilePart(siteCode), sanitizeTorrentFilePart(trimmedID), time.Now().UnixNano())
+	fileName := fmt.Sprintf("%s-%s-%d.torrent", sanitizeTorrentFilePart(siteCode), sanitizeTorrentFilePart(torrentID), time.Now().UnixNano())
 	torrentPath := filepath.Join(torrentDir, fileName)
-	if err := os.WriteFile(torrentPath, torrentBytes, 0o644); err != nil {
-		logx.Errorf(sourceDownloadLogModule, "写入临时种子失败 source_site=%s torrent_id=%s torrent_path=%s err=%v", siteName, trimmedID, torrentPath, err)
+	if err := os.WriteFile(torrentPath, body, 0o644); err != nil {
+		logx.Errorf(sourceDownloadLogModule, "写入临时种子失败 source_site=%s torrent_id=%s torrent_path=%s err=%v", siteName, torrentID, torrentPath, err)
 		return "", detailURL, nil, err
 	}
-	logx.Infof(sourceDownloadLogModule, "下载流程完成 source_site=%s torrent_id=%s torrent_path=%s detail_url=%s", siteName, trimmedID, torrentPath, detailURL)
-	return torrentPath, detailURL, torrentBytes, nil
+	logx.Infof(sourceDownloadLogModule, "下载流程完成 source_site=%s torrent_id=%s torrent_path=%s detail_url=%s", siteName, torrentID, torrentPath, detailURL)
+	return torrentPath, detailURL, body, nil
+}
+
+// downloadColaptTorrent 通过可乐PT 的 JSON API 下载种子。
+// 流程：POST .../authorizations 取授权 → GET .../download?authorization_id=。
+// 参数/返回：baseURL 为站点根地址，passkey 为站点 API Key，cookie 为浏览器登录态（Key 缺失时兜底），
+// torrentID 为用户输入的种子标识，siteName 仅用于日志；返回 .torrent 原始内容。
+// 失败场景：缺少凭据、种子 ID 非法、站点拒绝（未过审/禁止下载/授权作废）。
+// 副作用：发起 2~3 次 HTTP 请求，站点侧会记录一次下载授权。
+func downloadColaptTorrent(baseURL, passkey, cookie, torrentID, siteName string) ([]byte, error) {
+	client, err := colaptapi.NewClientWithAuth(baseURL, passkey, cookie)
+	if err != nil {
+		logx.Warnf(sourceDownloadLogModule, "可乐站缺少凭据 source_site=%s torrent_id=%s", siteName, torrentID)
+		return nil, errors.New("可乐站缺少凭据：请在站点设置填 API 密钥（Passkey 栏，需 torrent.upload 权限），或在 Cookie 栏粘贴浏览器登录后的 /api/v1 请求 Cookie")
+	}
+	logx.Infof(sourceDownloadLogModule, "可乐站下载鉴权模式 source_site=%s torrent_id=%s mode=%s", siteName, torrentID, client.AuthMode())
+	body, err := client.DownloadTorrent(torrentID)
+	if err != nil {
+		logx.Warnf(sourceDownloadLogModule, "可乐站 API 下载失败 source_site=%s torrent_id=%s err=%v", siteName, torrentID, err)
+		return nil, err
+	}
+	if !isLikelyTorrent(body) {
+		logx.Warnf(sourceDownloadLogModule, "可乐站返回内容不是 torrent source_site=%s torrent_id=%s bytes=%d resp=%s",
+			siteName, torrentID, len(body), mteamapi.BodySnippet(body))
+		return nil, fmt.Errorf("可乐站返回内容不是 torrent 文件（%d 字节）", len(body))
+	}
+	logx.Infof(sourceDownloadLogModule, "可乐站 API 下载成功 source_site=%s torrent_id=%s bytes=%d", siteName, torrentID, len(body))
+	return body, nil
 }
 
 // NormalizeSiteBaseURL 规范化站点根地址。
@@ -556,6 +603,15 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 			return fmt.Sprintf("%s/#/torrent/detail/%s", strings.TrimRight(baseURL, "/"), id)
 		}
 	}
+	// 可乐PT: 详情页为 SPA 路由 /torrents/{id}，不是 NexusPHP 的 details.php?id=
+	if colaptapi.IsSite(siteCode, baseURL, trimmed) {
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+		if id := colaptapi.ExtractTorrentID(trimmed); id != "" {
+			return colaptapi.DetailURL(baseURL, id)
+		}
+	}
 	// M-Team: 详情页为 SPA 路径 /detail/{id}，不是 NexusPHP 的 details.php?id=
 	if isMTeamSource(siteCode, baseURL, trimmed) {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
@@ -595,6 +651,10 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 	// YemaPT 与 M-Team 的直链都必须先调各自接口换取，
 	// 不走 NexusPHP 的 download.php 形式，避免生成无效候选。
 	if isYemaPTSource(siteCode, baseURL, detailURL) || isMTeamSource(siteCode, baseURL, detailURL) {
+		return ""
+	}
+	// 可乐PT 没有 download.php，直链必须先用 API Key 申请下载授权
+	if colaptapi.IsSite(siteCode, baseURL, detailURL) {
 		return ""
 	}
 	trimmedPasskey := strings.TrimSpace(passkey)

@@ -569,7 +569,13 @@
             v-model="siteForm.cookie"
             type="textarea"
             :rows="3"
-            :placeholder="siteForm.site === 'rousi' ? '无需设置' : '从浏览器获取的Cookie字符串'"
+            :placeholder="
+              siteForm.site === 'rousi'
+                ? '无需设置'
+                : siteForm.site === 'colapt'
+                  ? '浏览器 F12 → Network → Fetch/XHR 里复制任意 /api/v1 请求的完整 Cookie（必须含 reelcore_session=，只有 reelcore_session_marker 是无效的）'
+                  : '从浏览器获取的Cookie字符串'
+            "
             :disabled="siteForm.site === 'rousi'"
           ></el-input>
         </el-form-item>
@@ -596,9 +602,10 @@
             class="form-tip"
             style="color: #409eff; font-weight: bold"
           >
-            可乐PT 是自研 API 站（不是 NexusPHP，网页 Cookie 用不上）：这里要填「API
-            密钥」，到站点 账号 → API 密钥 生成一把带 torrent.upload
-            权限的永久 Key。生成前账号需先获得「自动发种」资格，否则站点会拒绝签发。
+            可乐PT 是自研 API 站（不是 NexusPHP）：抓取源站数据靠上面的 Cookie，发种靠这里的「API
+            密钥」。Key 要到站点 账号 → API 密钥 生成，且账号必须先拿到「自动发种」资格，
+            否则 Key 的权限为空、连上传都会被回 403 api_key_scope_denied（契约里 Key 只有
+            torrent.upload 与 mtorrent.compat 两种权限，没有任何读取权限）。
           </div>
           <div
             v-else-if="siteForm.site === 'm-team'"
@@ -1408,8 +1415,8 @@ const isSiteConfigComplete = (site: SiteConfig) => {
   const hasPasskey = Boolean(site?.has_passkey)
   // 与 Passkey 列展示规则保持一致：大多数站点自动获取，仅少数站点需要手动配置
   const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(site?.site)
-  // 肉丝、可乐PT 不走 Cookie：肉丝用 passkey，可乐PT 用 API Key
-  const needsCookie = site?.site !== 'rousi' && site?.site !== 'colapt'
+  // 肉丝不走 Cookie；可乐PT 两样都要：Cookie 用来抓源站数据，API Key 用来发种
+  const needsCookie = site?.site !== 'rousi'
   return (!needsCookie || hasCookie) && (!needsPasskey || hasPasskey)
 }
 

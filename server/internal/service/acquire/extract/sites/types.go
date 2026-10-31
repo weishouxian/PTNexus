@@ -39,11 +39,13 @@ type SeedData struct {
 }
 
 // Input 表示站点提取器输入上下文。
+// Passkey 仅 API 型站点（如可乐PT，用它当 API Key）使用；Cookie 型站点保持为空。
 type Input struct {
 	SiteCode      string
 	SiteNickname  string
 	BaseURL       string
 	Cookie        string
+	Passkey       string
 	TorrentID     string
 	PageHTML      string
 	FallbackTitle string

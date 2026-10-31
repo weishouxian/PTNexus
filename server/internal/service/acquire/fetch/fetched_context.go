@@ -3,6 +3,8 @@ package fetch
 import (
 	"strings"
 	"time"
+
+	"github.com/pt-nexus/server/internal/service/colaptapi"
 )
 
 // CurrentTorrentLookupRepo 定义抓取后上下文补全所需的最小仓储接口。
@@ -84,6 +86,11 @@ func EnrichFetchedContext(repo CurrentTorrentLookupRepo, input EnrichFetchedCont
 	detailHTML := ""
 	var detailFetchError error
 	detailURL := strings.TrimSpace(input.DetailURL)
+	// 可乐PT 是纯 SPA：详情页未登录会 302 到 /login，抓回来的是登录页壳子，
+	// 解析不出任何字段，字段改由站点 API 提取器负责，这里直接跳过省一次请求。
+	if detailURL != "" && colaptapi.IsSite(siteIdentifier, toStringAny(input.SourceInfo["base_url"], ""), detailURL) {
+		detailURL = ""
+	}
 	if detailURL != "" {
 		timeout := input.DetailTimeout
 		if timeout <= 0 {

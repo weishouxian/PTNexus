@@ -113,6 +113,7 @@ func buildSiteRuntimeForExtractors(public Extractor) sites.Runtime {
 				SiteNickname:  input.SiteNickname,
 				BaseURL:       input.BaseURL,
 				Cookie:        input.Cookie,
+				Passkey:       input.Passkey,
 				TorrentID:     input.TorrentID,
 				PageHTML:      input.PageHTML,
 				FallbackTitle: input.FallbackTitle,

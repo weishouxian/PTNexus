@@ -1441,9 +1441,9 @@
     "nickname": "可乐",
     "base_url": "www.colapt.com",
     "special_tracker_domain": null,
-    "group": null,
+    "group": "-COLAWEB",
     "description": "ColaPT",
-    "migration": 2,
+    "migration": 3,
     "speed_limit": 50
   }
 ]

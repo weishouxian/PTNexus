@@ -99,12 +99,19 @@ func NewDStudioSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory)
 	return newDelegatedSiteExtractor("dstudio_special", public, runtimeFactory, sites.ExtractDStudio)
 }
 
+// NewColaptSpecialExtractor 创建可乐PT 提取器。
+// 说明：站点是纯 SPA + JSON API，提取器忽略 PageHTML，直接用 API Key 读接口。
+func NewColaptSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory) Extractor {
+	return newDelegatedSiteExtractor("colapt_special", public, runtimeFactory, sites.ExtractColapt)
+}
+
 func toSiteInput(input Input) sites.Input {
 	return sites.Input{
 		SiteCode:      input.SiteCode,
 		SiteNickname:  input.SiteNickname,
 		BaseURL:       input.BaseURL,
 		Cookie:        input.Cookie,
+		Passkey:       input.Passkey,
 		TorrentID:     input.TorrentID,
 		PageHTML:      input.PageHTML,
 		FallbackTitle: input.FallbackTitle,

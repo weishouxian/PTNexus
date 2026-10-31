@@ -378,3 +378,202 @@ func TestColaptTruncateUTF8(t *testing.T) {
 		t.Fatalf("截断结果不符: %q", got)
 	}
 }
+
+// TestPublishColaptFallsBackToSessionWhenKeyDenied 验证 API Key 被站点拒绝时自动改用 Cookie 会话重走一遍。
+// 场景依据（2026-10-31 实测）：账号未获「自动发种」资格时 Key 的 scopes 为空，
+// 连 POST /automation/torrents 都回 403 api_key_scope_denied；而账号本身有 torrent.upload 权限，
+// 换网页版 /api/v1/torrents 通道（Cookie + CSRF）即可发种。此时站点侧还没建草稿，切换是安全的。
+func TestPublishColaptFallsBackToSessionWhenKeyDenied(t *testing.T) {
+	var (
+		keyUploadCount int
+		sessionUpload  struct {
+			cookie         string
+			csrf           string
+			idempotencyKey string
+			contentType    string
+			origin         string
+		}
+		metadataCSRF string
+		submitCSRF   string
+	)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/automation/torrents":
+			keyUploadCount++
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":{"code":"api_key_scope_denied","message":"api_key_scope_denied","fields":{},"request_id":"r1"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/me":
+			_, _ = w.Write([]byte(`{"id":101,"username":"u","session":{"csrf_token":"tok-1","expires_at":"2026-11-07T05:11:24Z"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents":
+			_, _ = io.ReadAll(r.Body)
+			sessionUpload.cookie = r.Header.Get("Cookie")
+			sessionUpload.csrf = r.Header.Get("X-CSRF-Token")
+			sessionUpload.idempotencyKey = r.Header.Get("Idempotency-Key")
+			sessionUpload.contentType = r.Header.Get("Content-Type")
+			sessionUpload.origin = r.Header.Get("Origin")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":321,"revision":1,"info_hash":"h","publication_stage":"draft"}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/torrents/321/metadata":
+			metadataCSRF = r.Header.Get("X-CSRF-Token")
+			_, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"id":321,"revision":2}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/torrents/321":
+			_, _ = w.Write([]byte(`{"id":321,"revision":2,"warnings":[]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents/321/submit":
+			submitCSRF = r.Header.Get("X-CSRF-Token")
+			_, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"id":321,"status":"approved","revision":3,"publication_stage":"published"}`))
+		default:
+			t.Errorf("未预期的请求: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	torrentPath := filepath.Join(t.TempDir(), "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d8:announce4:http4:infod4:name1:aee"), 0o600); err != nil {
+		t.Fatalf("写入测试种子失败: %v", err)
+	}
+
+	input := colaptTestInput(srv.URL, torrentPath)
+	input.Cookie = "reelcore_session=abcdef; reelcore_session_marker=1"
+
+	result, err := PublishColapt(input)
+	if err != nil {
+		t.Fatalf("降级到会话通道后仍失败: %v\n日志:\n%s", err, result.AttemptDetailLog)
+	}
+	if keyUploadCount != 1 {
+		t.Errorf("应先尝试一次 API Key 通道，实际 %d 次", keyUploadCount)
+	}
+	if sessionUpload.cookie == "" || !strings.Contains(sessionUpload.cookie, "reelcore_session=abcdef") {
+		t.Errorf("会话上传未带 Cookie: %q", sessionUpload.cookie)
+	}
+	if sessionUpload.csrf != "tok-1" || metadataCSRF != "tok-1" || submitCSRF != "tok-1" {
+		t.Errorf("写请求未统一带 CSRF: upload=%q metadata=%q submit=%q", sessionUpload.csrf, metadataCSRF, submitCSRF)
+	}
+	if sessionUpload.contentType != "application/x-bittorrent" {
+		t.Errorf("会话上传 Content-Type 应为 application/x-bittorrent，实际=%q", sessionUpload.contentType)
+	}
+	if len(sessionUpload.idempotencyKey) < 16 {
+		t.Errorf("会话上传缺少幂等键: %q", sessionUpload.idempotencyKey)
+	}
+	if sessionUpload.origin == "" {
+		t.Error("会话写请求缺少 Origin 头")
+	}
+	if !strings.HasSuffix(result.PublishURL, "/torrents/321") {
+		t.Errorf("详情页地址不对: %s", result.PublishURL)
+	}
+	if !strings.Contains(result.AttemptDetailLog, "已自动降级") {
+		t.Errorf("日志未记录降级过程:\n%s", result.AttemptDetailLog)
+	}
+}
+
+// TestPublishColaptSessionOnlySkipsKeyChannel 验证只配了 Cookie 时直接走会话通道，不发多余的 Key 请求。
+func TestPublishColaptSessionOnlySkipsKeyChannel(t *testing.T) {
+	keyHits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/automation"):
+			keyHits++
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error":{"code":"api_key_required","message":"api_key_required"}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/me":
+			_, _ = w.Write([]byte(`{"session":{"csrf_token":"tok-2"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents":
+			_, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":7,"revision":1}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/torrents/7/metadata":
+			_, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"id":7,"revision":2}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/torrents/7":
+			_, _ = w.Write([]byte(`{"id":7,"revision":2}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents/7/submit":
+			_, _ = io.ReadAll(r.Body)
+			_, _ = w.Write([]byte(`{"id":7,"publication_stage":"published","status":"approved"}`))
+		default:
+			t.Errorf("未预期的请求: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	torrentPath := filepath.Join(t.TempDir(), "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d4:infod4:name1:aee"), 0o600); err != nil {
+		t.Fatalf("写入测试种子失败: %v", err)
+	}
+
+	input := colaptTestInput(srv.URL, torrentPath)
+	input.TargetInfo = map[string]any{"site": "colapt"}
+	input.Cookie = "reelcore_session=xyz"
+
+	result, err := PublishColapt(input)
+	if err != nil {
+		t.Fatalf("会话通道发布失败: %v\n日志:\n%s", err, result.AttemptDetailLog)
+	}
+	if keyHits != 0 {
+		t.Errorf("只配 Cookie 时不应请求 automation 接口，实际 %d 次", keyHits)
+	}
+	if !strings.Contains(result.AttemptDetailLog, "Cookie 会话") {
+		t.Errorf("日志未标注使用会话凭据:\n%s", result.AttemptDetailLog)
+	}
+}
+
+// TestPublishColaptRefreshesCSRFOnForbidden 验证会话通道遇到 403 时刷新 CSRF 并重放一次请求。
+func TestPublishColaptRefreshesCSRFOnForbidden(t *testing.T) {
+	meCalls := 0
+	uploadCalls := 0
+	csrfSeen := []string{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/me":
+			meCalls++
+			token := "tok-old"
+			if meCalls > 1 {
+				token = "tok-new"
+			}
+			_, _ = w.Write([]byte(`{"session":{"csrf_token":"` + token + `"}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents":
+			uploadCalls++
+			csrfSeen = append(csrfSeen, r.Header.Get("X-CSRF-Token"))
+			if uploadCalls == 1 {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"error":{"code":"csrf_token_invalid","message":"csrf"}}`))
+				return
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":9,"revision":1}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/api/v1/torrents/9/metadata":
+			_, _ = w.Write([]byte(`{"id":9,"revision":2}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/torrents/9":
+			_, _ = w.Write([]byte(`{"id":9,"revision":2}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/torrents/9/submit":
+			_, _ = w.Write([]byte(`{"id":9,"publication_stage":"published"}`))
+		default:
+			t.Errorf("未预期的请求: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	torrentPath := filepath.Join(t.TempDir(), "test.torrent")
+	if err := os.WriteFile(torrentPath, []byte("d4:infod4:name1:aee"), 0o600); err != nil {
+		t.Fatalf("写入测试种子失败: %v", err)
+	}
+
+	input := colaptTestInput(srv.URL, torrentPath)
+	input.TargetInfo = map[string]any{"site": "colapt"}
+	input.Cookie = "reelcore_session=xyz"
+
+	if _, err := PublishColapt(input); err != nil {
+		t.Fatalf("CSRF 刷新后仍失败: %v", err)
+	}
+	if meCalls != 2 {
+		t.Errorf("CSRF 应刷新一次（共请求 /me 两次），实际 %d", meCalls)
+	}
+	if len(csrfSeen) != 2 || csrfSeen[0] != "tok-old" || csrfSeen[1] != "tok-new" {
+		t.Errorf("重放未使用新 CSRF 令牌: %v", csrfSeen)
+	}
+}

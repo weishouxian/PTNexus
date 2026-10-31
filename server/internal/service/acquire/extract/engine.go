@@ -56,6 +56,8 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 	hddolbyExtractor := NewHDDolbySpecialExtractor(publicExtractor, runtimeFactory)
 	hdvideoExtractor := NewHDVideoSpecialExtractor(publicExtractor, runtimeFactory)
 	dstudioExtractor := NewDStudioSpecialExtractor(publicExtractor, runtimeFactory)
+	// 可乐PT 是纯 SPA + JSON API 站，提取器直接用站点 API Key 读接口（不看 PageHTML）。
+	colaptExtractor := NewColaptSpecialExtractor(publicExtractor, runtimeFactory)
 
 	return NewEngine(
 		publicExtractor,
@@ -71,6 +73,8 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"hdvideo":   hdvideoExtractor,
 			"ds":        dstudioExtractor,
 			"dstudio":   dstudioExtractor,
+			"colapt":    colaptExtractor,
+			"cola":      colaptExtractor,
 		},
 		map[string]Extractor{
 			"不可说":          ssdExtractor,
@@ -86,6 +90,7 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"屌丝":           dstudioExtractor,
 			"dstudio":      dstudioExtractor,
 			"Depth Studio": dstudioExtractor,
+			"可乐":           colaptExtractor,
 		},
 	)
 }

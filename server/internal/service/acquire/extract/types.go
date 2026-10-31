@@ -43,11 +43,13 @@ type Meta struct {
 
 // Input 表示提取器执行上下文。
 // 与 Python 版一致，特殊提取器可按需使用 base_url/cookie/torrent_id 等信息。
+// Passkey 供 API 型站点（如可乐PT，用站点 API Key 读接口）使用。
 type Input struct {
 	SiteCode      string
 	SiteNickname  string
 	BaseURL       string
 	Cookie        string
+	Passkey       string
 	TorrentID     string
 	PageHTML      string
 	FallbackTitle string

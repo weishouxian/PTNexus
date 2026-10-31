@@ -4,12 +4,20 @@
 #    站点形态（实测 2026-10-22）：
 #      - 前端是 Vite 打包的纯 SPA（/upload 等页面全部走 hash 之外的 history 路由，未登录直接跳 /login），
 #        没有任何 upload.php / takeupload.php 表单，通用 NexusPHP 发布器（PublishPublic）完全用不上。
-#      - 后端是自研 JSON API：统一前缀 /api/v1，契约版本 17.55.0（内嵌 openapi 3.4.0 描述），
+#      - 后端是自研 JSON API：统一前缀 /api/v1，契约版本 17.75.4（内嵌 openapi 3.4.0 描述），
 #        错误体统一为 {"error":{"code","message","fields","request_id"}}。
-#      - 鉴权有两种：浏览器 Cookie（reelcore_session）与账号级永久 API Key（请求头 X-API-Key）。
-#        PTNexus 用后者 —— 不带 Cookie、不登录、不需要通过浏览器端的自托管工作量证明验证码。
-#        该 Key 必须带 torrent.upload scope（站点 /account/api-keys 生成，且账号需先获得「自动发种」资格，
-#        否则建 Key 时返回 403 scope_not_granted）。填到 PTNexus 站点的「Passkey」或「Cookie」栏即可。
+#      - 鉴权有两种，用途不同、不能互相替代（实测 2026-10-31）：
+#          a) 浏览器 Cookie：reelcore_session=<64 位 hex>，走网页版 /api/v1/torrents/*，只要账号是成员就能读。
+#             ⚠️ 只有 reelcore_session_marker 是设备标记，不带身份，单发它一律 401 authentication_required。
+#          b) API Key：请求头 X-API-Key，走 /api/v1/automation/*，用于发种（上传/写元数据/提交）。
+#             契约里 ApiKey.scopes 的枚举只有 torrent.upload 与 mtorrent.compat，没有任何读权限；
+#             账号未获「自动发种」资格时 scopes 为空，连上传都回 403 api_key_scope_denied。
+#        ⇒ PTNexus 的分工：抓源站数据用 Cookie（站点设置 Cookie 栏），发种用 API Key（Passkey 栏）。
+#          Key 被站点拒（403 api_key_scope_denied）时发种会自动降级用同一个 Cookie 走网页版
+#          /api/v1/torrents（去掉 /automation 段），只需账号有 torrent.upload 权限——
+#          实测 2026-10-31：带 CSRF 向该端点 POST 垃圾内容返回 400 invalid_torrent（而非 401/403），
+#          说明会话通道有写权限；账号的 /me/automation-access 为 eligible=false、
+#          reason="管理员尚未开放自助申请。"，故 Key 通道在站方授权前不可用。
 #      - 发种是「三段式」而不是一次表单提交：
 #          1) POST /api/v1/automation/torrents                     上传 .torrent（body 直接是种子二进制）→ 得到草稿 id/revision
 #          2) PUT  /api/v1/automation/torrents/{id}/metadata       写字段（JSON，带 expected_revision 做乐观锁）

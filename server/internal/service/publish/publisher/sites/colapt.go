@@ -2,7 +2,10 @@ package sites
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -119,6 +122,44 @@ type colaptHTTPResult struct {
 	Body   []byte
 }
 
+// colaptAuth 描述一次发布使用的凭据。
+//
+// 站点有两条互不相通的写通道（2026-10-31 实测）：
+//   - API Key：请求头 X-API-Key，路径 /api/v1/automation/*；需账号先获得「自动发种」资格，
+//     否则 scopes 为空，上传直接 403 api_key_scope_denied。
+//   - 浏览器会话：Cookie 里的 reelcore_session，路径去掉 /automation 段走网页版，
+//     写操作额外要 X-CSRF-Token（GET /api/v1/me 的 session.csrf_token）与幂等键。
+//
+// 会话通道只要账号有 torrent.upload 权限就能用，因此 Key 被拒时自动降级到它。
+type colaptAuth struct {
+	APIKey  string
+	Cookie  string
+	Session bool
+	// Origin 是会话模式写操作要求的同源头。
+	Origin string
+	// csrfToken 懒加载缓存，仅会话模式使用。
+	csrfToken string
+}
+
+// authRejection 表示「凭据不被站点接受」（Key 无权限、会话失效等），上层可据此切换通道重试。
+// 与普通业务失败区分开：这类失败在切换凭据后通常能成功，不该直接判为发布失败。
+type authRejection struct {
+	detail string
+}
+
+// Error 输出可直接给人看的原因。
+func (e *authRejection) Error() string { return e.detail }
+
+// colaptRequest 描述一次待发送的请求。
+// 保留原始字节而不是 io.Reader：CSRF 失效需要原样重放一次。
+type colaptRequest struct {
+	Method      string
+	URL         string
+	Body        []byte
+	ContentType string
+	Accept      string
+}
+
 // PublishColapt 执行可乐PT 站点发布流程（上传种子 → 写元数据 → 提交）。
 // 参数/返回：input 提供站点信息、发布数据与通用字段；返回发布详情页 URL 与发布过程日志。
 // 失败场景：缺少 API Key、读取种子失败、站点鉴权/资格不足、字段映射后仍被站点拒绝（含站点侧查重拒绝）。
@@ -130,16 +171,41 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 		return publisher.PublishResult{}, fmt.Errorf("可乐站发种缺少 base_url")
 	}
 
-	apiKey, keySource := resolveColaptAPIKey(input)
-	if apiKey == "" {
-		return publisher.PublishResult{}, fmt.Errorf(
-			"可乐站发种缺少 API Key：请到站点「账号 → API 密钥」生成一把带 torrent.upload 权限的 Key" +
-				"（生成前账号需先获得「自动发种」资格，否则站点会拒绝签发），然后填到 PTNexus 站点的 Passkey 或 Cookie 栏。" +
-				"注意：站点网页 Cookie 不是 API Key，填 Cookie 只会被站点回 api_key_required")
+	auth, source, authErr := resolveColaptAuth(input, base)
+	if authErr != nil {
+		return publisher.PublishResult{}, authErr
 	}
 
+	result, err := runColaptFlow(input, cfg, base, auth, source)
+	if err == nil {
+		return result, nil
+	}
+
+	// Key 通道被站点拒（多为账号还没有「自动发种」资格，scopes 为空）时自动改用浏览器会话重走一遍。
+	// 此时站点侧还没建任何草稿，重试是安全的。
+	var rejection *authRejection
+	if !auth.Session && errors.As(err, &rejection) {
+		if cookie := strings.TrimSpace(input.Cookie); cookie != "" {
+			retryAuth := &colaptAuth{Cookie: cookie, Session: true, Origin: colaptSiteOrigin(base)}
+			retryResult, retryErr := runColaptFlow(input, cfg, base, retryAuth,
+				"Cookie 会话（API Key 无权限，已自动降级）")
+			if retryErr == nil {
+				return retryResult, nil
+			}
+			return publisher.PublishResult{}, fmt.Errorf(
+				"API Key 通道失败：%s；改用 Cookie 会话上传也失败：%w", rejection.detail, retryErr)
+		}
+	}
+	return result, err
+}
+
+// runColaptFlow 用给定凭据执行一次完整发种流程（上传种子 → 写元数据 → 提交）。
+// 参数/返回：auth 决定走 /automation/* 还是网页版 /torrents/*；source 只用于日志标注凭据来源。
+// 失败场景：读取种子失败、站点鉴权被拒、字段被站点拒绝。
+// 副作用：向站点发起上传请求，成功后站点上新增一条种子（可能进入审核队列）。
+func runColaptFlow(input publisher.PublishInput, cfg colaptConfig, base string, auth *colaptAuth, source string) (publisher.PublishResult, error) {
 	logs := []string{
-		fmt.Sprintf("--- [可乐PT] 使用 %s 鉴权（指纹 %s）---", keySource, colaptFingerprint(apiKey)),
+		fmt.Sprintf("--- [可乐PT] 使用 %s 鉴权（指纹 %s）---", source, colaptFingerprint(auth.fingerprintValue())),
 	}
 
 	// 对齐 PublishPublic：UPLOAD_TEST_MODE=true 时跳过真实发种，返回模拟成功。
@@ -167,8 +233,8 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 	client := &http.Client{Timeout: 180 * time.Second}
 
 	// 步骤 1：上传种子，得到草稿 id 与 revision。
-	uploadURL := strings.TrimRight(base, "/") + cfg.UploadPath
-	created, err := colaptUploadTorrent(client, uploadURL, cfg, apiKey, torrentBytes)
+	uploadURL := strings.TrimRight(base, "/") + auth.resolvePath(cfg.UploadPath)
+	created, err := colaptUploadTorrent(client, uploadURL, cfg, auth, torrentBytes)
 	if err != nil {
 		return publisher.PublishResult{AttemptDetailLog: strings.Join(logs, "\n")}, err
 	}
@@ -186,8 +252,8 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 	logs = append(logs, metaLogs...)
 	metadata["expected_revision"] = revision
 
-	metadataURL := strings.ReplaceAll(strings.TrimRight(base, "/")+cfg.MetadataPath, "{id}", strconv.FormatInt(torrentID, 10))
-	result, err := colaptDoJSON(client, http.MethodPut, metadataURL, cfg, apiKey, metadata)
+	metadataURL := strings.ReplaceAll(strings.TrimRight(base, "/")+auth.resolvePath(cfg.MetadataPath), "{id}", strconv.FormatInt(torrentID, 10))
+	result, err := colaptDoJSON(client, http.MethodPut, metadataURL, cfg, auth, metadata)
 	if err != nil {
 		return publisher.PublishResult{AttemptDetailLog: strings.Join(logs, "\n")}, err
 	}
@@ -199,7 +265,7 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 	logs = append(logs, "步骤2 写元数据成功")
 
 	// 写元数据会推高 revision，提交前重新读一次，避免乐观锁冲突。
-	latest, err := colaptFetchTorrent(client, base, cfg, apiKey, torrentID)
+	latest, err := colaptFetchTorrent(client, base, cfg, auth, torrentID)
 	if err != nil {
 		return publisher.PublishResult{AttemptDetailLog: strings.Join(logs, "\n")}, err
 	}
@@ -210,8 +276,8 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 	}
 
 	// 步骤 3：提交（关联作品）。
-	submitURL := strings.ReplaceAll(strings.TrimRight(base, "/")+cfg.SubmitPath, "{id}", strconv.FormatInt(torrentID, 10))
-	submission, submitLogs, err := colaptSubmit(client, submitURL, cfg, apiKey, torrentID, revision, input)
+	submitURL := strings.ReplaceAll(strings.TrimRight(base, "/")+auth.resolvePath(cfg.SubmitPath), "{id}", strconv.FormatInt(torrentID, 10))
+	submission, submitLogs, err := colaptSubmit(client, submitURL, cfg, auth, torrentID, revision, input)
 	logs = append(logs, submitLogs...)
 	if err != nil {
 		return publisher.PublishResult{AttemptDetailLog: strings.Join(logs, "\n")}, err
@@ -235,35 +301,31 @@ func PublishColapt(input publisher.PublishInput) (publisher.PublishResult, error
 }
 
 // colaptUploadTorrent 上传种子文件（body 直接是种子二进制），返回站点回传的草稿对象。
-func colaptUploadTorrent(client *http.Client, url string, cfg colaptConfig, apiKey string, torrentBytes []byte) (map[string]any, error) {
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(torrentBytes))
+func colaptUploadTorrent(client *http.Client, url string, cfg colaptConfig, auth *colaptAuth, torrentBytes []byte) (map[string]any, error) {
+	result, err := colaptSend(client, cfg, auth, colaptRequest{
+		Method:      http.MethodPost,
+		URL:         url,
+		Body:        torrentBytes,
+		ContentType: "application/x-bittorrent",
+		Accept:      "application/json",
+	})
 	if err != nil {
-		return nil, fmt.Errorf("构造可乐站上传请求失败: %w", err)
+		return nil, err
 	}
-	colaptApplyHeaders(req, cfg, apiKey)
-	req.Header.Set("Content-Type", "application/x-bittorrent")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("可乐站上传请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-
-	if resp.StatusCode >= 400 {
-		return nil, colaptErrorFromResponse(colaptHTTPResult{Status: resp.StatusCode, Body: body}, "上传种子")
+	if result.Status >= 400 {
+		return nil, colaptErrorFromResponse(result, "上传种子")
 	}
 	parsed := map[string]any{}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return nil, fmt.Errorf("可乐站上传响应不是合法 JSON: %s", summarizeResponseBody(string(body)))
+	if err := json.Unmarshal(result.Body, &parsed); err != nil {
+		return nil, fmt.Errorf("可乐站上传响应不是合法 JSON: %s", summarizeResponseBody(string(result.Body)))
 	}
 	return parsed, nil
 }
 
 // colaptFetchTorrent 读取种子当前状态（用于取最新 revision 与站点提示）。
-func colaptFetchTorrent(client *http.Client, base string, cfg colaptConfig, apiKey string, torrentID int64) (map[string]any, error) {
-	url := strings.ReplaceAll(strings.TrimRight(base, "/")+cfg.TorrentPath, "{id}", strconv.FormatInt(torrentID, 10))
-	result, err := colaptDoJSON(client, http.MethodGet, url, cfg, apiKey, nil)
+func colaptFetchTorrent(client *http.Client, base string, cfg colaptConfig, auth *colaptAuth, torrentID int64) (map[string]any, error) {
+	url := strings.ReplaceAll(strings.TrimRight(base, "/")+auth.resolvePath(cfg.TorrentPath), "{id}", strconv.FormatInt(torrentID, 10))
+	result, err := colaptDoJSON(client, http.MethodGet, url, cfg, auth, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +345,7 @@ func colaptSubmit(
 	client *http.Client,
 	url string,
 	cfg colaptConfig,
-	apiKey string,
+	auth *colaptAuth,
 	torrentID int64,
 	revision int64,
 	input publisher.PublishInput,
@@ -301,7 +363,7 @@ func colaptSubmit(
 		logs = append(logs, "步骤3 提交：没有可用的作品标识，随提交新建作品档案")
 	}
 
-	result, err := colaptDoJSON(client, http.MethodPost, url, cfg, apiKey, body)
+	result, err := colaptDoJSON(client, http.MethodPost, url, cfg, auth, body)
 	if err != nil {
 		return nil, logs, err
 	}
@@ -312,7 +374,7 @@ func colaptSubmit(
 			"expected_revision": revision,
 			"new_media":         colaptNewMedia(input, std, cfg),
 		}
-		result, err = colaptDoJSON(client, http.MethodPost, url, cfg, apiKey, body)
+		result, err = colaptDoJSON(client, http.MethodPost, url, cfg, auth, body)
 		if err != nil {
 			return nil, logs, err
 		}
@@ -846,62 +908,195 @@ func colaptStandardized(uploadData map[string]any) map[string]any {
 	return std
 }
 
-// resolveColaptAPIKey 解析站点 API Key：优先站点配置的 api_key，其次 Passkey 栏，最后 Cookie 栏。
-// 返回 Key 本体与来源描述（用于日志核对，避免把「填了 Cookie」这类误配写成鉴权失败）。
-func resolveColaptAPIKey(input publisher.PublishInput) (string, string) {
+// resolveColaptAuth 决定本次发布用哪条写通道。
+//
+// 规则：配了 API Key（站点配置 api_key 或 Passkey 栏）→ 先走 Key 通道（站点官方自动化入口，
+// 拿到「自动发种」资格后最稳）；只配了 Cookie → 直接走网页会话通道。
+// 返回值第二项是凭据来源描述，仅用于日志核对。
+func resolveColaptAuth(input publisher.PublishInput, base string) (*colaptAuth, string, error) {
 	candidates := []struct {
 		Source string
 		Value  string
 	}{
 		{Source: "站点配置 api_key", Value: toStringAny(input.TargetInfo["api_key"], "")},
-		{Source: "Passkey 栏", Value: toStringAny(input.TargetInfo["passkey"], "")},
-		{Source: "Cookie 栏", Value: input.Cookie},
+		{Source: "Passkey 栏 API Key", Value: toStringAny(input.TargetInfo["passkey"], "")},
 	}
 	for _, candidate := range candidates {
 		if value := strings.TrimSpace(candidate.Value); value != "" {
-			return value, candidate.Source
+			return &colaptAuth{APIKey: value}, candidate.Source, nil
 		}
 	}
-	return "", ""
+	if cookie := strings.TrimSpace(input.Cookie); cookie != "" {
+		return &colaptAuth{Cookie: cookie, Session: true, Origin: colaptSiteOrigin(base)}, "Cookie 会话", nil
+	}
+	return nil, "", fmt.Errorf(
+		"可乐站发种缺少凭据：请在站点 Cookie 栏粘贴浏览器登录后的 /api/v1 请求 Cookie" +
+			"（含 reelcore_session=，可直接发种）；或填 API Key（Passkey 栏，需账号已获「自动发种」资格）")
 }
 
-// colaptApplyHeaders 写入站点要求的公共请求头。
-func colaptApplyHeaders(req *http.Request, cfg colaptConfig, apiKey string) {
+// colaptSiteOrigin 返回站点同源地址（会话模式写操作必须带 Origin 头）。
+func colaptSiteOrigin(base string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(base), "/")
+	if index := strings.Index(trimmed, "/api/v1"); index > 0 {
+		return trimmed[:index]
+	}
+	return trimmed
+}
+
+// resolvePath 按通道改写接口路径：会话通道去掉 /automation 段，走网页版同名接口。
+func (a *colaptAuth) resolvePath(path string) string {
+	if a == nil || !a.Session {
+		return path
+	}
+	return strings.Replace(path, "/automation", "", 1)
+}
+
+// fingerprintValue 返回用于日志脱敏展示的凭据值。
+func (a *colaptAuth) fingerprintValue() string {
+	if a == nil {
+		return ""
+	}
+	if a.Session {
+		return a.Cookie
+	}
+	return a.APIKey
+}
+
+// applyHeaders 写入公共请求头；会话模式额外带 Cookie，写操作带 CSRF 与幂等键。
+func (a *colaptAuth) applyHeaders(req *http.Request, cfg colaptConfig, write bool) {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "PTNexus/1.0 (+https://github.com/weishouxian/PTNexus)")
+	if a == nil {
+		return
+	}
+	if a.Session {
+		req.Header.Set("Cookie", a.Cookie)
+		if origin := strings.TrimSpace(a.Origin); origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if write {
+			req.Header.Set("X-CSRF-Token", a.csrfToken)
+			req.Header.Set("Idempotency-Key", colaptIdempotencyKey())
+		}
+		return
+	}
 	header := strings.TrimSpace(cfg.APIKeyHeader)
 	if header == "" {
 		header = "X-API-Key"
 	}
-	req.Header.Set(header, apiKey)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "PTNexus/1.0 (+https://github.com/weishouxian/PTNexus)")
+	req.Header.Set(header, a.APIKey)
 }
 
-// colaptDoJSON 发起一次 JSON 请求并返回原始状态码与响应体（4xx/5xx 不当作传输错误）。
-func colaptDoJSON(client *http.Client, method string, url string, cfg colaptConfig, apiKey string, payload any) (colaptHTTPResult, error) {
-	var body io.Reader
-	if payload != nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			return colaptHTTPResult{}, fmt.Errorf("构造可乐站请求体失败: %w", err)
-		}
-		body = bytes.NewReader(encoded)
+// ensureCSRF 读取并缓存会话 CSRF 令牌（GET /api/v1/me 的 session.csrf_token）。
+// 参数/返回：client 为底层客户端；url 为站点 /api/v1/me 地址；force 为 true 时忽略缓存。
+// 失败场景：会话失效（401/403）、响应缺少 csrf_token。
+// 副作用：发起一次 HTTP 请求（仅首次或强制刷新时）。
+func (a *colaptAuth) ensureCSRF(client *http.Client, cfg colaptConfig, base string, force bool) error {
+	if a == nil || !a.Session {
+		return nil
 	}
-	req, err := http.NewRequest(method, url, body)
+	if !force && strings.TrimSpace(a.csrfToken) != "" {
+		return nil
+	}
+	result, err := colaptSend(client, cfg, &colaptAuth{Cookie: a.Cookie, Session: true, Origin: a.Origin}, colaptRequest{
+		Method: http.MethodGet,
+		URL:    strings.TrimRight(strings.TrimSpace(base), "/") + "/api/v1/me",
+		Accept: "application/json",
+	})
+	if err != nil {
+		return fmt.Errorf("读取可乐站会话信息失败: %w", err)
+	}
+	if result.Status >= 400 {
+		return fmt.Errorf("可乐站会话不可用（HTTP %d）：Cookie 可能已过期，请重新登录站点后复制 Cookie", result.Status)
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal(result.Body, &payload); err != nil {
+		return fmt.Errorf("可乐站会话信息解析失败: %s", summarizeResponseBody(string(result.Body)))
+	}
+	session, _ := payload["session"].(map[string]any)
+	token := strings.TrimSpace(toStringAny(session["csrf_token"], ""))
+	if token == "" {
+		return fmt.Errorf("可乐站会话未下发 csrf_token：Cookie 可能已失效")
+	}
+	a.csrfToken = token
+	return nil
+}
+
+// colaptSend 发送一次请求并返回状态码与响应体（4xx/5xx 不当作传输错误）。
+//
+// 会话模式下写操作依赖 CSRF：令牌在浏览器重登后会轮换，站点回 403 时刷新一次并原样重放，
+// 避免把「令牌过期」误报成发布失败。
+func colaptSend(client *http.Client, cfg colaptConfig, auth *colaptAuth, spec colaptRequest) (colaptHTTPResult, error) {
+	// 会话模式的写操作必须先拿到 CSRF 令牌（只在首次或刷新时发一次 /me）。
+	if auth != nil && auth.Session && spec.Method != http.MethodGet {
+		if err := auth.ensureCSRF(client, cfg, colaptOriginFromURL(spec.URL), false); err != nil {
+			return colaptHTTPResult{}, err
+		}
+	}
+	result, err := colaptSendOnce(client, cfg, auth, spec)
+	if err != nil {
+		return result, err
+	}
+	if auth == nil || !auth.Session || spec.Method == http.MethodGet || result.Status != http.StatusForbidden {
+		return result, nil
+	}
+	if refreshErr := auth.ensureCSRF(client, cfg, colaptOriginFromURL(spec.URL), true); refreshErr != nil {
+		return result, nil
+	}
+	return colaptSendOnce(client, cfg, auth, spec)
+}
+
+// colaptSendOnce 是 colaptSend 的单次实现（构造请求 → 写入头部 → 读响应）。
+func colaptSendOnce(client *http.Client, cfg colaptConfig, auth *colaptAuth, spec colaptRequest) (colaptHTTPResult, error) {
+	var body io.Reader
+	if len(spec.Body) > 0 {
+		body = bytes.NewReader(spec.Body)
+	}
+	req, err := http.NewRequest(spec.Method, spec.URL, body)
 	if err != nil {
 		return colaptHTTPResult{}, fmt.Errorf("构造可乐站请求失败: %w", err)
 	}
-	colaptApplyHeaders(req, cfg, apiKey)
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
+	auth.applyHeaders(req, cfg, spec.Method != http.MethodGet)
+	if spec.ContentType != "" {
+		req.Header.Set("Content-Type", spec.ContentType)
+	}
+	if spec.Accept != "" {
+		req.Header.Set("Accept", spec.Accept)
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return colaptHTTPResult{}, fmt.Errorf("可乐站请求失败（%s %s）: %w", method, url, err)
+		return colaptHTTPResult{}, fmt.Errorf("可乐站请求失败（%s %s）: %w", spec.Method, spec.URL, err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	return colaptHTTPResult{Status: resp.StatusCode, Body: raw}, nil
+}
+
+// colaptOriginFromURL 从接口地址反推站点同源地址（用于刷新 CSRF 时复用同一鉴权）。
+func colaptOriginFromURL(rawURL string) string {
+	if index := strings.Index(rawURL, "/api/v1"); index > 0 {
+		return rawURL[:index]
+	}
+	return rawURL
+}
+
+// colaptDoJSON 发起一次 JSON 请求并返回原始状态码与响应体（4xx/5xx 不当作传输错误）。
+func colaptDoJSON(client *http.Client, method string, url string, cfg colaptConfig, auth *colaptAuth, payload any) (colaptHTTPResult, error) {
+	var encoded []byte
+	if payload != nil {
+		marshaled, err := json.Marshal(payload)
+		if err != nil {
+			return colaptHTTPResult{}, fmt.Errorf("构造可乐站请求体失败: %w", err)
+		}
+		encoded = marshaled
+	}
+	// 会话模式的写操作由 colaptSend 统一补 CSRF 令牌。
+	request := colaptRequest{Method: method, URL: url, Body: encoded, Accept: "application/json"}
+	if len(encoded) > 0 {
+		request.ContentType = "application/json"
+	}
+	return colaptSend(client, cfg, auth, request)
 }
 
 // colaptErrorFromResponse 把站点错误体转成可读错误。
@@ -917,8 +1112,9 @@ func colaptErrorFromResponse(result colaptHTTPResult, stage string) error {
 	switch code {
 	case "dupe_lower_quality", "dupe_same_quality", "dupe_lower_resolution":
 		return publisher.NewPreCheckErrorWithDetail("可乐站查重拒绝："+message, detail)
-	case "api_key_required", "authentication_required", "permission_denied", "scope_not_granted":
-		return fmt.Errorf("%s（凭据无 torrent.upload 权限或账号未获得自动发种资格，请到站点核对 API Key）", detail)
+	case "api_key_required", "api_key_scope_denied", "authentication_required", "permission_denied", "scope_not_granted":
+		// 凭据被拒：上层会据此尝试换通道（Key → Cookie 会话）。
+		return &authRejection{detail: detail + "（凭据不被站点接受：API Key 需账号先获得「自动发种」资格，网页 Cookie 需包含 reelcore_session）"}
 	default:
 		return fmt.Errorf("%s", detail)
 	}
@@ -1027,6 +1223,17 @@ func colaptPick(mapping map[string]string, raw string, prefix string, fallback s
 		}
 	}
 	return fallback, false
+}
+
+// colaptIdempotencyKey 生成站点会话写操作要求的幂等键（16~128 个可见 ASCII 字符）。
+// 说明：站点用它区分「重放」与「新操作」，每次写请求都必须是新值。
+func colaptIdempotencyKey() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// 随机源不可用时退回时间戳，仍满足长度与字符集要求。
+		return strconv.FormatInt(time.Now().UnixNano(), 36) + "-ptnexus"
+	}
+	return hex.EncodeToString(buf)
 }
 
 // colaptFingerprint 生成 API Key 的脱敏指纹（只暴露前 6 位与长度），用于日志核对。

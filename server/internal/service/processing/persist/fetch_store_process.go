@@ -87,6 +87,7 @@ func RunFetchStoreProcess(input FetchStoreProcessInput, deps FetchStoreProcessDe
 		SiteNickname:  nickname,
 		BaseURL:       strings.TrimSpace(toStringAny(acquireResult.SourceInfo["base_url"], "")),
 		Cookie:        strings.TrimSpace(toStringAny(acquireResult.SourceInfo["cookie"], "")),
+		Passkey:       strings.TrimSpace(toStringAny(acquireResult.SourceInfo["passkey"], "")),
 		TorrentID:     input.SearchTerm,
 		PageHTML:      html,
 		FallbackTitle: strings.TrimSpace(torrentName),
