@@ -255,6 +255,12 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.11（2026.11.01）
+
+- 新增：下载器中已做种种子的「更改保存位置」——调用下载器接口把任务文件移动到新目录并自动恢复做种，支持 qBittorrent 与 Transmission
+- 新增：同一资源跨站点/跨下载器的种子改位置时一并移动（按 infohash 反查归属下载器分组处理），移动成功后回写本地保存路径
+- 新增：下载器设置支持「常用路径」预设，改位置弹窗可下拉选择预设路径，也可手动输入任意路径
+
 ### v4.0.10（2026.10.30）
 
 - 修复：HDR（含杜比视界）视频截图发灰发暗——根因是 mpv 已把 HDR 色调映射为 SDR 后，ffmpeg 又按残留的 HDR 色彩标签二次映射了一遍。现改为 mpv 关闭色彩标签写入并只做 PNG 压缩（HDR10/HLG），杜比视界单独走 ffmpeg libplacebo 从源视频直截，彻底消除双重映射
