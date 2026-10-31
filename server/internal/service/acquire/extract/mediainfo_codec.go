@@ -208,6 +208,39 @@ func AudioCodecKeyFromDisplayName(display string) string {
 	}
 }
 
+// audioCodecDisplayTokens 标准音频键（audio.*）→ 标题组件里的展示写法。
+// 与 processing/media:title_audio.go 的 audioStandardDisplayTokens 保持一致的口径，
+// 供「多音轨预生成标题」把选中的音轨编码键映射回展示 token（TrueHD / DTS:X / DTS-HD MA / DDP / DD / FLAC…）。
+var audioCodecDisplayTokens = map[string]string{
+	"audio.truehd":       "TrueHD",
+	"audio.truehd_atmos": "TrueHD Atmos",
+	"audio.dtsx":         "DTS:X",
+	"audio.dts_hd_ma":    "DTS-HD MA",
+	"audio.dts_hd_hr":    "DTS-HD HR",
+	"audio.dts":          "DTS",
+	"audio.ddp":          "DDP",
+	"audio.ddp_atmos":    "DDP Atmos",
+	"audio.ac3":          "DD",
+	"audio.flac":         "FLAC",
+	"audio.av3a":         "AV3A",
+	"audio.alac":         "ALAC",
+	"audio.ape":          "APE",
+	"audio.wav":          "WAV",
+	"audio.ogg":          "OGG",
+	"audio.dsd":          "DSD",
+	"audio.aac":          "AAC",
+	"audio.lpcm":         "LPCM",
+	"audio.opus":         "Opus",
+	"audio.mp3":          "MP3",
+}
+
+// AudioDisplayTokenFromCodecKey 把标准音频编码键（audio.*）映射为标题展示写法。
+// 参数/返回：codecKey 为标准音频键；未知键返回空串。
+// 副作用：无。
+func AudioDisplayTokenFromCodecKey(codecKey string) string {
+	return audioCodecDisplayTokens[strings.TrimSpace(codecKey)]
+}
+
 // parseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨，返回结构化音轨列表。
 // 参数/返回：mediainfo 为原始 MediaInfo/BDInfo 文本；返回按出现顺序排列的音轨（可能为空）。
 // 副作用：无。

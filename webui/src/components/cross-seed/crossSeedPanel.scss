@@ -400,6 +400,63 @@
     gap: 5px 15px;
   }
 
+  // 多音轨预生成标题（三条口径：第一条音轨 / 码率最高 / 规格最高）
+  .audio-title-previews {
+    margin: 14px 0 4px;
+    padding: 12px 14px;
+    border: 1px solid var(--el-border-color-light, #e4e7ed);
+    border-radius: 8px;
+    background: var(--el-fill-color-lighter, #f5f7fa);
+
+    &__header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--el-text-color-primary, #303133);
+
+      .audio-title-previews__icon {
+        color: var(--el-color-primary, #409eff);
+      }
+
+      .el-tag {
+        margin-left: 2px;
+      }
+    }
+
+    &__list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+  }
+
+  .audio-title-preview-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+
+    &__label {
+      flex-shrink: 0;
+      min-width: 72px;
+      padding: 1px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      color: var(--el-color-primary, #409eff);
+      background: var(--el-color-primary-light-9, #ecf5ff);
+    }
+
+    &__title {
+      color: var(--el-text-color-primary, #303133);
+      font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+      word-break: break-all;
+    }
+  }
+
   .standard-params-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));

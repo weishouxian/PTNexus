@@ -58,6 +58,25 @@
                 </div>
               </div>
 
+              <!-- 多音轨预生成标题：三种口径（第一条音轨 / 码率最高 / 规格最高） -->
+              <div v-if="audioTitlePreviews.length > 0" class="audio-title-previews">
+                <div class="audio-title-previews__header">
+                  <el-icon class="audio-title-previews__icon"><Headset /></el-icon>
+                  <span>多音轨预生成标题</span>
+                  <el-tag size="small" type="info" effect="plain">随下方参数实时变化</el-tag>
+                </div>
+                <div class="audio-title-previews__list">
+                  <div
+                    v-for="preview in audioTitlePreviews"
+                    :key="preview.policy"
+                    class="audio-title-preview-item"
+                  >
+                    <span class="audio-title-preview-item__label">{{ preview.label }}</span>
+                    <span class="audio-title-preview-item__title">{{ preview.title }}</span>
+                  </div>
+                </div>
+              </div>
+
               <div class="bottom-info-section">
                 <div class="subtitle-unrecognized-grid">
                   <!-- 副标题占4列 -->
@@ -576,7 +595,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Close, Monitor, Refresh, WarningFilled } from '@element-plus/icons-vue'
+import { Close, Monitor, Refresh, WarningFilled, Headset } from '@element-plus/icons-vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
 import MediaInfoSummaryCard from './MediaInfoSummaryCard.vue'
 
@@ -585,6 +604,7 @@ const {
   torrentData,
   filteredTitleComponents,
   initialTitleComponents,
+  audioTitlePreviews,
   unrecognizedValue,
   reverseMappings,
   invalidStandardParams,

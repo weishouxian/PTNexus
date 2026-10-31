@@ -11,6 +11,23 @@ export interface TitleComponent {
   value: string
 }
 
+/** 一条音轨在前端「多音轨预生成标题」里展示所需的最小信息。 */
+export interface AudioTrackPreview {
+  codec_key: string
+  display: string
+  bit_rate_kbps: number
+  channels: number
+  index: number
+}
+
+/** 按某条音轨策略预生成的标题。 */
+export interface AudioTitlePreview {
+  policy: number
+  label: string
+  codec_key: string
+  title: string
+}
+
 export interface ReverseMappings {
   type: Record<string, string>
   medium: Record<string, string>
@@ -49,6 +66,10 @@ export interface IntroData {
 export interface TorrentData {
   seed_id: string | null
   title_components: TitleComponent[]
+  /** 多音轨种子解析出的音轨列表（>1 条时由 parse_title 返回，用于预生成标题）。 */
+  audio_tracks?: AudioTrackPreview[]
+  /** 后端按音轨策略（第一条/码率最高/规格最高）决策出的 codec_key，作为前端重拼标题的权威来源。 */
+  audio_title_previews?: AudioTitlePreview[]
   original_main_title: string
   subtitle: string
   imdb_link: string
@@ -196,6 +217,8 @@ export interface CrossSeedPanelContext {
   // Step 0
   filteredTitleComponents: ComputedRef<TitleComponent[]>
   initialTitleComponents: ComputedRef<TitleComponent[]>
+  /** 多音轨种子的 3 个预生成标题（第一条音轨 / 码率最高 / 规格最高），随标题组件编辑实时联动。 */
+  audioTitlePreviews: ComputedRef<AudioTitlePreview[]>
   unrecognizedValue: WritableComputedRef<string>
   invalidStandardParams: ComputedRef<string[]>
   reparseTitle: () => Promise<void>

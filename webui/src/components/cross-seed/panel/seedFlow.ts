@@ -5,6 +5,8 @@ import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
 import { loadSelectedTargetSites, saveSelectedTargetSites } from '@/utils/targetSites'
 
 import type {
+  AudioTitlePreview,
+  AudioTrackPreview,
   ReverseMappings,
   ScreenshotReviewStatus,
   SiteStatus,
@@ -80,6 +82,8 @@ type DbSeedRecord = {
   hash?: string
   title?: string
   title_components?: TitleComponent[]
+  audio_tracks?: AudioTrackPreview[]
+  audio_title_previews?: AudioTitlePreview[]
   subtitle?: string
   imdb_link?: string
   douban_link?: string
@@ -433,6 +437,8 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             official_site: dbData.official_site || '',
             original_main_title: dbData.title || '',
             title_components: dbData.title_components || [],
+            audio_tracks: dbData.audio_tracks || [],
+            audio_title_previews: dbData.audio_title_previews || [],
             subtitle: dbData.subtitle,
             imdb_link: dbData.imdb_link,
             douban_link: dbData.douban_link,
@@ -523,6 +529,8 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
           official_site: dbData.official_site || '',
           original_main_title: dbData.title || '',
           title_components: dbData.title_components || [],
+          audio_tracks: dbData.audio_tracks || [],
+          audio_title_previews: dbData.audio_title_previews || [],
           subtitle: dbData.subtitle || '',
           imdb_link: dbData.imdb_link || '',
           douban_link: dbData.douban_link || '',
@@ -564,9 +572,20 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
         // 如果没有解析过的标题组件，自动解析主标题
         if ((!dbData.title_components || dbData.title_components.length === 0) && dbData.title) {
           try {
-            const parseResponse = await axios.post('/api/utils/parse_title', { title: dbData.title })
+            const parseResponse = await axios.post('/api/utils/parse_title', {
+              title: dbData.title,
+              mediainfo: dbData.mediainfo || '',
+            })
             if (parseResponse.data.success) {
               torrentData.value.title_components = parseResponse.data.components
+              torrentData.value.audio_tracks = Array.isArray(parseResponse.data.audio_tracks)
+                ? parseResponse.data.audio_tracks
+                : []
+              torrentData.value.audio_title_previews = Array.isArray(
+                parseResponse.data.audio_title_previews,
+              )
+                ? parseResponse.data.audio_title_previews
+                : []
               ElNotification.info({
                 title: '标题解析',
                 message: '已自动解析主标题为组件信息。',
@@ -783,6 +802,8 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             official_site: dbData.official_site || '',
             original_main_title: dbData.title || '',
             title_components: dbData.title_components || [],
+            audio_tracks: dbData.audio_tracks || [],
+            audio_title_previews: dbData.audio_title_previews || [],
             subtitle: dbData.subtitle,
             imdb_link: dbData.imdb_link,
             douban_link: dbData.douban_link,
@@ -826,9 +847,18 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             try {
               const parseResponse = await axios.post('/api/utils/parse_title', {
                 title: dbData.title,
+                mediainfo: dbData.mediainfo || '',
               })
               if (parseResponse.data.success) {
                 torrentData.value.title_components = parseResponse.data.components
+                torrentData.value.audio_tracks = Array.isArray(parseResponse.data.audio_tracks)
+                  ? parseResponse.data.audio_tracks
+                  : []
+                torrentData.value.audio_title_previews = Array.isArray(
+                  parseResponse.data.audio_title_previews,
+                )
+                  ? parseResponse.data.audio_title_previews
+                  : []
                 ElNotification.info({
                   title: '标题解析',
                   message: '已自动解析主标题为组件信息。',

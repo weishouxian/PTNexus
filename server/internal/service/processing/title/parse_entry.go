@@ -105,7 +105,8 @@ func ParseTitleEntry(input ParseTitleEntryInput) (map[string]any, int) {
 	}
 
 	logx.Infof(logModule, "解析完成 请求ID=%s components=%d", requestID, len(parseResult.Components))
-	return map[string]any{
+
+	result := map[string]any{
 		"success":    true,
 		"components": parseResult.Components,
 		"inferred_standardized_params": map[string]any{
@@ -113,5 +114,14 @@ func ParseTitleEntry(input ParseTitleEntryInput) (map[string]any, int) {
 			"audio_codec": strings.TrimSpace(inferred["audio_codec"]),
 			"resolution":  strings.TrimSpace(inferred["resolution"]),
 		},
-	}, 200
+	}
+
+	// 多音轨：返回音轨列表与三口径预生成标题（第一条音轨 / 码率最高 / 规格最高），
+	// 供前端核对页「主要信息」在主标题下方展示，并随标题组件编辑实时联动。
+	if audioTracks, audioPreviews := BuildAudioTitlePreviews(parseResult.Components, parseResult.Mediainfo); len(audioTracks) > 0 {
+		result["audio_tracks"] = audioTracks
+		result["audio_title_previews"] = audioPreviews
+	}
+
+	return result, 200
 }

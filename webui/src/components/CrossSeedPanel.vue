@@ -193,6 +193,7 @@ import type { WorkingTorrent } from './cross-seed/panel/types'
 import { crossSeedPanelContextKey } from './cross-seed/crossSeedPanelContext'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
 import type {
+  AudioTitlePreview,
   BdinfoProgress,
   CrossSeedPanelContext,
   LimitAlert,
@@ -203,6 +204,7 @@ import type {
   TitleComponent,
   TorrentData,
 } from './cross-seed/crossSeedPanelContext'
+import { buildPreviewTitleWithAudio } from './cross-seed/panel/audioTitlePreview'
 
 // 过滤多余空行的辅助函数
 const filterExtraEmptyLines = (text: string): string => {
@@ -407,6 +409,8 @@ const normalizeScreenshotReviewStatus = (value: unknown): ScreenshotReviewStatus
 const getInitialTorrentData = (): TorrentData => ({
   seed_id: null,
   title_components: [] as { key: string; value: string }[],
+  audio_tracks: [],
+  audio_title_previews: [],
   original_main_title: '',
   subtitle: '',
   imdb_link: '',
@@ -2359,6 +2363,16 @@ const reparseTitle = async () => {
     })
     if (response.data.success) {
       torrentData.value.title_components = response.data.components
+      if (Array.isArray(response.data.audio_tracks)) {
+        torrentData.value.audio_tracks = response.data.audio_tracks
+      } else {
+        torrentData.value.audio_tracks = []
+      }
+      if (Array.isArray(response.data.audio_title_previews)) {
+        torrentData.value.audio_title_previews = response.data.audio_title_previews
+      } else {
+        torrentData.value.audio_title_previews = []
+      }
       const correctedKeys = applyInferredStandardizedParams(
         response.data.inferred_standardized_params,
       )
@@ -2378,6 +2392,34 @@ const reparseTitle = async () => {
     isReparsing.value = false
   }
 }
+
+// 多音轨种子的 3 个预生成标题（第一条音轨 / 码率最高 / 规格最高），随标题组件编辑实时联动。
+// 选轨决策（哪条音轨对应哪种策略）以后端 parse_title 返回的 audio_title_previews 为准，
+// 这里只负责把「音频编码」组件替换为该音轨的展示 token 后重拼标题，保证与发种标题口径一致。
+const audioTitlePreviews = computed<AudioTitlePreview[]>(() => {
+  const tracks = torrentData.value.audio_tracks || []
+  if (tracks.length < 2) return []
+
+  const displayByCodec = new Map<string, string>()
+  for (const track of tracks) {
+    if (track.codec_key && !displayByCodec.has(track.codec_key)) {
+      displayByCodec.set(track.codec_key, track.display || track.codec_key)
+    }
+  }
+
+  const policyPreviews = torrentData.value.audio_title_previews || []
+  const previews: AudioTitlePreview[] = []
+  for (const item of policyPreviews) {
+    const display = displayByCodec.get(item.codec_key) || item.codec_key
+    previews.push({
+      policy: item.policy,
+      label: item.label,
+      codec_key: item.codec_key,
+      title: buildPreviewTitleWithAudio(torrentData.value.title_components, display),
+    })
+  }
+  return previews
+})
 
 const handleImageError = async (url: string, type: 'poster' | 'screenshot', index: number) => {
   if (hasRestrictedAutoRepairTags.value) {
@@ -2788,6 +2830,7 @@ provide(crossSeedPanelContextKey, {
   reverseMappings,
   filteredTitleComponents,
   initialTitleComponents,
+  audioTitlePreviews,
   unrecognizedValue,
   invalidStandardParams,
   reparseTitle,

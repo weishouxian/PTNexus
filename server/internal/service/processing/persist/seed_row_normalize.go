@@ -56,7 +56,61 @@ func NormalizeSeedRow(row map[string]any) map[string]any {
 	item["unrecognized"] = extractUnrecognized(titleComponents)
 	item["is_reviewed"] = BoolFromAny(item["is_reviewed"])
 	item["is_deleted"] = false
+
+	// 多音轨预生成标题：反序列化库内已持久化的音轨列表，并基于当前标题组件生成三口径预生成标题
+	// （第一条音轨 / 码率最高 / 规格最高），供前端核对页「主要信息」在主标题下方展示。
+	// 注意：audio_tracks 在库中为 JSON 字符串；反序列化失败或非多音轨时不返回，前端按无多音轨处理。
+	if tracks := parseAudioTracks(item["audio_tracks"]); len(tracks) >= 2 {
+		componentMaps := titleComponentsToMaps(titleComponents)
+		trackPreviews, previews := processingtitle.BuildAudioTitlePreviewsFromTracks(componentMaps, tracks)
+		if len(trackPreviews) > 0 {
+			item["audio_tracks"] = trackPreviews
+			item["audio_title_previews"] = previews
+		}
+	}
+
 	return item
+}
+
+// parseAudioTracks 把 audio_tracks 字段（JSON 字符串 / []any / 已反序列化切片）解析为 []parser.AudioTrack。
+func parseAudioTracks(value any) []parser.AudioTrack {
+	switch typed := value.(type) {
+	case []parser.AudioTrack:
+		return typed
+	case []any:
+		encoded, err := json.Marshal(typed)
+		if err != nil {
+			return nil
+		}
+		var tracks []parser.AudioTrack
+		if err := json.Unmarshal(encoded, &tracks); err != nil {
+			return nil
+		}
+		return tracks
+	case string:
+		trimmed := strings.TrimSpace(typed)
+		if trimmed == "" || !strings.HasPrefix(trimmed, "[") {
+			return nil
+		}
+		var tracks []parser.AudioTrack
+		if err := json.Unmarshal([]byte(trimmed), &tracks); err != nil {
+			return nil
+		}
+		return tracks
+	default:
+		return nil
+	}
+}
+
+// titleComponentsToMaps 把标题组件 []any 转换为 []map[string]any，供预生成标题复用。
+func titleComponentsToMaps(components []any) []map[string]any {
+	result := make([]map[string]any, 0, len(components))
+	for _, raw := range components {
+		if m, ok := raw.(map[string]any); ok {
+			result = append(result, m)
+		}
+	}
+	return result
 }
 
 // ParseStringArray 将任意类型值转换为字符串切片（支持 []string / []any / JSON 字符串 / 逗号分隔文本）。
