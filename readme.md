@@ -255,6 +255,13 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.13（2026.11.01）
+
+- 新增：馒头（M-Team）源站 API 对接——用 x-api-key 读取种子详情（绕开网页端 JWT 与签名），正确抓取标题/译名/简介/MediaInfo/标签/外链，前端支持 /detail/<数字> 路径提取源站 ID
+- 优化：获取资源信息时若无法判断是否有中文字幕，先重新获取 MediaInfo 再判定，据此决定人工选图还是自动截图；蓝光 BDInfo 完成后也按文本判中文字幕
+- 修复：带「限转」标签的种子不再短路抓取修复——限转是限时约束（到期可转），提前备好截图/简介；仅「禁转」与「分集」参与修复短路
+- 修复：站点类型原文 tv_pack（剧集合集）归一化为 category.tv_series，避免后续按电视剧判别的逻辑识别不到
+
 ### v4.0.12（2026.11.01）
 
 - 修复：HDR10/HLG 源截图过曝发白——无 GPU 环境下 mpv 截图只做 YUV→RGB 直转不做色调映射。现 HDR 源（含 HDR10/HLG/DV）统一走 ffmpeg libplacebo 直截（补全 hwupload/hwdownload 链、用 hwcontext 显式创建 Vulkan 设备以兼容 lavapipe 软件渲染）
