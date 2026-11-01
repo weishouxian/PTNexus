@@ -346,8 +346,8 @@ func GenerateScreenshotPreviewCandidates(input ScreenshotGenerateInput, previewC
 	}
 
 	isHDR := detectHDRFromVideo(ffprobePath, targetResult.TargetFile)
-	isDV := detectDolbyVisionFromVideo(ffprobePath, targetResult.TargetFile)
-	needSubtitleRender := currentSubtitleSID > 0 && !isDV
+	// HDR 源（HDR10/HLG/DV）：headless 下 mpv 截图不做色调映射（白屏），统一走 ffmpeg libplacebo 直截（无字幕）。
+	needSubtitleRender := currentSubtitleSID > 0 && !isHDR
 	mpvPath := ""
 	if needSubtitleRender {
 		mpvPath, err = resolveBinary("mpv", "PTNEXUS_MPV_PATH")
@@ -572,8 +572,9 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，需改走 ffmpeg libplacebo 直截。
-	videoIsDV := detectDolbyVisionFromVideo(ffprobePath, targetResult.TargetFile)
+	// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，且 headless 下对 HDR10
+	// 不做色调映射（截图白屏），统一改走 ffmpeg libplacebo 直截做色调映射。
+	videoIsHDR := detectHDRFromVideo(ffprobePath, targetResult.TargetFile)
 
 	type uploadJob struct {
 		Index    int
@@ -627,14 +628,14 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
 
-		// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
-		// 统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图）。
-		if videoIsDV {
+		// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
+		// 且 headless 下对 HDR10 不做色调映射，统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图/白屏）。
+		if videoIsHDR {
 			if subtitleSID > 0 {
-				logx.PlainInfof("   ⚠️ Dolby Vision 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
+				logx.PlainInfof("   ⚠️ HDR 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
 			}
 			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetResult.TargetFile, point, finalImagePath); err != nil {
-				logx.PlainInfof("❌ ffmpeg DV 截图失败: %s", sanitizeCommandErrForLog(err))
+				logx.PlainInfof("❌ ffmpeg HDR 直截失败: %s", sanitizeCommandErrForLog(err))
 				continue
 			}
 			logx.Infof(screenshotPreviewLogModule, "截图 DV 直截 scene=正式截图 index=%d output=%s", i+1, finalImagePath)

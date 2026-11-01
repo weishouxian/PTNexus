@@ -255,6 +255,11 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.13（2026.11.01）
+
+- 修复：HDR10/HLG 源截图过曝发白——无 GPU 环境下 mpv 截图只做 YUV→RGB 直转不做色调映射。现 HDR 源（含 HDR10/HLG/DV）统一走 ffmpeg libplacebo 直截（补全 hwupload/hwdownload 链、用 hwcontext 显式创建 Vulkan 设备以兼容 lavapipe 软件渲染）
+- 依赖：建议升级 ffmpeg 至 6.x+（旧版 5.1 对 HEVC m2ts 快速 seek 会报 Could not find ref with POC 产出花帧，新版本能跳过无效 NALU 正确出图）。可通过 PTNEXUS_FFMPEG_PATH / PTNEXUS_FFPROBE_PATH 指向静态 ffmpeg 9.0
+
 ### v4.0.12（2026.11.01）
 
 - 修复：截图模糊——mpv 截图改为软件渲染缩放（--screenshot-sw）并提升 PNG 压缩比，避免硬件缩放产生的模糊/锯齿

@@ -217,8 +217,9 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，需改走 ffmpeg libplacebo 直截。
-	videoIsDV := detectDolbyVisionFromVideo(ffprobePath, targetVideoFile)
+	// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2，且 headless 下对 HDR10
+	// 也只做 YUV→RGB 直转、不做色调映射（截图白屏），统一改走 ffmpeg libplacebo 直截做色调映射。
+	videoIsHDR := detectHDRFromVideo(ffprobePath, targetVideoFile)
 
 	type uploadJob struct {
 		Index    int
@@ -272,17 +273,17 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
 
-		// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
-		// 统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图）。
-		if videoIsDV {
+		// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
+		// 且 headless 下对 HDR10 不做色调映射，统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图/白屏）。
+		if videoIsHDR {
 			if subtitleSID > 0 {
-				logx.PlainInfof("   ⚠️ Dolby Vision 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
+				logx.PlainInfof("   ⚠️ HDR 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
 			}
 			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetVideoFile, point, finalImagePath); err != nil {
-				logx.PlainInfof("❌ ffmpeg DV 截图失败: %s", sanitizeCommandErrForLog(err))
+				logx.PlainInfof("❌ ffmpeg HDR 直截失败: %s", sanitizeCommandErrForLog(err))
 				continue
 			}
-			logx.Infof(screenshotValidateLogModule, "截图 DV 直截 scene=自动截图 index=%d output=%s", i+1, finalImagePath)
+			logx.Infof(screenshotValidateLogModule, "截图 HDR 直截 scene=自动截图 index=%d output=%s", i+1, finalImagePath)
 			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 			continue
 		}
@@ -641,22 +642,6 @@ func detectHDRFromPNG(ffprobePath string, pngPath string) (bool, error) {
 	return isHDRMetadataText(string(out)), nil
 }
 
-// detectDolbyVisionFromVideo 通过 ffprobe 判断视频源是否为 Dolby Vision（任意 profile）。
-// mpv 0.35 默认 vo=gpu 不识别 DV Profile 5 的 IPTPQc2 色彩空间，会产出偏色截图，
-// 故 DV 源需改走 ffmpeg libplacebo 直截做色调映射。
-func detectDolbyVisionFromVideo(ffprobePath, videoPath string) bool {
-	cmd := exec.Command(ffprobePath, "-v", "error", "-show_streams", "-select_streams", "v:0", videoPath)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-	lower := strings.ToLower(string(out))
-	return strings.Contains(lower, "dovi") ||
-		strings.Contains(lower, "dolby vision") ||
-		strings.Contains(lower, "dolbyvision") ||
-		containsDolbyVisionToken(lower)
-}
-
 // isHDRMetadataText 根据 ffprobe 输出文本判断源是否为 HDR。
 // 参数/返回：text 为 ffprobe 的输出；返回是否按 HDR 处理。
 // 失败场景：无。
@@ -856,26 +841,30 @@ var (
 // CPU 类型设备判为不可用并直接报 “Found no suitable device”；由 hwcontext 显式创建后即可正常出图。
 var libplaceboHwDeviceArgs = []string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"}
 
+// libplaceboFilter 构造 libplacebo GPU 滤镜的完整滤镜链。libplacebo 是 Vulkan 滤镜，帧必须先
+// hwupload 上传到 Vulkan 设备、处理完再 hwdownload 取回；输入强制为 10-bit YUV 以喂给 libplacebo
+// 一个稳定且高位深的格式。hwdownload 之后的 format=yuv420p 用于告诉 hwdownload 下载成什么像素格式
+// （它无法仅凭 GPU 帧自行推断），随后 HDRTail 再做缩放与最终格式转换。
+func libplaceboFilter(options toneMapChainOptions) string {
+	return "format=yuv420p10le,hwupload=extra_hw_frames=64,libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + ":format=yuv420p,hwdownload,format=yuv420p," + options.HDRTail
+}
+
 // buildToneMapFilterCandidates 按优先级构造色彩转换滤镜链候选。
 // 参数/返回：isHDR 标记源是否为 HDR；options 定义链尾与兜底链；返回按优先级排序的候选列表。
 // 失败场景：无。
 // 副作用：仅构造字符串，不执行外部命令。
 // 优先级说明：libplacebo 能正确处理 Dolby Vision Profile 5 等非标准色彩空间（需要可用的 Vulkan 设备，
-// 无独显时用 libplacebo-hwdevice 借助软件 Vulkan）；常规 zscale 依赖帧内色彩元数据；
+// 无独显时显式用 hwcontext 创建软件 Vulkan/lavapipe）；常规 zscale 依赖帧内色彩元数据；
 // 显式 zscale 在元数据缺失时补 BT.2020/PQ 输入参数；兜底链只保证出图。
 func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
 	if !isHDR {
 		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
 	}
-	libplaceboFilter := "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + "," + options.HDRTail
+	lbFilter := libplaceboFilter(options)
 	return []toneMapFilterCandidate{
 		{
-			Name:   "libplacebo",
-			Filter: libplaceboFilter,
-		},
-		{
-			Name:    "libplacebo-hwdevice",
-			Filter:  libplaceboFilter,
+			Name:    "libplacebo",
+			Filter:  lbFilter,
 			PreArgs: libplaceboHwDeviceArgs,
 		},
 		{

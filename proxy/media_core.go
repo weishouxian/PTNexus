@@ -433,25 +433,30 @@ var dvImageToneMapChainOptions = toneMapChainOptions{
 // "Found no suitable device"; a device created by the hwcontext works.
 var libplaceboHwDeviceArgs = []string{"-init_hw_device", "vulkan=vk", "-filter_hw_device", "vk"}
 
+// libplaceboFilter builds the filter chain for the libplacebo GPU filter. libplacebo is a Vulkan filter,
+// so the frame must be uploaded to the Vulkan device (hwupload) before it and downloaded back (hwdownload)
+// afterwards; the input is forced to 10-bit YUV so libplacebo receives a stable, high-bit-depth format.
+// The format=yuv420p right after hwdownload tells hwdownload which pixel format to produce (it cannot
+// infer it from the GPU frame alone); the HDRTail then does any scaling/final format conversion.
+func libplaceboFilter(options toneMapChainOptions) string {
+	return "format=yuv420p10le,hwupload=extra_hw_frames=64,libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + ":format=yuv420p,hwdownload,format=yuv420p," + options.HDRTail
+}
+
 // buildToneMapFilterCandidates returns the tone mapping filter chains ordered by priority.
 // libplacebo handles non-standard color spaces such as Dolby Vision Profile 5 (IPTPQc2) and needs a
-// working Vulkan device (libplacebo-hwdevice covers hosts without a discrete GPU by using software
-// Vulkan); the zscale chains rely on frame color metadata and the explicit one supplies BT.2020/PQ
+// working Vulkan device (created explicitly via hwcontext so software Vulkan/lavapipe works on CPU-only
+// hosts); the zscale chains rely on frame color metadata and the explicit one supplies BT.2020/PQ
 // input parameters when metadata is missing; the last chain only resamples pixels so that a screenshot
 // is always produced, at the cost of inaccurate colors.
 func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
 	if !isHDR {
 		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
 	}
-	libplaceboFilter := "libplacebo=tonemapping=hable:colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=" + options.OutRange + "," + options.HDRTail
+	lbFilter := libplaceboFilter(options)
 	return []toneMapFilterCandidate{
 		{
-			Name:   "libplacebo",
-			Filter: libplaceboFilter,
-		},
-		{
-			Name:    "libplacebo-hwdevice",
-			Filter:  libplaceboFilter,
+			Name:    "libplacebo",
+			Filter:  lbFilter,
 			PreArgs: libplaceboHwDeviceArgs,
 		},
 		{
@@ -1117,11 +1122,13 @@ func generatePreviewCandidates(videoPath string, duration float64, count int, cu
 
 	isHDR := detectHDRFromVideo(videoPath)
 	isDV := detectDolbyVisionFromVideo(videoPath)
+	needsDirectCapture := isHDR || isDV
 	candidates := make([]ScreenshotPreviewCandidate, 0, len(points))
 	for _, point := range points {
 		outputPath := filepath.Join(tempDir, fmt.Sprintf("preview-%.0f.jpg", point*1000))
-		// Dolby Vision 源：mpv 0.35 不识别 DV P5，带字幕也会白屏，统一走 ffmpeg libplacebo 直截（无字幕）。
-		if currentSubtitleSID > 0 && !isDV {
+		// HDR 源（HDR10/HLG/DV）：mpv 0.35 不识别 DV P5，且 headless 下对 HDR10 不做色调映射，
+		// 带字幕也会白屏，统一走 ffmpeg libplacebo 直截（无字幕）。
+		if currentSubtitleSID > 0 && !needsDirectCapture {
 			err = takePreviewScreenshotWithSubtitle(videoPath, outputPath, point, currentSubtitleSID)
 		} else {
 			err = takePreviewScreenshot(videoPath, outputPath, point, isHDR)

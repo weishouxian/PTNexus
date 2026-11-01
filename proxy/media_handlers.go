@@ -180,6 +180,8 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 		contentHDR := hasHDRKeyword(reqData.ContentName)
 		pathHDR := hasHDRKeyword(reqData.RemotePath)
 		videoIsHDR := videoHDR || contentHDR || pathHDR
+		// HDR 源（HDR10/HLG/DV）需 ffmpeg libplacebo 直截做色调映射（headless 下 mpv 只 YUV→RGB 直转、白屏）。
+		needsDirectCapture := videoHDR || videoDV
 		log.Printf(
 			"screenshot source HDR detection: video=%s hdr=%t dolby_vision=%t video_metadata=%t content_keyword=%t path_keyword=%t content_name=%q remote_path=%q",
 			filepath.Base(videoPath),
@@ -201,23 +203,23 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 			intermediatePngPath := filepath.Join(tempDir, "raw_"+fileName)
 			finalPngPath := filepath.Join(tempDir, fileName)
 
-			// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2 色彩空间（截图会白屏/偏色），
-			// 统一用 ffmpeg libplacebo 从源视频截图并色调映射（无字幕，避免 mpv 渲染出糊图）。
-			if videoDV {
+			// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2 色彩空间，且 headless 下
+			// 对 HDR10 不做色调映射（截图白屏），统一用 ffmpeg libplacebo 从源视频截图并色调映射（无字幕）。
+			if needsDirectCapture {
 				if subtitleSID > 0 {
-					log.Printf("screenshot %d: Dolby Vision source cannot render subtitles via mpv, capturing without subtitle (sid=%d)", i+1, subtitleSID)
+					log.Printf("screenshot %d: HDR source cannot render subtitles via mpv, capturing without subtitle (sid=%d)", i+1, subtitleSID)
 				}
 				if err := takeScreenshotDV(videoPath, finalPngPath, point); err != nil {
-					log.Printf("screenshot %d failed during DV capture: %v", i+1, err)
+					log.Printf("screenshot %d failed during HDR capture: %v", i+1, err)
 					continue
 				}
-				log.Printf("screenshot image captured (Dolby Vision): index=%d output=%s size_mb=%.2f", i+1, finalPngPath, fileSizeMB(finalPngPath))
+				log.Printf("screenshot image captured (HDR): index=%d output=%s size_mb=%.2f", i+1, finalPngPath, fileSizeMB(finalPngPath))
 			} else {
 				if err := takeScreenshot(videoPath, intermediatePngPath, point, subtitleSID); err != nil {
 					log.Printf("screenshot %d failed during capture: %v", i+1, err)
 					continue
 				}
-				// mpv 已把 HDR（含 HDR10/HLG）色调映射为 SDR 像素，此处只做 PNG 压缩，不再二次映射。
+				// SDR 源：mpv 截图后仅做 PNG 压缩，不做色调映射。
 				finalImagePath, err := convertPngToOptimizedImage(intermediatePngPath, finalPngPath, false)
 				if err != nil {
 					log.Printf("screenshot %d failed during image optimization: %v", i+1, err)
