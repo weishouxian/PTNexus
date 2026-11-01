@@ -201,10 +201,12 @@ func screenshotHandler(w http.ResponseWriter, r *http.Request) {
 			intermediatePngPath := filepath.Join(tempDir, "raw_"+fileName)
 			finalPngPath := filepath.Join(tempDir, fileName)
 
-			// Dolby Vision 且无字幕：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2 色彩空间，
-			// 直接用 ffmpeg libplacebo 从源视频截图并色调映射，避免 mpv 出偏色图。
-			// DV 带字幕时退回 mpv（保证字幕烧录，颜色次之）。
-			if videoDV && subtitleSID <= 0 {
+			// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2 色彩空间（截图会白屏/偏色），
+			// 统一用 ffmpeg libplacebo 从源视频截图并色调映射（无字幕，避免 mpv 渲染出糊图）。
+			if videoDV {
+				if subtitleSID > 0 {
+					log.Printf("screenshot %d: Dolby Vision source cannot render subtitles via mpv, capturing without subtitle (sid=%d)", i+1, subtitleSID)
+				}
 				if err := takeScreenshotDV(videoPath, finalPngPath, point); err != nil {
 					log.Printf("screenshot %d failed during DV capture: %v", i+1, err)
 					continue

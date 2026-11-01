@@ -255,6 +255,11 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 
 # 更新日志
 
+### v4.0.12（2026.11.01）
+
+- 修复：截图模糊——mpv 截图改为软件渲染缩放（--screenshot-sw）并提升 PNG 压缩比，避免硬件缩放产生的模糊/锯齿
+- 修复：杜比视界（DV）源截图白屏/糊图——mpv 0.35 不识别 DV P5 色彩空间，现 DV 源一律改用 ffmpeg libplacebo 从源视频直截（含预览候选图），不再退回 mpv 带字幕渲染
+
 ### v4.0.11（2026.11.01）
 
 - 新增：下载器中已做种种子的「更改保存位置」——调用下载器接口把任务文件移动到新目录并自动恢复做种，支持 qBittorrent 与 Transmission

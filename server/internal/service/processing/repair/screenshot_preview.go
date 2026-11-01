@@ -346,7 +346,8 @@ func GenerateScreenshotPreviewCandidates(input ScreenshotGenerateInput, previewC
 	}
 
 	isHDR := detectHDRFromVideo(ffprobePath, targetResult.TargetFile)
-	needSubtitleRender := currentSubtitleSID > 0
+	isDV := detectDolbyVisionFromVideo(ffprobePath, targetResult.TargetFile)
+	needSubtitleRender := currentSubtitleSID > 0 && !isDV
 	mpvPath := ""
 	if needSubtitleRender {
 		mpvPath, err = resolveBinary("mpv", "PTNEXUS_MPV_PATH")
@@ -626,8 +627,12 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
 
-		// Dolby Vision 且无字幕：mpv 0.35 不识别 DV P5 的 IPTPQc2，改由 ffmpeg libplacebo 直截。
-		if videoIsDV && subtitleSID <= 0 {
+		// Dolby Vision 源：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
+		// 统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图）。
+		if videoIsDV {
+			if subtitleSID > 0 {
+				logx.PlainInfof("   ⚠️ Dolby Vision 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
+			}
 			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetResult.TargetFile, point, finalImagePath); err != nil {
 				logx.PlainInfof("❌ ffmpeg DV 截图失败: %s", sanitizeCommandErrForLog(err))
 				continue

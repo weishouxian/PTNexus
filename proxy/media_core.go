@@ -210,8 +210,8 @@ func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID
 		"--no-audio",
 		fmt.Sprintf("--start=%.2f", timePoint),
 		"--frames=1",
-		"--screenshot-high-bit-depth=yes",
-		"--screenshot-png-compression=0",
+		"--screenshot-sw=yes",
+		"--screenshot-png-compression=6",
 		"--screenshot-tag-colorspace=no",
 	}
 	if subtitleSID > 0 {
@@ -1116,10 +1116,12 @@ func generatePreviewCandidates(videoPath string, duration float64, count int, cu
 	defer os.RemoveAll(tempDir)
 
 	isHDR := detectHDRFromVideo(videoPath)
+	isDV := detectDolbyVisionFromVideo(videoPath)
 	candidates := make([]ScreenshotPreviewCandidate, 0, len(points))
 	for _, point := range points {
 		outputPath := filepath.Join(tempDir, fmt.Sprintf("preview-%.0f.jpg", point*1000))
-		if currentSubtitleSID > 0 {
+		// Dolby Vision 源：mpv 0.35 不识别 DV P5，带字幕也会白屏，统一走 ffmpeg libplacebo 直截（无字幕）。
+		if currentSubtitleSID > 0 && !isDV {
 			err = takePreviewScreenshotWithSubtitle(videoPath, outputPath, point, currentSubtitleSID)
 		} else {
 			err = takePreviewScreenshot(videoPath, outputPath, point, isHDR)
