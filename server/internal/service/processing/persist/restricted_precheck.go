@@ -17,7 +17,8 @@ type FetchRestrictionPrecheckResult struct {
 
 // DetectFetchRestrictionPrecheck 在抓取修复前预检受限标签，命中时用于短路后续修复。
 //
-// 「禁转/限转」命中即短路 —— 这类资源不会发布，没必要再花时间做抓取修复。
+// 「禁转」命中即短路 —— 禁转资源永久不可转发，没必要再花时间做抓取修复。
+// 「限转」不短路 —— 限转是限时约束（如发布后 N 天内禁转），到期可正常转发，提前备好截图/简介更合理。
 // 「分集」是否短路取决于全局总开关 ALLOW_EPISODE_PUBLISH：
 //   - 关闭（默认）⇒ 同样短路，与既有行为一致；
 //   - 开启 ⇒ 不短路，让分集种子正常走修复流程。否则自动发种虽然放行了下载，
@@ -40,8 +41,11 @@ func DetectFetchRestrictionPrecheck(
 	allowEpisode := config.AllowsEpisodePublish()
 
 	restricted := processingtagging.DetectRestrictedTags(draft.RawTags)
+	// 「限转」不短路修复：限转通常为限时约束（如发布后 N 天内禁转），到期后可正常转发，
+	// 提前把截图/简介备好比等到限转期过了再补更合理。仅「禁转」与「分集」参与短路判定。
+	restricted = filterOutLimitedTransferTag(restricted)
 	if allowEpisode {
-		// 分集开关打开时，把「分集」从短路名单里剔除；禁转/限转照旧拦截。
+		// 分集开关打开时，把「分集」从短路名单里剔除；禁转照旧拦截。
 		restricted = filterOutEpisodeTag(restricted)
 	}
 	if len(restricted) > 0 {
@@ -93,13 +97,27 @@ func DetectFetchRestrictionPrecheck(
 	return FetchRestrictionPrecheckResult{}
 }
 
-// filterOutEpisodeTag 从标准受限标签列表中剔除「分集」，保留禁转/限转。
+// filterOutEpisodeTag 从标准受限标签列表中剔除「分集」，保留禁转（限转已在上游剔除）。
 // 参数/返回：tags 为 DetectRestrictedTags 的结果；返回不含分集的新切片。
 // 副作用：无。
 func filterOutEpisodeTag(tags []string) []string {
 	result := make([]string, 0, len(tags))
 	for _, tag := range tags {
 		if processingtagging.IsEpisodeRestrictedTag(tag) {
+			continue
+		}
+		result = append(result, tag)
+	}
+	return result
+}
+
+// filterOutLimitedTransferTag 从标准受限标签列表中剔除「限转」，保留禁转/分集。
+// 参数/返回：tags 为 DetectRestrictedTags 的结果；返回不含限转的新切片。
+// 副作用：无。
+func filterOutLimitedTransferTag(tags []string) []string {
+	result := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if processingtagging.IsLimitedTransferTag(tag) {
 			continue
 		}
 		result = append(result, tag)
