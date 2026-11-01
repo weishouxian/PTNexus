@@ -19,19 +19,13 @@
   ],
   "history": [
     {
-      "version": "v4.0.13",
-      "date": "2026.11.01",
-      "changes": [
-        "修复：HDR10/HLG 源截图过曝发白——无 GPU 环境下 mpv 截图只做 YUV→RGB 直转不做色调映射。现 HDR 源（含 HDR10/HLG/DV）统一走 ffmpeg libplacebo 直截（补全 hwupload/hwdownload 链、用 hwcontext 显式创建 Vulkan 设备以兼容 lavapipe 软件渲染）",
-        "依赖：建议升级 ffmpeg 至 6.x+（旧版 5.1 对 HEVC m2ts 快速 seek 会报 Could not find ref with POC 产出花帧，新版本能跳过无效 NALU 正确出图）。可通过 PTNEXUS_FFMPEG_PATH / PTNEXUS_FFPROBE_PATH 指向静态 ffmpeg 9.0"
-      ]
-    },
-    {
       "version": "v4.0.12",
       "date": "2026.11.01",
       "changes": [
+        "修复：HDR10/HLG 源截图过曝发白——无 GPU 环境下 mpv 截图只做 YUV→RGB 直转不做色调映射。现 HDR 源（含 HDR10/HLG/DV）统一走 ffmpeg libplacebo 直截（补全 hwupload/hwdownload 链、用 hwcontext 显式创建 Vulkan 设备以兼容 lavapipe 软件渲染）",
+        "修复：杜比视界（DV）源截图白屏/糊图——mpv 0.35 不识别 DV P5 色彩空间，现 DV 源一律改用 ffmpeg libplacebo 从源视频直截（含预览候选图），不再退回 mpv 带字幕渲染",
         "修复：截图模糊——mpv 截图改为软件渲染缩放（--screenshot-sw）并提升 PNG 压缩比，避免硬件缩放产生的模糊/锯齿",
-        "修复：杜比视界（DV）源截图白屏/糊图——mpv 0.35 不识别 DV P5 色彩空间，现 DV 源一律改用 ffmpeg libplacebo 从源视频直截（含预览候选图），不再退回 mpv 带字幕渲染"
+        "依赖：Docker 镜像内置静态 ffmpeg 9.0（替换 Debian 源 5.1，含 libplacebo + lavapipe 软件 Vulkan）。旧版 5.1 对 HEVC m2ts 快速 seek 会报 Could not find ref with POC 产出花帧，9.0 能跳过无效 NALU 正确出图；盒子端代理可通过 PTNEXUS_FFMPEG_PATH / PTNEXUS_FFPROBE_PATH 指向静态 ffmpeg 9.0"
       ]
     },
     {
