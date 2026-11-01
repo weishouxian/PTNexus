@@ -105,6 +105,12 @@ func NewColaptSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory) 
 	return newDelegatedSiteExtractor("colapt_special", public, runtimeFactory, sites.ExtractColapt)
 }
 
+// NewMTeamSpecialExtractor 创建馒头（M-Team）提取器。
+// 说明：站点是纯 SPA + JSON API，提取器忽略 PageHTML，直接用 x-api-key 读详情接口。
+func NewMTeamSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory) Extractor {
+	return newDelegatedSiteExtractor("mteam_special", public, runtimeFactory, sites.ExtractMTeam)
+}
+
 func toSiteInput(input Input) sites.Input {
 	return sites.Input{
 		SiteCode:      input.SiteCode,

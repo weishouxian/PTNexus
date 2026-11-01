@@ -90,6 +90,7 @@ func RunFetchRepairAndFinalize(input FetchRepairFinalizeInput, deps FetchRepairF
 		repairResult = processingrepair.RunParallelFetchRepairs(
 			processingrepair.ParallelFetchRepairInput{
 				TaskID:               input.TaskID,
+				SeedID:               ComposeSeedID(strings.TrimSpace(input.Draft.Hash), strings.TrimSpace(input.Draft.TorrentID), strings.TrimSpace(input.Draft.SiteName)),
 				SourceSite:           firstNonEmpty(input.SourceSite, input.SiteIdentifier),
 				SavePath:             input.SavePath,
 				DownloaderID:         input.DownloaderID,

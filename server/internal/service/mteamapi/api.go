@@ -154,6 +154,112 @@ func GenDlToken(apiBase, apiKey, torrentID string, timeout time.Duration) (strin
 	return link, nil
 }
 
+// DetailData 表示 M-Team 种子详情接口 /api/torrent/detail 返回的 data 字段。
+// 只保留抓取/提取侧需要的字段，其余字段不解析（接口返回的完整 JSON 远多于此）。
+type DetailData struct {
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	SmallDescr   string   `json:"smallDescr"`
+	Descr        string   `json:"descr"`
+	MediaInfo    string   `json:"mediainfo"`
+	ImageList    []string `json:"imageList"`
+	Category     string   `json:"category"`
+	Standard     string   `json:"standard"`
+	VideoCodec   string   `json:"videoCodec"`
+	AudioCodec   string   `json:"audioCodec"`
+	Source       string   `json:"source"`
+	Processing   string   `json:"processing"`
+	Medium       string   `json:"medium"`
+	Team         string   `json:"team"`
+	Countries    []string `json:"countries"`
+	LabelsNew    []string `json:"labelsNew"`
+	IMDb         string   `json:"imdb"`
+	Douban       string   `json:"douban"`
+	DoubanRating string   `json:"doubanRating"`
+	IMDbRating   string   `json:"imdbRating"`
+	Bangumi      string   `json:"bangumi"`
+}
+
+// Detail 调用 /api/torrent/detail 读取种子详情。
+// 参数/返回：apiBase 为 API 根地址，apiKey 为存取令牌，torrentID 为数字种子 ID；返回详情结构。
+// 失败场景：缺少令牌/ID、网络错误、HTTP 非 2xx、响应非 JSON、接口返回 code!=0。
+// 副作用：发起一次 HTTP 请求。
+//
+// 注意：该接口与发种的 createOredit、下载的 genDlToken 同属 x-api-key 鉴权体系，
+// 用控制台「存取令牌」即可调通（已实测 code=0），无需网页端的 authorization JWT 与 _sgin 签名。
+func Detail(apiBase, apiKey, torrentID string, timeout time.Duration) (DetailData, error) {
+	var detail DetailData
+	root := strings.TrimRight(strings.TrimSpace(apiBase), "/")
+	if root == "" {
+		root = DefaultAPIBase
+	}
+	token := strings.TrimSpace(apiKey)
+	if token == "" {
+		return detail, errors.New("缺少 API 令牌")
+	}
+	id := strings.TrimSpace(torrentID)
+	if id == "" {
+		return detail, errors.New("缺少种子 ID")
+	}
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("id", id); err != nil {
+		return detail, fmt.Errorf("构造表单字段失败: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return detail, fmt.Errorf("结束表单写入失败: %w", err)
+	}
+
+	endpoint := root + "/api/torrent/detail"
+	request, err := http.NewRequest(http.MethodPost, endpoint, body)
+	if err != nil {
+		return detail, fmt.Errorf("构造请求失败: %w", err)
+	}
+	request.Header.Set("User-Agent", WebUserAgent)
+	request.Header.Set("Accept", "application/json, text/plain, */*")
+	request.Header.Set("Content-Type", writer.FormDataContentType())
+	request.Header.Set("x-api-key", token)
+
+	client := &http.Client{Timeout: timeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return detail, fmt.Errorf("请求 m-team 失败: %w", err)
+	}
+	defer response.Body.Close()
+
+	respBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return detail, fmt.Errorf("读取响应失败: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return detail, fmt.Errorf("m-team 返回 HTTP %d: %s", response.StatusCode, BodySnippet(respBody))
+	}
+
+	var parsed Response
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return detail, fmt.Errorf("m-team 响应解析失败: %s", BodySnippet(respBody))
+	}
+	if !parsed.IsSuccess() {
+		message := strings.TrimSpace(parsed.Message)
+		if message == "" {
+			message = BodySnippet(respBody)
+		}
+		return detail, fmt.Errorf("m-team 接口返回失败(code=%s): %s", parsed.CodeString(), message)
+	}
+
+	if err := json.Unmarshal(parsed.Data, &detail); err != nil {
+		return detail, fmt.Errorf("m-team 种子详情解析失败: %w", err)
+	}
+	if strings.TrimSpace(detail.Name) == "" {
+		return detail, fmt.Errorf("m-team 种子详情缺少 name（种子可能已被删除或未通过审核）")
+	}
+	return detail, nil
+}
+
 // BodySnippet 把响应体裁剪成单行短文本，用于日志与错误信息，避免刷屏。
 func BodySnippet(body []byte) string {
 	const limit = 200

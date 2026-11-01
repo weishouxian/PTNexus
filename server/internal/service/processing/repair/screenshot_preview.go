@@ -94,6 +94,12 @@ func mediaTextHasChineseSubtitle(text string) bool {
 	return false
 }
 
+// MediaTextHasChineseSubtitle 导出包装：判断 MediaInfo/BDInfo 文本里是否存在中文字幕。
+// 供跨包（如 BDInfo 完成回调）在无需探测视频文件的前提下，仅凭媒体文本判定是否有中文字幕。
+func MediaTextHasChineseSubtitle(text string) bool {
+	return mediaTextHasChineseSubtitle(text)
+}
+
 // bdInfoSubtitlesHasChinese 判断 BDInfo 的 SUBTITLES 段（从 `SUBTITLES:` 之后到下一个大写段头之前）是否含中文标记。
 func bdInfoSubtitlesHasChinese(section string) bool {
 	// 截断到下一个大写段头（FILES:/CHAPTERS:/DISC INFO: 等），避免跨段误判。

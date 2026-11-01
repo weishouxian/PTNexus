@@ -58,6 +58,8 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 	dstudioExtractor := NewDStudioSpecialExtractor(publicExtractor, runtimeFactory)
 	// 可乐PT 是纯 SPA + JSON API 站，提取器直接用站点 API Key 读接口（不看 PageHTML）。
 	colaptExtractor := NewColaptSpecialExtractor(publicExtractor, runtimeFactory)
+	// 馒头（M-Team）同为纯 SPA + JSON API 站，提取器用 x-api-key 读详情接口。
+	mteamExtractor := NewMTeamSpecialExtractor(publicExtractor, runtimeFactory)
 
 	return NewEngine(
 		publicExtractor,
@@ -75,6 +77,8 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"dstudio":   dstudioExtractor,
 			"colapt":    colaptExtractor,
 			"cola":      colaptExtractor,
+			"mteam":     mteamExtractor,
+			"m-team":    mteamExtractor,
 		},
 		map[string]Extractor{
 			"不可说":          ssdExtractor,
@@ -91,6 +95,9 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"dstudio":      dstudioExtractor,
 			"Depth Studio": dstudioExtractor,
 			"可乐":           colaptExtractor,
+			"馒头":           mteamExtractor,
+			"M-Team":       mteamExtractor,
+			"MTeam":        mteamExtractor,
 		},
 	)
 }

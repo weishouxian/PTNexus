@@ -31,6 +31,24 @@ const extractNumericQueryParam = (value: string, key: 'id' | 'torrent_id'): stri
   return matched?.[1] || null
 }
 
+const extractNumericFromDetailPath = (value: string): string | null => {
+  const trimmed = normalizeText(value)
+  if (!trimmed) return null
+
+  try {
+    const parsed = new URL(trimmed, RELATIVE_URL_BASE)
+    const matchedPath = parsed.pathname.match(/\/(?:detail|details)\/(\d+)(?:\/|$)/i)
+    if (matchedPath?.[1]) {
+      return matchedPath[1]
+    }
+  } catch {
+    // Ignore URL parse errors and fall back to regex-based extraction.
+  }
+
+  const matched = trimmed.match(/\/(?:detail|details)\/(\d+)(?:\/|$)/i)
+  return matched?.[1] || null
+}
+
 const extractUuidFromPath = (value: string): string | null => {
   const trimmed = normalizeText(value)
   if (!trimmed) return null
@@ -81,6 +99,11 @@ export const extractSourceTorrentIdFromComment = (
   const torrentId = extractNumericQueryParam(trimmed, 'torrent_id')
   if (torrentId) {
     return torrentId
+  }
+
+  const detailId = extractNumericFromDetailPath(trimmed)
+  if (detailId) {
+    return detailId
   }
 
   const uuid = extractUuidFromPath(trimmed)

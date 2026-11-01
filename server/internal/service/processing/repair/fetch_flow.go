@@ -44,6 +44,7 @@ type FetchRepairDeps struct {
 // ParallelFetchRepairInput 表示并发修复输入。
 type ParallelFetchRepairInput struct {
 	TaskID               string
+	SeedID               string
 	SourceSite           string
 	SavePath             string
 	DownloaderID         string
@@ -360,6 +361,7 @@ func runScreenshotsRepairTask(input ParallelFetchRepairInput, deps FetchRepairDe
 
 	reviewStatus, previewRequired := repairScreenshotsDuringFetch(
 		input.TaskID,
+		input.SeedID,
 		input.SavePath,
 		input.DownloaderID,
 		input.TorrentNameForPath,
@@ -585,6 +587,7 @@ func repairIntroBodyDuringFetch(
 
 func repairScreenshotsDuringFetch(
 	taskID string,
+	seedID string,
 	savePath string,
 	downloaderID string,
 	torrentNameForPath string,
@@ -639,9 +642,12 @@ func repairScreenshotsDuringFetch(
 		"content_name":   strings.TrimSpace(contentName),
 		"current_images": reviewData.Screens,
 	}
+	// 截图决策前先确保 MediaInfo 就绪：源站抓出的 MediaInfo 若判不出中文字幕，
+	// 触发一次媒体信息刷新（同步），拿到新 MediaInfo 后再判定中文字幕，从而决定人工选图还是自动截图。
+	resolvedMedia := ensureScreenshotMediaReady(taskID, seedID, savePath, downloaderID, torrentNameForPath, contentName, reviewData, deps)
 	sourceInfo := map[string]any{
 		"main_title": strings.TrimSpace(contentName),
-		"mediainfo":  strings.TrimSpace(reviewData.Mediainfo),
+		"mediainfo":  strings.TrimSpace(resolvedMedia),
 	}
 	usePendingReview, previewDecisionErr := ShouldUseScreenshotPreview(ScreenshotGenerateInput{
 		Payload:     payload,
@@ -694,6 +700,76 @@ func repairScreenshotsDuringFetch(
 	logx.Warnf(fetchRepairScreenshotLogModule, "截图自动重建失败且无可用回退截图 err=%v", err)
 	emitLog(deps, taskID, "修复截图", "截图自动重建失败，未获得可用截图", "warning")
 	return processingshared.ScreenshotReviewStatusNone, false
+}
+
+// ensureScreenshotMediaReady 确保截图决策前媒体文本（MediaInfo/BDInfo）就绪。
+// 参数/返回：返回最终用于判断中文字幕的媒体文本（优先重新获取的 MediaInfo，失败回退源站抓取版）。
+// 行为：
+//   - 现有 MediaInfo 已能明确判断中文字幕 → 直接返回，不额外刷新。
+//   - 现有 MediaInfo 判不出中文字幕（缺失/无中文标记）→ 触发一次同步刷新拿新 MediaInfo。
+//   - 刷新返回蓝光（bdinfo_async.processing）→ 不阻塞，返回现有文本（蓝光由 BDInfo 完成回调触发后续决策）。
+//   - 刷新失败 → 回退源站抓取的 MediaInfo。
+func ensureScreenshotMediaReady(
+	taskID string,
+	seedID string,
+	savePath string,
+	downloaderID string,
+	torrentNameForPath string,
+	contentName string,
+	reviewData *parser.ReviewExtractedData,
+	deps FetchRepairDeps,
+) string {
+	currentMedia := ""
+	if reviewData != nil {
+		currentMedia = strings.TrimSpace(reviewData.Mediainfo)
+	}
+
+	// 已有 MediaInfo 且能明确判断中文字幕，直接复用，避免无谓刷新。
+	if currentMedia != "" && mediaTextHasChineseSubtitle(currentMedia) {
+		return currentMedia
+	}
+
+	// 判不出中文字幕（缺失或无中文标记）→ 触发同步刷新。
+	if deps.RefreshMediainfo == nil {
+		logx.Warnf(fetchRepairScreenshotLogModule, "媒体信息刷新回调未注册，沿用源站 MediaInfo 判断 task_id=%s", taskID)
+		return currentMedia
+	}
+
+	refreshPayload := map[string]any{
+		"seed_id":           strings.TrimSpace(seedID),
+		"save_path":         strings.TrimSpace(savePath),
+		"downloader_id":     strings.TrimSpace(downloaderID),
+		"torrent_name":      strings.TrimSpace(torrentNameForPath),
+		"content_name":      strings.TrimSpace(contentName),
+		"current_mediainfo": currentMedia,
+	}
+
+	logx.Infof(fetchRepairScreenshotLogModule, "源站 MediaInfo 判不出中文字幕，触发媒体信息刷新 seed_id=%s current_bytes=%d", seedID, len(currentMedia))
+	refreshResult, statusCode := deps.RefreshMediainfo(refreshPayload)
+	if statusCode != 200 {
+		logx.Warnf(fetchRepairScreenshotLogModule, "媒体信息刷新失败，回退源站 MediaInfo 判断 seed_id=%s status=%d", seedID, statusCode)
+		return currentMedia
+	}
+
+	// 蓝光资源：MediaInfo 转 BDInfo 后台任务，本次不阻塞，返回现有文本。
+	if bdInfoAsync, ok := refreshResult["bdinfo_async"].(map[string]any); ok {
+		if strings.TrimSpace(toStringAny(bdInfoAsync["bdinfo_status"], "")) == "processing" {
+			logx.Infof(fetchRepairScreenshotLogModule, "蓝光资源转 BDInfo 后台任务，截图决策由 BDInfo 完成回调触发 seed_id=%s", seedID)
+			return currentMedia
+		}
+	}
+
+	newMedia := strings.TrimSpace(toStringAny(refreshResult["mediainfo"], ""))
+	if newMedia == "" {
+		logx.Warnf(fetchRepairScreenshotLogModule, "媒体信息刷新未返回有效文本，回退源站 MediaInfo seed_id=%s", seedID)
+		return currentMedia
+	}
+
+	if reviewData != nil {
+		reviewData.Mediainfo = newMedia
+	}
+	logx.Infof(fetchRepairScreenshotLogModule, "媒体信息刷新完成，使用新 MediaInfo 判断中文字幕 seed_id=%s new_bytes=%d has_chinese=%t", seedID, len(newMedia), mediaTextHasChineseSubtitle(newMedia))
+	return newMedia
 }
 
 func filterReachableImageURLsConcurrently(urls []string, workers int) []string {
