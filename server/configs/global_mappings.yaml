@@ -25,6 +25,7 @@ global_standard_keys:
     "TVSeries": "category.tv_series"
     "TV-Episode": "category.tv_series"
     "TV-Pack": "category.tv_series"
+    "tv_pack": "category.tv_series"
     "剧集": "category.tv_series"
     "电视剧 / TV Series": "category.tv_series"
 

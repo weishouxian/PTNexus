@@ -421,7 +421,13 @@ func normalizeDirectStandardFieldKey(field string, raw string) string {
 	if rest == "" || strings.ContainsAny(rest, " \t\r\n") {
 		return ""
 	}
-	return prefix + strings.ToLower(rest)
+	standard := prefix + strings.ToLower(rest)
+	// 站点「类型」原文为 tv_pack（剧集合集）时，本质仍是电视剧，
+	// 归一化到标准键 category.tv_series，否则后续按电视剧判别的逻辑都识别不到。
+	if field == "type" && standard == "category.tv_pack" {
+		return "category.tv_series"
+	}
+	return standard
 }
 
 func standardFieldPrefix(field string) string {
