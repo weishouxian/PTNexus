@@ -137,15 +137,49 @@ RUN set -eux; \
     apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
-    ffmpeg \
+    curl \
+    xz-utils \
     mpv \
     mediainfo \
     util-linux \
     fonts-noto-cjk \
     libicu-dev \
     supervisor \
+    libvulkan1 \
+    mesa-vulkan-drivers \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# --- ffmpeg 9.0（静态构建，替换 Debian 源的 5.1）---
+# Debian bookworm 源的 ffmpeg 仍是 5.1，对 HEVC m2ts 快速 seek 会报
+# "Could not find ref with POC" 产出花帧；且 HDR10/HLG 截图需 libplacebo 做色调映射，
+# 5.1 的 libplacebo 过老。这里下载 BtbN 的静态 ffmpeg 9.0（含 libplacebo），
+# 软链 ffmpeg/ffprobe 到 /usr/local/bin，使 server 的 resolveBinary("ffmpeg", ...)
+# 走 PATH 即可命中 9.0，无需额外环境变量。
+# 架构命名：amd64 -> linux64，arm64 -> linuxarm64。
+ARG TARGETARCH
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) FF_ARCH="linux64" ;; \
+      arm64) FF_ARCH="linuxarm64" ;; \
+      *) echo "Unsupported TARGETARCH for ffmpeg: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    FF_VER="n9.0-latest"; \
+    FF_DIR="ffmpeg-${FF_VER}-${FF_ARCH}-gpl-9.0"; \
+    FF_TARBALL="${FF_DIR}.tar.xz"; \
+    FF_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FF_TARBALL}"; \
+    mkdir -p /opt/ffmpeg-static; \
+    cd /opt/ffmpeg-static; \
+    if ! curl -fsSL --retry 3 -o "${FF_TARBALL}" "${FF_URL}"; then \
+      echo "GitHub 直连失败，尝试 gh-proxy.com 镜像"; \
+      curl -fsSL --retry 3 -o "${FF_TARBALL}" "https://gh-proxy.com/${FF_URL}"; \
+    fi; \
+    tar -xJf "${FF_TARBALL}"; \
+    ln -sf "/opt/ffmpeg-static/${FF_DIR}/bin/ffmpeg" /usr/local/bin/ffmpeg; \
+    ln -sf "/opt/ffmpeg-static/${FF_DIR}/bin/ffprobe" /usr/local/bin/ffprobe; \
+    rm -f "${FF_TARBALL}"; \
+    ffmpeg -version | head -1; \
+    ffprobe -version | head -1
 
 # --- Go 版后端文件 ---
 RUN mkdir -p /app/server
