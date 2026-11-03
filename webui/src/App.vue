@@ -71,6 +71,7 @@
           <el-icon><Link /></el-icon>
           GitHub
         </el-link>
+        <SiteAlertsBell />
         <el-tag size="small" class="version-tag" @click="showVersionDialog">{{
           currentVersion
         }}</el-tag>
@@ -274,6 +275,7 @@ import axios from 'axios'
 import DesktopWindowControls from '@/components/desktop/DesktopWindowControls.vue'
 import { useDesktopWindowControls } from '@/desktop/windowControls'
 import VersionUpdate from '@/components/VersionUpdate.vue'
+import SiteAlertsBell from '@/components/SiteAlertsBell.vue'
 import { ElMessage } from '@/utils/uiNotify'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 

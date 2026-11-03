@@ -86,6 +86,27 @@
             :prefix-icon="Search"
             class="search-input"
           />
+          <el-tooltip
+            content="每隔多少小时自动检测一次站点 Cookie/Passkey 有效性；支持小数，0 或留空表示关闭定时检测。"
+            placement="top"
+          >
+            <el-input
+              v-model="siteHealthInterval"
+              placeholder="检测间隔(小时)"
+              clearable
+              class="health-interval-input"
+              @change="handleSaveHealthInterval"
+            >
+              <template #append>小时</template>
+            </el-input>
+          </el-tooltip>
+          <el-button
+            :icon="Monitor"
+            :loading="isCheckingAll"
+            @click="handleCheckAllCookies"
+          >
+            一键检测Cookie
+          </el-button>
         </template>
       </div>
       <!-- 站点配置导入：隐藏的原生文件选择框，由「导入」按钮触发 -->
@@ -546,6 +567,10 @@
           <el-switch v-model="siteForm.can_publish" />
           <div class="form-tip">关闭后，该站点在发种选择时将置灰不可选择。</div>
         </el-form-item>
+        <el-form-item label="检测 Cookie" prop="check_cookie_enabled">
+          <el-switch v-model="siteForm.check_cookie_enabled" />
+          <div class="form-tip">关闭后，定时检测和一键检测将跳过该站点，不再校验其 Cookie/令牌有效性。</div>
+        </el-form-item>
         <el-form-item label="多音轨策略" prop="audio_track_policy">
           <el-select v-model="siteForm.audio_track_policy" style="width: 100%">
             <el-option :value="0" label="未设置（取第一条音轨）" />
@@ -577,7 +602,9 @@
                   ? '无需设置'
                   : siteForm.site === 'colapt'
                     ? '浏览器 F12 → Network → Fetch/XHR 里复制任意 /api/v1 请求的完整 Cookie（必须含 reelcore_session=，只有 reelcore_session_marker 是无效的）'
-                    : '从浏览器获取的Cookie字符串'
+                    : siteForm.site === 'm-team'
+                      ? 'M-Team 无需 Cookie；令牌请填下方 Passkey 栏'
+                      : '从浏览器获取的Cookie字符串'
               "
               :disabled="siteForm.site === 'rousi'"
             ></el-input>
@@ -588,10 +615,15 @@
                 :disabled="siteForm.site === 'rousi'"
                 @click="handleCheckCookie"
               >
-                检验 Cookie
+                {{ siteForm.site === 'm-team' ? '检验令牌' : '检验 Cookie' }}
               </el-button>
               <span v-if="cookieCheckResult" class="cookie-check-result" :class="cookieCheckResult.valid ? 'is-ok' : 'is-bad'">
                 {{ cookieCheckResult.valid ? '✓ ' : '✗ ' }}{{ cookieCheckResult.reason }}
+                <template v-if="cookieCheckResult.valid && (cookieCheckResult.username || cookieCheckResult.user_id)">
+                  <span class="cookie-check-user">
+                    {{ cookieCheckResult.username || '' }}{{ cookieCheckResult.user_id ? ' #' + cookieCheckResult.user_id : '' }}
+                  </span>
+                </template>
               </span>
             </div>
           </div>
@@ -903,6 +935,7 @@ import {
   Download,
   Edit,
   Filter,
+  Monitor,
   PriceTag,
   Rank,
   Refresh,
@@ -930,6 +963,8 @@ type SiteConfig = {
   has_cookie?: boolean
   has_passkey?: boolean
   can_publish?: boolean | number
+  /** 是否参与定时/一键 Cookie 检测 */
+  check_cookie_enabled?: boolean | number
   /** 站点是否声明了 dupe 查重能力（后端按站点 YAML 标注） */
   dupe_supported?: boolean
   dupe_check_enabled?: boolean | number
@@ -980,6 +1015,7 @@ type SiteForm = {
   ratio_threshold: number
   seed_speed_limit: number
   can_publish: boolean
+  check_cookie_enabled: boolean
   sort_order: number
   dupe_check_enabled: boolean
   /** 体积容差（字节），后端存储口径 */
@@ -1240,6 +1276,7 @@ const siteForm = ref<SiteForm>({
   ratio_threshold: 3.0,
   seed_speed_limit: 5,
   can_publish: true,
+  check_cookie_enabled: true,
   sort_order: 0,
   dupe_check_enabled: false,
   dupe_size_tolerance_bytes: DEFAULT_DUPE_TOLERANCE_BYTES,
@@ -1723,6 +1760,7 @@ const handleSaveSortOrder = async () => {
 onMounted(() => {
   fetchCookieCloudSettings()
   fetchSites()
+  fetchSiteHealthSettings()
 })
 
 // --- 方法 ---
@@ -1942,6 +1980,8 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   seed_speed_limit:
     typeof site.seed_speed_limit === 'number' ? site.seed_speed_limit : Number(site.seed_speed_limit) || 5,
   can_publish: site.can_publish == null ? true : Boolean(site.can_publish),
+  check_cookie_enabled:
+    site.check_cookie_enabled == null ? true : Boolean(site.check_cookie_enabled),
   sort_order: typeof site.sort_order === 'number' ? site.sort_order : Number(site.sort_order) || 0,
   dupe_check_enabled: Boolean(Number(site.dupe_check_enabled) || 0),
   dupe_size_tolerance_bytes: normalizeDupeToleranceBytes(site.dupe_size_tolerance_bytes),
@@ -2019,7 +2059,12 @@ const handleOpenDialog = (site: SiteConfig) => {
 
 // --- Cookie 有效性校验 ---
 const isCheckingCookie = ref(false)
-const cookieCheckResult = ref<{ valid: boolean; reason: string } | null>(null)
+const cookieCheckResult = ref<{
+  valid: boolean
+  reason: string
+  user_id?: string
+  username?: string
+} | null>(null)
 
 const resetCookieCheck = () => {
   cookieCheckResult.value = null
@@ -2030,12 +2075,14 @@ const resetCookieCheck = () => {
 const handleCheckCookie = async () => {
   const baseUrl = String(siteForm.value.base_url || '').trim()
   const cookie = String(siteForm.value.cookie || '').trim()
+  const passkey = String(siteForm.value.passkey || '').trim()
+  const isMTeam = siteForm.value.site === 'm-team'
   if (!baseUrl) {
-    ElMessage.warning('请先填写站点域名（base_url），再检验 Cookie。')
+    ElMessage.warning('请先填写站点域名（base_url），再检验。')
     return
   }
-  if (!cookie) {
-    ElMessage.warning('Cookie 为空，无法检验。')
+  if (!cookie && !passkey) {
+    ElMessage.warning(isMTeam ? '令牌为空，无法检验。' : 'Cookie 为空，无法检验。')
     return
   }
   isCheckingCookie.value = true
@@ -2044,14 +2091,27 @@ const handleCheckCookie = async () => {
     const response = await axios.post(`${API_BASE_URL}/sites/check_cookie`, {
       base_url: baseUrl,
       cookie,
+      passkey,
+      site: siteForm.value.site,
     })
-    const data = response.data as { valid?: boolean; reason?: string; message?: string }
+    const data = response.data as {
+      valid?: boolean
+      reason?: string
+      message?: string
+      user_id?: string
+      username?: string
+    }
     cookieCheckResult.value = {
       valid: Boolean(data.valid),
       reason: data.reason || data.message || (data.valid ? 'Cookie 有效' : 'Cookie 无效'),
+      user_id: data.user_id,
+      username: data.username,
     }
     if (data.valid) {
-      ElMessage.success('Cookie 有效。')
+      const who = data.username
+        ? `（用户：${data.username}${data.user_id ? ' #' + data.user_id : ''}）`
+        : ''
+      ElMessage.success(`Cookie 有效${who}。`)
     } else {
       ElMessage.warning(data.reason || data.message || 'Cookie 无效或已失效。')
     }
@@ -2065,6 +2125,61 @@ const handleCheckCookie = async () => {
     ElMessage.error(message)
   } finally {
     isCheckingCookie.value = false
+  }
+}
+
+// --- 站点健康检测（定时 + 一键） ---
+const siteHealthInterval = ref('')
+const isCheckingAll = ref(false)
+
+// 读取检测间隔（进入页面时加载）。
+const fetchSiteHealthSettings = async () => {
+  try {
+    const response = await axios.get(`${API_BASE_URL}/settings`)
+    const health = (response.data?.site_health ?? {}) as { interval_hours?: unknown }
+    const v = health.interval_hours
+    siteHealthInterval.value = v === undefined || v === null || Number(v) <= 0 ? '' : String(v)
+  } catch {
+    // 读取失败不阻断页面，保持默认空（关闭定时检测）。
+  }
+}
+
+// 修改检测间隔后保存（支持小数；空或 0 视为关闭定时检测）。
+const handleSaveHealthInterval = async () => {
+  const raw = String(siteHealthInterval.value).trim()
+  let hours = 0
+  if (raw !== '') {
+    const parsed = Number(raw)
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      ElMessage.warning('检测间隔需为非负数字（小时），支持小数。')
+      return
+    }
+    hours = parsed
+  }
+  try {
+    await axios.post(`${API_BASE_URL}/settings`, {
+      site_health: { interval_hours: hours },
+    })
+    ElMessage.success(hours > 0 ? `已设置每 ${hours} 小时检测一次。` : '已关闭定时检测。')
+  } catch {
+    ElMessage.error('保存检测间隔失败。')
+  }
+}
+
+const handleCheckAllCookies = async () => {
+  isCheckingAll.value = true
+  try {
+    const response = await axios.post(`${API_BASE_URL}/sites/check_cookie_all`)
+    ElMessage.success((response.data?.message as string) || '已触发全量检测。')
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string } | undefined)?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '请求失败，请检查网络或后端服务。'
+    ElMessage.error(message)
+  } finally {
+    isCheckingAll.value = false
   }
 }
 
@@ -2353,6 +2468,10 @@ const handleDelete = (site: SiteConfig) => {
   width: 280px;
 }
 
+.health-interval-input {
+  width: 160px;
+}
+
 .settings-table {
   width: 100%;
 }
@@ -2394,6 +2513,12 @@ const handleDelete = (site: SiteConfig) => {
 
 .cookie-check-result.is-bad {
   color: #f56c6c;
+}
+
+.cookie-check-user {
+  color: #303133;
+  font-weight: 600;
+  margin-left: 6px;
 }
 
 /* 标签列：多个标签之间留出间距（仅展示，不参与交互） */
