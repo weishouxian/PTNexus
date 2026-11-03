@@ -285,6 +285,28 @@ func (r *SiteRepository) UpdateSiteCookieBySite(siteCode, cookie string) (bool, 
 	return count > 0, nil
 }
 
+// GetSiteForCookieCheck 按站点 id 读取 Cookie 校验所需的 base_url 与 cookie。
+// 参数/返回：siteID 为 sites.id；返回 map（含 base_url/cookie）；未命中返回 nil。
+// 失败场景：数据库执行失败时返回错误。
+// 副作用：只读。
+func (r *SiteRepository) GetSiteForCookieCheck(siteID any) (map[string]any, error) {
+	var baseURL, cookie sql.NullString
+	err := r.store.DB.Raw(
+		"SELECT base_url, cookie FROM sites WHERE id = ? LIMIT 1",
+		siteID,
+	).Row().Scan(&baseURL, &cookie)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return map[string]any{
+		"base_url": baseURL.String,
+		"cookie":   cookie.String,
+	}, nil
+}
+
 // UpdateSiteDupeSettings 只更新站点的 dupe 查重配置（开关 / 体积容差 / 按媒介规则）。
 // 参数/返回：data 需含 id，其余键为 dupe_check_enabled、dupe_size_tolerance_bytes、dupe_rules。
 // 返回是否命中该站点；参数非法或执行失败时返回错误。

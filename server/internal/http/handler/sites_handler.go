@@ -207,6 +207,49 @@ func (h *SitesHandler) UpdateSiteCookie(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("站点 '%s' 的 Cookie 已成功更新。", nickname)})
 }
 
+// CheckSiteCookie 校验站点 Cookie 是否有效。
+// 参数/返回：请求体可含 base_url 与 cookie（优先取请求体；缺省时按 id 从库读取）；
+// 返回 {"success":true,"valid":bool,"reason":"...","message":"..."}。
+// 说明：带 Cookie 访问站点首页判断登录态，供站点管理「检验 Cookie」按钮使用。
+// 副作用：向目标站点发起一次 GET 请求，只读。
+func (h *SitesHandler) CheckSiteCookie(c *gin.Context) {
+	payload := map[string]any{}
+	_ = c.ShouldBindJSON(&payload)
+
+	baseURL := strings.TrimSpace(toString(payload["base_url"], ""))
+	cookie := strings.TrimSpace(toString(payload["cookie"], ""))
+
+	// 未直接给 base_url/cookie 时，按站点 id 回读库里的配置，方便「列表页一键校验」。
+	if (baseURL == "" || cookie == "") && !isFalsyID(payload["id"]) {
+		site, lookupErr := h.repo.GetSiteForCookieCheck(payload["id"])
+		if lookupErr == nil && site != nil {
+			if baseURL == "" {
+				baseURL = strings.TrimSpace(toString(site["base_url"], ""))
+			}
+			if cookie == "" {
+				cookie = strings.TrimSpace(toString(site["cookie"], ""))
+			}
+		}
+	}
+
+	valid, reason, err := publishdupe.CheckCookie(baseURL, cookie)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"valid":   false,
+			"reason":  err.Error(),
+			"message": fmt.Sprintf("Cookie 校验失败：%v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"valid":   valid,
+		"reason":  reason,
+		"message": reason,
+	})
+}
+
 func (h *SitesHandler) SitesStatus(c *gin.Context) {
 	status, err := h.repo.SitesStatus()
 	if err != nil {

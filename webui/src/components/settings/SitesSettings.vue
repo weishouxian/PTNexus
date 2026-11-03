@@ -274,8 +274,8 @@
         />
         <el-table-column
           prop="base_url"
-          label="基础URL"
-          width="150"
+          label="域名"
+          width="170"
           show-overflow-tooltip
           sortable="custom"
           :sort-orders="['ascending', 'descending']"
@@ -469,9 +469,11 @@
         <el-form-item label="站点昵称" prop="nickname" required>
           <el-input v-model="siteForm.nickname" placeholder="例如：PT站"></el-input>
         </el-form-item>
-        <el-form-item label="基础URL" prop="base_url">
-          <el-input v-model="siteForm.base_url" placeholder="例如：pt.com"></el-input>
-          <div class="form-tip">用于拼接种子详情页链接。</div>
+        <el-form-item label="域名" prop="base_url">
+          <el-input v-model="siteForm.base_url" placeholder="例如：pt.com 或 https://pt.com"></el-input>
+          <div class="form-tip">
+            站点的访问域名。<strong>发种</strong>和<strong>获取种子详情</strong>都以这里设置的域名为准；留空则无法发种或抓取详情。
+          </div>
         </el-form-item>
         <el-form-item label="Tracker域名" prop="special_tracker_domain">
           <el-input
@@ -565,19 +567,34 @@
           <div class="form-tip">数值越小越靠前，0 表示不参与自定义排序（按默认规则排列）。</div>
         </el-form-item>
         <el-form-item label="Cookie" prop="cookie">
-          <el-input
-            v-model="siteForm.cookie"
-            type="textarea"
-            :rows="3"
-            :placeholder="
-              siteForm.site === 'rousi'
-                ? '无需设置'
-                : siteForm.site === 'colapt'
-                  ? '浏览器 F12 → Network → Fetch/XHR 里复制任意 /api/v1 请求的完整 Cookie（必须含 reelcore_session=，只有 reelcore_session_marker 是无效的）'
-                  : '从浏览器获取的Cookie字符串'
-            "
-            :disabled="siteForm.site === 'rousi'"
-          ></el-input>
+          <div style="width: 100%">
+            <el-input
+              v-model="siteForm.cookie"
+              type="textarea"
+              :rows="3"
+              :placeholder="
+                siteForm.site === 'rousi'
+                  ? '无需设置'
+                  : siteForm.site === 'colapt'
+                    ? '浏览器 F12 → Network → Fetch/XHR 里复制任意 /api/v1 请求的完整 Cookie（必须含 reelcore_session=，只有 reelcore_session_marker 是无效的）'
+                    : '从浏览器获取的Cookie字符串'
+              "
+              :disabled="siteForm.site === 'rousi'"
+            ></el-input>
+            <div class="cookie-check-row">
+              <el-button
+                size="small"
+                :loading="isCheckingCookie"
+                :disabled="siteForm.site === 'rousi'"
+                @click="handleCheckCookie"
+              >
+                检验 Cookie
+              </el-button>
+              <span v-if="cookieCheckResult" class="cookie-check-result" :class="cookieCheckResult.valid ? 'is-ok' : 'is-bad'">
+                {{ cookieCheckResult.valid ? '✓ ' : '✗ ' }}{{ cookieCheckResult.reason }}
+              </span>
+            </div>
+          </div>
         </el-form-item>
         <el-form-item label="Passkey" prop="passkey">
           <el-input
@@ -1996,7 +2013,59 @@ const handleSaveAndSync = async () => {
 
 const handleOpenDialog = (site: SiteConfig) => {
   siteForm.value = normalizeSiteForm(site)
+  resetCookieCheck()
   dialogVisible.value = true
+}
+
+// --- Cookie 有效性校验 ---
+const isCheckingCookie = ref(false)
+const cookieCheckResult = ref<{ valid: boolean; reason: string } | null>(null)
+
+const resetCookieCheck = () => {
+  cookieCheckResult.value = null
+}
+
+// 校验当前编辑表单里的 Cookie：优先用表单里填的 base_url 与 cookie 直接请求，
+// 前端只把这两个值发过去，后端不落库、不覆盖任何已保存配置。
+const handleCheckCookie = async () => {
+  const baseUrl = String(siteForm.value.base_url || '').trim()
+  const cookie = String(siteForm.value.cookie || '').trim()
+  if (!baseUrl) {
+    ElMessage.warning('请先填写站点域名（base_url），再检验 Cookie。')
+    return
+  }
+  if (!cookie) {
+    ElMessage.warning('Cookie 为空，无法检验。')
+    return
+  }
+  isCheckingCookie.value = true
+  cookieCheckResult.value = null
+  try {
+    const response = await axios.post(`${API_BASE_URL}/sites/check_cookie`, {
+      base_url: baseUrl,
+      cookie,
+    })
+    const data = response.data as { valid?: boolean; reason?: string; message?: string }
+    cookieCheckResult.value = {
+      valid: Boolean(data.valid),
+      reason: data.reason || data.message || (data.valid ? 'Cookie 有效' : 'Cookie 无效'),
+    }
+    if (data.valid) {
+      ElMessage.success('Cookie 有效。')
+    } else {
+      ElMessage.warning(data.reason || data.message || 'Cookie 无效或已失效。')
+    }
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string } | undefined)?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '请求失败，请检查网络或后端服务。'
+    cookieCheckResult.value = { valid: false, reason: message }
+    ElMessage.error(message)
+  } finally {
+    isCheckingCookie.value = false
+  }
 }
 
 // --- Dupe 查重设置弹窗 ---
@@ -2304,6 +2373,27 @@ const handleDelete = (site: SiteConfig) => {
   font-size: 12px;
   line-height: 1.5;
   margin-top: 4px;
+}
+
+/* Cookie 校验按钮与结果 */
+.cookie-check-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.cookie-check-result {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cookie-check-result.is-ok {
+  color: #67c23a;
+}
+
+.cookie-check-result.is-bad {
+  color: #f56c6c;
 }
 
 /* 标签列：多个标签之间留出间距（仅展示，不参与交互） */

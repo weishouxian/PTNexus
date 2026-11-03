@@ -289,6 +289,7 @@ func registerRoutes(
 		api.POST("/sites/update_dupe", sitesHandler.UpdateSiteDupe)
 		api.POST("/sites/delete", sitesHandler.DeleteSite)
 		api.POST("/sites/update_cookie", sitesHandler.UpdateSiteCookie)
+		api.POST("/sites/check_cookie", sitesHandler.CheckSiteCookie)
 		api.POST("/sites/update_order", sitesHandler.UpdateSitesOrder)
 		// 站点标签批量操作（列表页勾选多个站点后统一打标签）。
 		api.POST("/sites/batch_tags", sitesHandler.BatchUpdateSiteTags)
