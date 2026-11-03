@@ -25,15 +25,27 @@
       <div class="preview-row resource-info-row" v-if="torrentData.resource_info">
         <div class="row-label">资源信息：</div>
         <div class="row-content resource-info-content">
-          <el-image
+          <div
             v-if="torrentData.resource_info.poster_url"
-            :src="getThumbImageUrl(torrentData.resource_info.poster_url)"
-            :preview-src-list="[torrentData.resource_info.poster_url]"
-            preview-teleported
-            fit="cover"
-            class="resource-info-poster"
-            @error="handleThumbErrorWithFallback(torrentData.resource_info.poster_url, 'poster', 0)"
-          />
+            class="resource-info-poster-wrap"
+          >
+            <el-image
+              :src="getProxyImageUrl(torrentData.resource_info.poster_url)"
+              :preview-src-list="[torrentData.resource_info.poster_url]"
+              preview-teleported
+              fit="cover"
+              class="resource-info-poster"
+              @error="handleImageErrorWithProxy(torrentData.resource_info.poster_url, 'poster', 0)"
+            />
+            <img
+              v-if="getPixhostThumbnailOnly(torrentData.resource_info.poster_url)"
+              :src="getPixhostThumbnailOnly(torrentData.resource_info.poster_url)"
+              alt="海报缩略图"
+              class="resource-info-poster-thumb"
+              loading="lazy"
+              @error="hideThumbnail($event)"
+            />
+          </div>
           <div class="resource-info-fields">
             <div class="resource-info-line">
               <span class="param-label">标题：</span>
@@ -72,18 +84,30 @@
             <div class="resource-info-line resource-info-screenshots" v-if="resourceInfoScreenshotImages.length > 0">
               <span class="param-label">视频截图：</span>
               <div class="resource-info-screenshot-gallery">
-                <el-image
+                <div
                   v-for="(url, index) in resourceInfoScreenshotImages"
                   :key="'ri-screenshot-' + index"
-                  :src="getThumbImageUrl(url)"
-                  :preview-src-list="resourceInfoScreenshotImages"
-                  :initial-index="index"
-                  preview-teleported
-                  fit="cover"
-                  :alt="'截图 ' + (index + 1)"
-                  class="resource-info-screenshot-img"
-                  @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
-                />
+                  class="resource-info-screenshot-item"
+                >
+                  <el-image
+                    :src="getProxyImageUrl(url)"
+                    :preview-src-list="resourceInfoScreenshotImages"
+                    :initial-index="index"
+                    preview-teleported
+                    fit="cover"
+                    :alt="'截图 ' + (index + 1)"
+                    class="resource-info-screenshot-img"
+                    @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                  />
+                  <img
+                    v-if="getPixhostThumbnailOnly(url)"
+                    :src="getPixhostThumbnailOnly(url)"
+                    :alt="'截图缩略图 ' + (index + 1)"
+                    class="resource-info-screenshot-thumb"
+                    loading="lazy"
+                    @error="hideThumbnail($event)"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -299,19 +323,31 @@
           <!-- 海报图片 -->
           <div class="description-section" v-if="posterImages.length > 0">
             <div class="image-gallery">
-              <el-image
+              <div
                 v-for="(url, index) in posterImages"
                 :key="'poster-preview-' + index"
-                :src="getThumbImageUrl(url)"
-                :preview-src-list="posterImages"
-                :initial-index="index"
-                preview-teleported
-                fit="contain"
-                :alt="'海报 ' + (index + 1)"
-                class="preview-image-inline"
-                style="width: 300px"
-                @error="handleThumbErrorWithFallback(url, 'poster', index)"
-              />
+                class="preview-image-inline-item"
+              >
+                <el-image
+                  :src="getProxyImageUrl(url)"
+                  :preview-src-list="posterImages"
+                  :initial-index="index"
+                  preview-teleported
+                  fit="contain"
+                  :alt="'海报 ' + (index + 1)"
+                  class="preview-image-inline"
+                  style="width: 300px"
+                  @error="handleImageErrorWithProxy(url, 'poster', index)"
+                />
+                <img
+                  v-if="getPixhostThumbnailOnly(url)"
+                  :src="getPixhostThumbnailOnly(url)"
+                  :alt="'海报缩略图 ' + (index + 1)"
+                  class="preview-image-inline-thumb"
+                  loading="lazy"
+                  @error="hideThumbnail($event)"
+                />
+              </div>
             </div>
           </div>
 
@@ -327,18 +363,30 @@
           <!-- 视频截图 -->
           <div class="description-section" v-if="screenshotImages.length > 0">
             <div class="image-gallery">
-              <el-image
+              <div
                 v-for="(url, index) in screenshotImages"
                 :key="'screenshot-preview-' + index"
-                :src="getThumbImageUrl(url)"
-                :preview-src-list="screenshotImages"
-                :initial-index="index"
-                preview-teleported
-                fit="contain"
-                :alt="'截图 ' + (index + 1)"
-                class="preview-image-inline"
-                @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
-              />
+                class="preview-image-inline-item"
+              >
+                <el-image
+                  :src="getProxyImageUrl(url)"
+                  :preview-src-list="screenshotImages"
+                  :initial-index="index"
+                  preview-teleported
+                  fit="contain"
+                  :alt="'截图 ' + (index + 1)"
+                  class="preview-image-inline"
+                  @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                />
+                <img
+                  v-if="getPixhostThumbnailOnly(url)"
+                  :src="getPixhostThumbnailOnly(url)"
+                  :alt="'截图缩略图 ' + (index + 1)"
+                  class="preview-image-inline-thumb"
+                  loading="lazy"
+                  @error="hideThumbnail($event)"
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -360,9 +408,16 @@ const {
   parseBBCode,
   posterImages,
   screenshotImages,
-  getThumbImageUrl,
-  handleThumbErrorWithFallback,
+  getProxyImageUrl,
+  getPixhostThumbnailOnly,
+  handleImageErrorWithProxy,
 } = useCrossSeedPanelContext()
+
+// 缩略图加载失败时隐藏该缩略图元素（原图仍正常展示）。
+const hideThumbnail = (event: Event) => {
+  const img = event.target as HTMLImageElement | null
+  if (img) img.style.display = 'none'
+}
 
 // resourceInfoScreenshotImages 解析资源信息库命中的视频截图（BBCode [img]url[/img]），供预览区展示。
 const resourceInfoScreenshotImages = computed<string[]>(() => {
@@ -387,6 +442,22 @@ const resourceInfoScreenshotImages = computed<string[]>(() => {
   height: 96px;
   border-radius: 4px;
   flex-shrink: 0;
+}
+
+.resource-info-poster-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.resource-info-poster-thumb {
+  width: 56px;
+  height: 75px;
+  object-fit: contain;
+  border-radius: 3px;
+  border: 1px solid var(--el-border-color-lighter);
 }
 
 .resource-info-fields {
@@ -419,11 +490,26 @@ const resourceInfoScreenshotImages = computed<string[]>(() => {
   gap: 6px;
 }
 
+.resource-info-screenshot-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
 .resource-info-screenshot-img {
   width: 120px;
   height: 68px;
   object-fit: cover;
   border-radius: 4px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.resource-info-screenshot-thumb {
+  max-width: 96px;
+  max-height: 54px;
+  object-fit: contain;
+  border-radius: 3px;
   border: 1px solid var(--el-border-color-lighter);
 }
 </style>

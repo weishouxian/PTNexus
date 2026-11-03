@@ -616,9 +616,20 @@
 
   .carousel-image-wrapper {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 8px;
     height: 100%;
+  }
+
+  // 截图缩略图（显示在原图下方的小图，仅 pixhost 图显示）
+  .carousel-thumbnail {
+    max-width: 60%;
+    max-height: 90px;
+    object-fit: contain;
+    border-radius: 3px;
+    border: 1px solid #e4e7ed;
   }
 
   .poster-preview-section {
@@ -643,12 +654,30 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .preview-image-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
 
   .preview-image {
     max-width: 100%;
     max-height: 400px;
     border-radius: 4px;
+    border: 1px solid #e4e7ed;
+  }
+
+  // 海报缩略图（显示在原图下方的小图，仅 pixhost 图显示）
+  .preview-thumbnail {
+    max-width: 120px;
+    max-height: 160px;
+    object-fit: contain;
+    border-radius: 3px;
     border: 1px solid #e4e7ed;
   }
 
@@ -1116,6 +1145,23 @@
     border-radius: 4px;
     border: 1px solid #e4e7ed;
     object-fit: contain;
+  }
+
+  // 发布预览：每张图（原图在上）+ 缩略图（下方小图）的纵向容器
+  .preview-image-inline-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+  }
+
+  // 发布预览缩略图（显示在原图下方的小图，仅 pixhost 图显示）
+  .preview-image-inline-thumb {
+    max-width: 140px;
+    max-height: 180px;
+    object-fit: contain;
+    border-radius: 3px;
+    border: 1px solid #e4e7ed;
   }
 
   /* --- 步骤 2: 选择站点 --- */

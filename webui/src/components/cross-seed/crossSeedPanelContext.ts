@@ -238,6 +238,8 @@ export interface CrossSeedPanelContext {
   getThumbImageUrl: (url: string) => string
   /** 将 pixhost 原图直链转换为缩略图直链（非 pixhost 原样返回）。 */
   toPixhostThumbnail: (url: string) => string
+  /** 仅 pixhost 原图返回缩略图直链（非 pixhost 返回空串），用于「原图下方跟缩略图」布局。 */
+  getPixhostThumbnailOnly: (url: string) => string
   handleImageErrorWithProxy: (url: string, type: 'poster' | 'screenshot', index: number) => void
   /** 缩略图加载失败时回退原图（pixhost 缩略图专用，其余走代理逻辑）。 */
   handleThumbErrorWithFallback: (url: string, type: 'poster' | 'screenshot', index: number) => void

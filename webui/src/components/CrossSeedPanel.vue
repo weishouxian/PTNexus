@@ -487,6 +487,14 @@ const getThumbImageUrl = (originalUrl: string): string => {
   return getProxyImageUrl(originalUrl)
 }
 
+// 仅 pixhost 原图返回其缩略图直链；非 pixhost（无缩略图）返回空字符串。
+// 用于「原图正常展示、缩略图显示在原图下方」的布局：空串表示该图无需额外显示缩略图。
+const getPixhostThumbnailOnly = (originalUrl: string): string => {
+  if (!originalUrl) return ''
+  const thumb = toPixhostThumbnail(originalUrl)
+  return thumb !== originalUrl ? thumb : ''
+}
+
 const handleImageErrorWithProxy = (url: string, type: 'poster' | 'screenshot', index: number) => {
   // 检查是否已经尝试过代理
   const currentUrl = imageProxyMap.value.get(url)
@@ -2882,6 +2890,7 @@ provide(crossSeedPanelContextKey, {
   getProxyImageUrl,
   getThumbImageUrl,
   toPixhostThumbnail,
+  getPixhostThumbnailOnly,
   handleImageErrorWithProxy,
   handleThumbErrorWithFallback,
   refreshScreenshots,

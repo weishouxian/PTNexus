@@ -284,6 +284,19 @@
         </template>
       </el-table-column>
 
+      <el-table-column label="转种" width="80" align="center">
+        <template #default="scope">
+          <el-button
+            type="primary"
+            size="small"
+            @click.stop="startCrossSeed(scope.row)"
+            :disabled="!isDevEnv && scope.row.progress < 100"
+          >
+            转种
+          </el-button>
+        </template>
+      </el-table-column>
+
       <el-table-column type="selection" width="45" align="center" :selectable="checkSelectable" />
 
       <el-table-column

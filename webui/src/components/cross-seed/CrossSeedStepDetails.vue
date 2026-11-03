@@ -330,18 +330,30 @@
                   <div class="preview-header">海报预览</div>
                   <div class="image-preview-container">
                     <template v-if="posterImages.length">
-                      <el-image
+                      <div
                         v-for="(url, index) in posterImages"
                         :key="'poster-' + index"
-                        :src="getThumbImageUrl(url)"
-                        :preview-src-list="posterImages"
-                        :initial-index="index"
-                        preview-teleported
-                        fit="contain"
-                        alt="海报预览"
-                        class="preview-image"
-                        @error="handleThumbErrorWithFallback(url, 'poster', index)"
-                      />
+                        class="preview-image-item"
+                      >
+                        <el-image
+                          :src="getProxyImageUrl(url)"
+                          :preview-src-list="posterImages"
+                          :initial-index="index"
+                          preview-teleported
+                          fit="contain"
+                          alt="海报预览"
+                          class="preview-image"
+                          @error="handleImageErrorWithProxy(url, 'poster', index)"
+                        />
+                        <img
+                          v-if="getPixhostThumbnailOnly(url)"
+                          :src="getPixhostThumbnailOnly(url)"
+                          alt="海报缩略图"
+                          class="preview-thumbnail"
+                          loading="lazy"
+                          @error="hideThumbnail($event)"
+                        />
+                      </div>
                     </template>
                     <div v-else class="preview-placeholder">暂无海报预览</div>
                   </div>
@@ -419,14 +431,22 @@
                   <el-carousel-item v-for="(url, index) in screenshotImages" :key="'ss-' + index">
                     <div class="carousel-image-wrapper">
                       <el-image
-                        :src="getThumbImageUrl(url)"
+                        :src="getProxyImageUrl(url)"
                         :preview-src-list="screenshotImages"
                         :initial-index="index"
                         preview-teleported
                         fit="contain"
                         alt="截图预览"
                         class="carousel-image"
-                        @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
+                        @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                      />
+                      <img
+                        v-if="getPixhostThumbnailOnly(url)"
+                        :src="getPixhostThumbnailOnly(url)"
+                        alt="截图缩略图"
+                        class="carousel-thumbnail"
+                        loading="lazy"
+                        @error="hideThumbnail($event)"
                       />
                     </div>
                   </el-carousel-item>
@@ -628,8 +648,9 @@ const {
   isRefreshingPosters,
   posterErrorMessage,
   posterImages,
-  getThumbImageUrl,
-  handleThumbErrorWithFallback,
+  getProxyImageUrl,
+  getPixhostThumbnailOnly,
+  handleImageErrorWithProxy,
   refreshScreenshots,
   isRefreshingScreenshots,
   screenshotCount,
@@ -649,6 +670,12 @@ const {
   filteredDeclarationsCount,
   filteredDeclarationsList,
 } = useCrossSeedPanelContext()
+
+// 缩略图加载失败时隐藏该缩略图元素（原图仍正常展示，不因缩略图失效破图）。
+const hideThumbnail = (event: Event) => {
+  const img = event.target as HTMLImageElement | null
+  if (img) img.style.display = 'none'
+}
 
 const filteredTypeMappings = computed(() =>
   Object.fromEntries(
