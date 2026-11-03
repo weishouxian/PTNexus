@@ -192,6 +192,7 @@ import { createSeedFlow } from './cross-seed/panel/seedFlow'
 import type { WorkingTorrent } from './cross-seed/panel/types'
 import { crossSeedPanelContextKey } from './cross-seed/crossSeedPanelContext'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
+import { toPixhostThumbnail } from '@/utils/imageUrl'
 import type {
   AudioTitlePreview,
   BdinfoProgress,
@@ -476,6 +477,16 @@ const getProxyImageUrl = (originalUrl: string): string => {
   return originalUrl
 }
 
+// 生成用于展示的缩略图 URL：pixhost 原图转缩略图，其余沿用代理图片 URL 逻辑。
+// 加载失败时（@error）会回退到 handleThumbErrorWithFallback 使用原图重试。
+const getThumbImageUrl = (originalUrl: string): string => {
+  const thumb = toPixhostThumbnail(originalUrl)
+  if (thumb !== originalUrl) {
+    return thumb
+  }
+  return getProxyImageUrl(originalUrl)
+}
+
 const handleImageErrorWithProxy = (url: string, type: 'poster' | 'screenshot', index: number) => {
   // 检查是否已经尝试过代理
   const currentUrl = imageProxyMap.value.get(url)
@@ -496,6 +507,29 @@ const handleImageErrorWithProxy = (url: string, type: 'poster' | 'screenshot', i
 
   // 如果代理URL也失败了，调用原有的错误处理
   handleImageError(url, type, index)
+}
+
+// 缩略图加载失败时的回退：直接回退到原图直链（或代理原图），而不是把缩略图 URL 包进代理。
+// 用于海报/截图预览使用 pixhost 缩略图加速加载时，个别缩略图失效的场景。
+const handleThumbErrorWithFallback = (
+  url: string,
+  type: 'poster' | 'screenshot',
+  index: number,
+) => {
+  const thumb = toPixhostThumbnail(url)
+  if (thumb === url) {
+    // 非 pixhost 缩略图场景，走原有代理错误处理
+    handleImageErrorWithProxy(url, type, index)
+    return
+  }
+
+  // 缩略图失败，回退原图（沿用代理图片 URL 逻辑）
+  const fullUrl = getProxyImageUrl(url)
+  const imgElements = document.querySelectorAll(`img[src="${thumb}"]`)
+  imgElements.forEach((img) => {
+    img.setAttribute('src', fullUrl)
+  })
+  console.log(`缩略图加载失败，回退原图: ${fullUrl}`)
 }
 
 const activeStep = ref(0)
@@ -2846,7 +2880,10 @@ provide(crossSeedPanelContextKey, {
   posterErrorMessage,
   posterImages,
   getProxyImageUrl,
+  getThumbImageUrl,
+  toPixhostThumbnail,
   handleImageErrorWithProxy,
+  handleThumbErrorWithFallback,
   refreshScreenshots,
   isRefreshingScreenshots,
   screenshotCount,

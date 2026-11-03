@@ -20,7 +20,7 @@
           <template #default="{ row }">
           <el-image
             v-if="row.poster_url"
-            :src="cleanPoster(row.poster_url)"
+            :src="thumbUrl(row.poster_url)"
             :preview-src-list="[cleanPoster(row.poster_url)]"
             preview-teleported
             fit="cover"
@@ -130,7 +130,7 @@
         <div class="detail-poster">
           <el-image
             v-if="selectedItem.poster_url"
-            :src="cleanPoster(selectedItem.poster_url)"
+            :src="thumbUrl(selectedItem.poster_url)"
             :preview-src-list="[cleanPoster(selectedItem.poster_url)]"
             preview-teleported
             fit="cover"
@@ -199,13 +199,17 @@
             <el-button text :icon="CopyDocument" title="复制截图" @click="copyText(selectedItem.screenshots, '视频截图')" />
           </div>
           <div class="detail-screenshot-gallery">
-            <img
+            <el-image
               v-for="(url, index) in screenshotUrlList(selectedItem)"
               :key="'detail-screenshot-' + index"
-              :src="cleanPoster(url)"
+              :src="thumbUrl(url)"
+              :preview-src-list="screenshotUrlList(selectedItem)"
+              :initial-index="index"
+              preview-teleported
+              fit="cover"
               :alt="'截图 ' + (index + 1)"
               class="detail-screenshot-img"
-              @error="handleScreenshotError($event, url)"
+              @error="handleScreenshotError($event, cleanPoster(url))"
             />
           </div>
         </div>
@@ -261,6 +265,7 @@ import { onMounted, ref } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { CopyDocument, View, Link, Edit } from '@element-plus/icons-vue'
+import { toPixhostThumbnail } from '@/utils/imageUrl'
 
 interface ResourceInfoItem {
   id: number
@@ -412,6 +417,12 @@ function cleanPoster(raw: string): string {
   return raw
 }
 
+// thumbUrl 将海报/截图原图直链转换为缩略图直链（pixhost 专属），用于快速预览。
+function thumbUrl(raw: string): string {
+  const full = cleanPoster(raw)
+  return toPixhostThumbnail(full)
+}
+
 // screenshotUrlList 从资源信息库中的视频截图 BBCode 文本提取图片直链列表。
 function screenshotUrlList(item: ResourceInfoItem | null): string[] {
   if (!item || !item.screenshots) return []
@@ -421,8 +432,8 @@ function screenshotUrlList(item: ResourceInfoItem | null): string[] {
   return matches.length > 0 ? matches : []
 }
 
-// handleScreenshotError 截图加载失败时隐藏，避免破图占位影响阅读。
-function handleScreenshotError(event: Event, url: string) {
+// handleScreenshotError 截图（缩略图）加载失败时回退原图；原图也失败则隐藏，避免破图占位。
+function handleScreenshotError(event: Event, fullUrl: string) {
   const img = event.target as HTMLImageElement | null
   if (!img) return
   if (img.dataset.fallback === '1') {
@@ -430,7 +441,8 @@ function handleScreenshotError(event: Event, url: string) {
     return
   }
   img.dataset.fallback = '1'
-  img.src = url
+  // 缩略图失败，回退到原图直链
+  img.src = fullUrl
 }
 
 async function fetchList() {
@@ -619,6 +631,16 @@ onMounted(fetchList)
   object-fit: cover;
   border-radius: 4px;
   border: 1px solid var(--el-border-color-lighter);
+}
+
+.detail-screenshot-img :deep(.el-image__inner) {
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.poster-thumb :deep(.el-image__inner),
+.detail-poster-img :deep(.el-image__inner) {
+  object-fit: cover;
 }
 
 .break-all {

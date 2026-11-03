@@ -299,105 +299,56 @@
       </el-table-column>
 
       <el-table-column
-        v-if="isColumnVisible('source_data_status')"
-        prop="source_data_status"
-        label="源站数据状态"
-        width="120"
-        align="center"
-        header-align="center"
+        v-for="col in orderedColumns"
+        :key="col.prop"
+        :prop="col.prop"
+        :label="col.label"
+        :width="columnRenderMeta(col.prop).width"
+        :min-width="columnRenderMeta(col.prop).minWidth"
+        :align="columnRenderMeta(col.prop).align"
+        :header-align="columnRenderMeta(col.prop).headerAlign"
+        :sortable="columnRenderMeta(col.prop).sortable"
       >
+        <template #header v-if="col.prop === 'publish_status'">
+          <div class="publish-header-title" title="各目标站点的发布结果汇总：✓成功 =已存在 ✗失败 ⏳进行中">
+            发布
+          </div>
+        </template>
         <template #default="scope">
-          <span :class="getSourceDataStatusClass(scope.row)">
+          <span v-if="col.prop === 'source_data_status'" :class="getSourceDataStatusClass(scope.row)">
             {{ getSourceDataStatusLabel(scope.row) }}
           </span>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('type')"
-        prop="type"
-        label="类型"
-        width="100"
-        align="center"
-        header-align="center"
-      >
-        <template #default="scope">
-          <span :title="scope.row.type || ''">{{ formatStandardValue('type', scope.row.type) }}</span>
-        </template>
-      </el-table-column>
+          <span v-else-if="col.prop === 'type'" :title="scope.row.type || ''">{{
+            formatStandardValue('type', scope.row.type)
+          }}</span>
 
-      <el-table-column
-        v-if="isColumnVisible('medium')"
-        prop="medium"
-        label="媒介"
-        width="110"
-        align="center"
-        header-align="center"
-      >
-        <template #default="scope">
-          <span :title="scope.row.medium || ''">{{
+          <span v-else-if="col.prop === 'medium'" :title="scope.row.medium || ''">{{
             formatStandardValue('medium', scope.row.medium)
           }}</span>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('source')"
-        prop="source"
-        label="地区"
-        width="100"
-        align="center"
-        header-align="center"
-      >
-        <template #default="scope">
-          <span :title="scope.row.source || ''">{{
+          <span v-else-if="col.prop === 'source'" :title="scope.row.source || ''">{{
             formatStandardValue('source', scope.row.source)
           }}</span>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('site_count')"
-        prop="site_count"
-        label="做种数"
-        sortable="custom"
-        width="95"
-        align="center"
-        header-align="center"
-      >
-        <template #default="scope">
-          <span style="display: inline-block; width: 100%; text-align: center">
+          <span
+            v-else-if="col.prop === 'site_count'"
+            style="display: inline-block; width: 100%; text-align: center"
+          >
             {{ scope.row.site_count }} / {{ scope.row.total_site_count }}
           </span>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('save_path')"
-        prop="save_path"
-        label="保存路径"
-        :width="savePathColumnWidth"
-        header-align="center"
-      >
-        <template #default="scope">
           <div
+            v-else-if="col.prop === 'save_path'"
             :title="scope.row.save_path"
             style="width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap"
           >
             {{ shortenPath(scope.row.save_path, SAVE_PATH_DISPLAY_MAX_LENGTH) }}
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="isColumnVisible('downloader')" label="下载器" width="130" align="center" header-align="center">
-        <template #default="scope">
+
           <div
-            style="
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              width: 100%;
-              height: 100%;
-            "
+            v-else-if="col.prop === 'downloader'"
+            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%"
           >
             <div v-if="scope.row.downloaderIds && scope.row.downloaderIds.length > 0">
               <el-tag
@@ -413,28 +364,11 @@
             </div>
             <el-tag v-else type="info" size="small"> 未知下载器 </el-tag>
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column
-        v-if="isColumnVisible('size_formatted')"
-        label="大小"
-        prop="size_formatted"
-        width="100"
-        align="center"
-        sortable="custom"
-      />
 
-      <el-table-column
-        v-if="isColumnVisible('total_uploaded_formatted')"
-        label="总上传量"
-        prop="total_uploaded_formatted"
-        width="110"
-        align="center"
-        sortable="custom"
-      />
-      <el-table-column v-if="isColumnVisible('progress')" label="进度" prop="progress" width="90" align="center" sortable="custom">
-        <template #default="scope">
-          <div style="padding: 1px 0; width: 100%">
+          <div
+            v-else-if="col.prop === 'progress'"
+            style="padding: 1px 0; width: 100%"
+          >
             <el-progress
               :percentage="scope.row.progress"
               :stroke-width="10"
@@ -446,81 +380,53 @@
               {{ scope.row.progress }}%
             </div>
           </div>
-        </template>
-      </el-table-column>
-      <el-table-column v-if="isColumnVisible('state')" label="状态" prop="state" width="120" align="center" header-align="center">
-        <template #default="scope">
+
           <div
-            style="
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              width: 100%;
-              height: 100%;
-            "
+            v-else-if="col.prop === 'state'"
+            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%"
           >
             <el-tag :type="getStateTagType(scope.row.state, scope.row)" size="large">{{
               getDisplayState(scope.row)
             }}</el-tag>
           </div>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('publish_at')"
-        prop="publish_at"
-        label="可发种时间"
-        width="170"
-        align="center"
-        header-align="center"
-        sortable="custom"
-      >
-        <template #default="scope">
-          <div v-if="editingPublishAtId === scope.row.unique_id" class="publish-at-edit" @click.stop>
-            <el-input-number
-              v-model="editingPublishAtHours"
-              :min="1"
-              :step="1"
-              size="small"
-              style="width: 90px"
-              controls-position="right"
-              placeholder="小时"
-              @keyup.enter="confirmPublishAt(scope.row)"
-              ref="publishAtInputRef"
-            />
-            <span style="font-size: 12px; white-space: nowrap; margin-left: 2px; color: #909399">小时</span>
-            <el-button
-              type="danger"
-              size="small"
-              link
-              style="margin-left: 4px"
-              @click.stop="clearPublishAt(scope.row)"
-              title="清除"
+          <template v-else-if="col.prop === 'publish_at'">
+            <div v-if="editingPublishAtId === scope.row.unique_id" class="publish-at-edit" @click.stop>
+              <el-input-number
+                v-model="editingPublishAtHours"
+                :min="1"
+                :step="1"
+                size="small"
+                style="width: 90px"
+                controls-position="right"
+                placeholder="小时"
+                @keyup.enter="confirmPublishAt(scope.row)"
+                ref="publishAtInputRef"
+              />
+              <span style="font-size: 12px; white-space: nowrap; margin-left: 2px; color: #909399">小时</span>
+              <el-button
+                type="danger"
+                size="small"
+                link
+                style="margin-left: 4px"
+                @click.stop="clearPublishAt(scope.row)"
+                title="清除"
+              >
+                ✕
+              </el-button>
+            </div>
+            <div
+              v-else
+              class="publish-at-cell clickable-cell"
+              @click.stop="startPublishAtEdit(scope.row)"
+              title="点击设置可发种时间(小时)"
             >
-              ✕
-            </el-button>
-          </div>
-          <div
-            v-else
-            class="publish-at-cell clickable-cell"
-            @click.stop="startPublishAtEdit(scope.row)"
-            title="点击设置可发种时间(小时)"
-          >
-            {{ scope.row.publish_at ? formatPublishAt(scope.row.publish_at) : '未设置' }}
-          </div>
-        </template>
-      </el-table-column>
+              {{ scope.row.publish_at ? formatPublishAt(scope.row.publish_at) : '未设置' }}
+            </div>
+          </template>
 
-      <el-table-column
-        v-if="isColumnVisible('last_publish_at')"
-        prop="last_publish_at"
-        label="最后发种时间"
-        width="125"
-        align="center"
-        header-align="center"
-      >
-        <template #default="scope">
           <span
+            v-else-if="col.prop === 'last_publish_at'"
             :title="scope.row.last_publish_at ? formatPublishAt(scope.row.last_publish_at) : '未发种'"
           >
             {{
@@ -529,64 +435,35 @@
                 : '未发种'
             }}
           </span>
-        </template>
-      </el-table-column>
 
-      <!-- 发布：各目标站点发布结果汇总（失败优先，点击展开行查看明细） -->
-      <el-table-column
-        v-if="isColumnVisible('publish_status')"
-        prop="publish_status"
-        label="发布"
-        width="152"
-        align="center"
-        header-align="center"
-      >
-        <template #header>
-          <div class="publish-header-title" title="各目标站点的发布结果汇总：✓成功 =已存在 ✗失败 ⏳进行中">
-            发布
+          <div v-else-if="col.prop === 'publish_status'">
+            <div v-if="hasPublishRecords(scope.row)" class="publish-summary-cell">
+              <el-tooltip
+                v-for="item in publishSummaryBadges(scope.row)"
+                :key="item.group"
+                :content="item.tip"
+                placement="top"
+              >
+                <span class="publish-badge" :class="`publish-badge--${item.group}`">
+                  <span class="publish-badge__icon">{{ item.icon }}</span>{{ item.count }}
+                </span>
+              </el-tooltip>
+            </div>
+            <span v-else class="publish-summary-empty">-</span>
           </div>
-        </template>
-        <template #default="scope">
-          <div v-if="hasPublishRecords(scope.row)" class="publish-summary-cell">
-            <el-tooltip
-              v-for="item in publishSummaryBadges(scope.row)"
-              :key="item.group"
-              :content="item.tip"
-              placement="top"
-            >
-              <span class="publish-badge" :class="`publish-badge--${item.group}`">
-                <span class="publish-badge__icon">{{ item.icon }}</span>{{ item.count }}
-              </span>
-            </el-tooltip>
-          </div>
-          <span v-else class="publish-summary-empty">-</span>
-        </template>
-      </el-table-column>
 
-      <el-table-column
-        v-if="isColumnVisible('target_sites_count')"
-        label="可转种"
-        width="100"
-        align="center"
-        header-align="center"
-        prop="target_sites_count"
-        sortable="custom"
-      >
-        <template #default="scope">
           <div
-            style="
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              width: 100%;
-              height: 100%;
-            "
+            v-else-if="col.prop === 'target_sites_count'"
+            style="display: flex; justify-content: center; align-items: center; width: 100%; height: 100%"
           >
             <span v-if="scope.row.target_sites_count !== undefined">{{
               scope.row.target_sites_count
             }}</span>
             <span v-else>-</span>
           </div>
+
+          <!-- 无自定义渲染的列（如 大小/总上传量）直接按 prop 显示 -->
+          <template v-else>{{ scope.row[col.prop] }}</template>
         </template>
       </el-table-column>
 
@@ -1774,7 +1651,59 @@ const defaultTorrentsVisibleColumns = torrentsColumns.map((c) => c.prop)
 // v3 起新增「发布」列（各目标站点发布成功/失败/已存在汇总）。
 const TORRENTS_COLUMNS_VERSION = 3
 const visibleColumns = ref<string[]>([...defaultTorrentsVisibleColumns])
-const isColumnVisible = (prop: string) => visibleColumns.value.includes(prop)
+
+// 可显隐/可排序的列按用户设定顺序返回（隐藏的列不渲染）。
+// visibleColumns 的顺序即表格列显示顺序，供 <el-table-column v-for> 动态渲染。
+const orderedColumns = computed<ColumnDef[]>(() => {
+  return visibleColumns.value
+    .map((prop) => torrentsColumns.find((c) => c.prop === prop))
+    .filter((c): c is ColumnDef => Boolean(c))
+})
+
+// 每列的静态渲染属性（width/align/sortable 等），供 v-for 动态渲染时绑定。
+interface ColumnRenderMeta {
+  width?: number | string
+  minWidth?: number | string
+  align?: string
+  headerAlign?: string
+  sortable?: boolean | 'custom'
+}
+const columnRenderMeta = (prop: string): ColumnRenderMeta => {
+  switch (prop) {
+    case 'source_data_status':
+      return { width: 120, align: 'center', headerAlign: 'center' }
+    case 'type':
+      return { width: 100, align: 'center', headerAlign: 'center' }
+    case 'medium':
+      return { width: 110, align: 'center', headerAlign: 'center' }
+    case 'source':
+      return { width: 100, align: 'center', headerAlign: 'center' }
+    case 'site_count':
+      return { width: 95, align: 'center', headerAlign: 'center', sortable: 'custom' }
+    case 'save_path':
+      return { width: savePathColumnWidth.value, headerAlign: 'center' }
+    case 'downloader':
+      return { width: 130, align: 'center', headerAlign: 'center' }
+    case 'size_formatted':
+      return { width: 100, align: 'center', sortable: 'custom' }
+    case 'total_uploaded_formatted':
+      return { width: 110, align: 'center', sortable: 'custom' }
+    case 'progress':
+      return { width: 90, align: 'center', sortable: 'custom' }
+    case 'state':
+      return { width: 120, align: 'center', headerAlign: 'center' }
+    case 'publish_at':
+      return { width: 170, align: 'center', headerAlign: 'center', sortable: 'custom' }
+    case 'last_publish_at':
+      return { width: 125, align: 'center', headerAlign: 'center' }
+    case 'publish_status':
+      return { width: 152, align: 'center', headerAlign: 'center' }
+    case 'target_sites_count':
+      return { width: 100, align: 'center', headerAlign: 'center', sortable: 'custom' }
+    default:
+      return {}
+  }
+}
 
 const buildCurrentUiSettings = () => ({
   page_size: pageSize.value,

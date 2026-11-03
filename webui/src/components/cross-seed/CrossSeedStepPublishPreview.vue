@@ -27,11 +27,12 @@
         <div class="row-content resource-info-content">
           <el-image
             v-if="torrentData.resource_info.poster_url"
-            :src="getProxyImageUrl(torrentData.resource_info.poster_url)"
+            :src="getThumbImageUrl(torrentData.resource_info.poster_url)"
             :preview-src-list="[torrentData.resource_info.poster_url]"
             preview-teleported
             fit="cover"
             class="resource-info-poster"
+            @error="handleThumbErrorWithFallback(torrentData.resource_info.poster_url, 'poster', 0)"
           />
           <div class="resource-info-fields">
             <div class="resource-info-line">
@@ -71,13 +72,17 @@
             <div class="resource-info-line resource-info-screenshots" v-if="resourceInfoScreenshotImages.length > 0">
               <span class="param-label">视频截图：</span>
               <div class="resource-info-screenshot-gallery">
-                <img
+                <el-image
                   v-for="(url, index) in resourceInfoScreenshotImages"
                   :key="'ri-screenshot-' + index"
-                  :src="getProxyImageUrl(url)"
+                  :src="getThumbImageUrl(url)"
+                  :preview-src-list="resourceInfoScreenshotImages"
+                  :initial-index="index"
+                  preview-teleported
+                  fit="cover"
                   :alt="'截图 ' + (index + 1)"
                   class="resource-info-screenshot-img"
-                  @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                  @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
                 />
               </div>
             </div>
@@ -294,14 +299,18 @@
           <!-- 海报图片 -->
           <div class="description-section" v-if="posterImages.length > 0">
             <div class="image-gallery">
-              <img
+              <el-image
                 v-for="(url, index) in posterImages"
                 :key="'poster-preview-' + index"
-                :src="getProxyImageUrl(url)"
+                :src="getThumbImageUrl(url)"
+                :preview-src-list="posterImages"
+                :initial-index="index"
+                preview-teleported
+                fit="contain"
                 :alt="'海报 ' + (index + 1)"
                 class="preview-image-inline"
                 style="width: 300px"
-                @error="handleImageErrorWithProxy(url, 'poster', index)"
+                @error="handleThumbErrorWithFallback(url, 'poster', index)"
               />
             </div>
           </div>
@@ -318,13 +327,17 @@
           <!-- 视频截图 -->
           <div class="description-section" v-if="screenshotImages.length > 0">
             <div class="image-gallery">
-              <img
+              <el-image
                 v-for="(url, index) in screenshotImages"
                 :key="'screenshot-preview-' + index"
-                :src="getProxyImageUrl(url)"
+                :src="getThumbImageUrl(url)"
+                :preview-src-list="screenshotImages"
+                :initial-index="index"
+                preview-teleported
+                fit="contain"
                 :alt="'截图 ' + (index + 1)"
                 class="preview-image-inline"
-                @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
               />
             </div>
           </div>
@@ -347,8 +360,8 @@ const {
   parseBBCode,
   posterImages,
   screenshotImages,
-  getProxyImageUrl,
-  handleImageErrorWithProxy,
+  getThumbImageUrl,
+  handleThumbErrorWithFallback,
 } = useCrossSeedPanelContext()
 
 // resourceInfoScreenshotImages 解析资源信息库命中的视频截图（BBCode [img]url[/img]），供预览区展示。

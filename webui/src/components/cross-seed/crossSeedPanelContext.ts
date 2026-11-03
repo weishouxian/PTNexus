@@ -234,7 +234,13 @@ export interface CrossSeedPanelContext {
   posterErrorMessage: Ref<string>
   posterImages: ComputedRef<string[]>
   getProxyImageUrl: (url: string) => string
+  /** 生成用于预览的缩略图 URL：pixhost 原图转缩略图，其余走代理逻辑。 */
+  getThumbImageUrl: (url: string) => string
+  /** 将 pixhost 原图直链转换为缩略图直链（非 pixhost 原样返回）。 */
+  toPixhostThumbnail: (url: string) => string
   handleImageErrorWithProxy: (url: string, type: 'poster' | 'screenshot', index: number) => void
+  /** 缩略图加载失败时回退原图（pixhost 缩略图专用，其余走代理逻辑）。 */
+  handleThumbErrorWithFallback: (url: string, type: 'poster' | 'screenshot', index: number) => void
   refreshScreenshots: () => Promise<void>
   isRefreshingScreenshots: Ref<boolean>
   screenshotCount: Ref<number>

@@ -330,13 +330,17 @@
                   <div class="preview-header">海报预览</div>
                   <div class="image-preview-container">
                     <template v-if="posterImages.length">
-                      <img
+                      <el-image
                         v-for="(url, index) in posterImages"
                         :key="'poster-' + index"
-                        :src="getProxyImageUrl(url)"
+                        :src="getThumbImageUrl(url)"
+                        :preview-src-list="posterImages"
+                        :initial-index="index"
+                        preview-teleported
+                        fit="contain"
                         alt="海报预览"
                         class="preview-image"
-                        @error="handleImageErrorWithProxy(url, 'poster', index)"
+                        @error="handleThumbErrorWithFallback(url, 'poster', index)"
                       />
                     </template>
                     <div v-else class="preview-placeholder">暂无海报预览</div>
@@ -414,11 +418,15 @@
                 <el-carousel :interval="5000" height="500px" indicator-position="outside">
                   <el-carousel-item v-for="(url, index) in screenshotImages" :key="'ss-' + index">
                     <div class="carousel-image-wrapper">
-                      <img
-                        :src="getProxyImageUrl(url)"
+                      <el-image
+                        :src="getThumbImageUrl(url)"
+                        :preview-src-list="screenshotImages"
+                        :initial-index="index"
+                        preview-teleported
+                        fit="contain"
                         alt="截图预览"
                         class="carousel-image"
-                        @error="handleImageErrorWithProxy(url, 'screenshot', index)"
+                        @error="handleThumbErrorWithFallback(url, 'screenshot', index)"
                       />
                     </div>
                   </el-carousel-item>
@@ -620,8 +628,8 @@ const {
   isRefreshingPosters,
   posterErrorMessage,
   posterImages,
-  getProxyImageUrl,
-  handleImageErrorWithProxy,
+  getThumbImageUrl,
+  handleThumbErrorWithFallback,
   refreshScreenshots,
   isRefreshingScreenshots,
   screenshotCount,
