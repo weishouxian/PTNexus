@@ -853,9 +853,9 @@ func libplaceboFilter(options toneMapChainOptions) string {
 // 参数/返回：isHDR 标记源是否为 HDR；options 定义链尾与兜底链；返回按优先级排序的候选列表。
 // 失败场景：无。
 // 副作用：仅构造字符串，不执行外部命令。
-// 优先级说明：libplacebo 能正确处理 Dolby Vision Profile 5 等非标准色彩空间（需要可用的 Vulkan 设备，
-// 无独显时显式用 hwcontext 创建软件 Vulkan/lavapipe）；常规 zscale 依赖帧内色彩元数据；
-// 显式 zscale 在元数据缺失时补 BT.2020/PQ 输入参数；兜底链只保证出图。
+// 优先级说明：zscale（纯 CPU）优先，能稳定色调映射 HDR10/HLG 且无需 GPU；CPU-only 机器上 libplacebo 背后的
+// 软件 Vulkan（lavapipe）可能产出绿屏/花屏，故 libplacebo 仅作兜底——它仍处理 Dolby Vision Profile 5（IPTPQc2，
+// zscale 无法解码、会先失败再落到 libplacebo）；显式 zscale 在元数据缺失时补 BT.2020/PQ 输入参数；兜底链只保证出图。
 func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
 	if !isHDR {
 		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
@@ -863,17 +863,17 @@ func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []ton
 	lbFilter := libplaceboFilter(options)
 	return []toneMapFilterCandidate{
 		{
-			Name:    "libplacebo",
-			Filter:  lbFilter,
-			PreArgs: libplaceboHwDeviceArgs,
-		},
-		{
 			Name:   "zscale",
 			Filter: "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
 		},
 		{
 			Name:   "zscale-explicit",
 			Filter: "zscale=pin=bt2020:tin=smpte2084:min=bt2020nc:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:    "libplacebo",
+			Filter:  lbFilter,
+			PreArgs: libplaceboHwDeviceArgs,
 		},
 		{
 			Name:     "passthrough",
@@ -976,6 +976,7 @@ func captureDVPNGWithFFmpeg(ffmpegPath string, videoPath string, second float64,
 		args := prependToneMapPreArgs(candidate, []string{
 			"-y", "-v", "error",
 			"-ss", fmt.Sprintf("%.3f", second),
+			"-accurate_seek",
 			"-i", videoPath,
 			"-frames:v", "1",
 			"-an",

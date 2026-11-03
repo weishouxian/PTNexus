@@ -240,6 +240,7 @@ func takeScreenshotDV(videoPath, outputPath string, timePoint float64) error {
 		args := prependToneMapPreArgs(candidate, []string{
 			"-y", "-v", "error",
 			"-ss", fmt.Sprintf("%.3f", timePoint),
+			"-accurate_seek",
 			"-i", videoPath,
 			"-frames:v", "1",
 			"-an",
@@ -443,11 +444,11 @@ func libplaceboFilter(options toneMapChainOptions) string {
 }
 
 // buildToneMapFilterCandidates returns the tone mapping filter chains ordered by priority.
-// libplacebo handles non-standard color spaces such as Dolby Vision Profile 5 (IPTPQc2) and needs a
-// working Vulkan device (created explicitly via hwcontext so software Vulkan/lavapipe works on CPU-only
-// hosts); the zscale chains rely on frame color metadata and the explicit one supplies BT.2020/PQ
-// input parameters when metadata is missing; the last chain only resamples pixels so that a screenshot
-// is always produced, at the cost of inaccurate colors.
+// zscale (pure CPU) is tried first: it reliably tone-maps HDR10/HLG and needs no GPU. On CPU-only hosts
+// the Vulkan software renderer (lavapipe) behind libplacebo can produce green/garbled output, so
+// libplacebo is only a fallback — it still handles Dolby Vision Profile 5 (IPTPQc2), which zscale cannot
+// decode and thus fails on before libplacebo is reached. The last chain only resamples pixels so that a
+// screenshot is always produced, at the cost of inaccurate colors.
 func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []toneMapFilterCandidate {
 	if !isHDR {
 		return []toneMapFilterCandidate{{Name: "sdr", Filter: options.SDRFilter}}
@@ -455,17 +456,17 @@ func buildToneMapFilterCandidates(isHDR bool, options toneMapChainOptions) []ton
 	lbFilter := libplaceboFilter(options)
 	return []toneMapFilterCandidate{
 		{
-			Name:    "libplacebo",
-			Filter:  lbFilter,
-			PreArgs: libplaceboHwDeviceArgs,
-		},
-		{
 			Name:   "zscale",
 			Filter: "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
 		},
 		{
 			Name:   "zscale-explicit",
 			Filter: "zscale=pin=bt2020:tin=smpte2084:min=bt2020nc:rin=pc:t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=" + options.OutRange + "," + options.HDRTail,
+		},
+		{
+			Name:    "libplacebo",
+			Filter:  lbFilter,
+			PreArgs: libplaceboHwDeviceArgs,
 		},
 		{
 			Name:     "passthrough",
@@ -521,6 +522,7 @@ func takePreviewScreenshot(videoPath, outputPath string, timePoint float64, isHD
 			"-y",
 			"-v", "error",
 			"-ss", fmt.Sprintf("%.3f", timePoint),
+			"-accurate_seek",
 			"-i", videoPath,
 			"-frames:v", "1",
 			"-an",
