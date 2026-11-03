@@ -252,6 +252,49 @@ download_bdinfo_tools() {
     return 0
 }
 
+# 下载静态 ffmpeg 9.0（BtbN 静态构建）
+# 系统源 ffmpeg（Debian 12=5.1 / 13=7.1.5）对 HEVC 蓝光原盘(m2ts)快速 seek 有
+# `Could not find ref with POC` 固有 bug，命中就灰屏花帧；ffmpeg 9.0 起能
+# `Skipping invalid undecodable NALU` 继续解码产出正确画面。故下载静态 9.0 并用
+# PTNEXUS_FFMPEG_PATH / PTNEXUS_FFPROBE_PATH 环境变量让 proxy 优先使用它。
+download_ffmpeg() {
+    log "正在下载静态 ffmpeg 9.0..."
+
+    local FFMPEG_DIR="/opt/ffmpeg-static"
+    local FFMPEG_TARBALL="ffmpeg-n9.0-latest-$([ "$ARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64")-gpl-9.0.tar.xz"
+    local FFMPEG_ASSET="ffmpeg-n9.0-latest-$([ "$ARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64")-gpl-9.0.tar.xz"
+    local FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_ASSET"
+
+    # 已有完整的 ffmpeg 9.0 则跳过（避免每次更新重复下载 150MB+）
+    if [ -x "$FFMPEG_DIR/ffmpeg-n9.0-latest-$([ "$ARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64")-gpl-9.0/bin/ffmpeg" ] \
+       && [ -x "$FFMPEG_DIR/ffmpeg-n9.0-latest-$([ "$ARCH" = "arm64" ] && echo "linuxarm64" || echo "linux64")-gpl-9.0/bin/ffprobe" ]; then
+        log "静态 ffmpeg 9.0 已存在，跳过下载"
+        return 0
+    fi
+
+    mkdir -p "$FFMPEG_DIR"
+    cd "$FFMPEG_DIR"
+
+    log "下载: $FFMPEG_URL"
+    if ! curl -L -f --connect-timeout 20 --retry 3 -o "$FFMPEG_TARBALL" "$FFMPEG_URL"; then
+        warn "静态 ffmpeg 9.0 下载失败（将回退到系统 ffmpeg，HEVC 原盘截图可能花帧）"
+        cd - >/dev/null
+        return 1
+    fi
+
+    log "解压 ffmpeg 9.0..."
+    tar -xJf "$FFMPEG_TARBALL" || {
+        warn "ffmpeg 9.0 解压失败（将回退到系统 ffmpeg）"
+        cd - >/dev/null
+        return 1
+    }
+    rm -f "$FFMPEG_TARBALL"
+
+    log "静态 ffmpeg 9.0 就绪"
+    cd - >/dev/null
+    return 0
+}
+
 # 设置权限
 set_permissions() {
     log "设置文件权限..."
@@ -397,6 +440,16 @@ fi
 
 # 4. 以后台模式启动程序
 echo "[3/4] 正在后台启动 '$PROXY_BIN' (端口: $PORT_INPUT)..."
+
+# 优先使用静态 ffmpeg 9.0（HEVC 原盘截图修复花帧），不存在则回退系统 ffmpeg
+FFMPEG_STATIC_DIR="/opt/ffmpeg-static/ffmpeg-n9.0-latest-$([ "$(uname -m)" = "aarch64" ] && echo "linuxarm64" || echo "linux64")-gpl-9.0"
+if [ -x "$FFMPEG_STATIC_DIR/bin/ffmpeg" ] && [ -x "$FFMPEG_STATIC_DIR/bin/ffprobe" ]; then
+    export PTNEXUS_FFMPEG_PATH="$FFMPEG_STATIC_DIR/bin/ffmpeg"
+    export PTNEXUS_FFPROBE_PATH="$FFMPEG_STATIC_DIR/bin/ffprobe"
+    echo "已启用静态 ffmpeg 9.0: $PTNEXUS_FFMPEG_PATH"
+else
+    echo "未找到静态 ffmpeg 9.0，回退到系统 ffmpeg（HEVC 原盘截图可能花帧）"
+fi
 
 # 使用 nohup 将程序放到后台，并将标准输出和错误输出重定向到日志文件
 # 将端口作为参数传递给程序
@@ -591,6 +644,11 @@ main() {
     # 下载BDInfo工具
     if ! download_bdinfo_tools; then
         warn "BDInfo工具下载失败，代理程序仍可正常使用但BDInfo功能将不可用"
+    fi
+
+    # 下载静态 ffmpeg 9.0（HEVC 原盘截图修复花帧，失败不中断）
+    if ! download_ffmpeg; then
+        warn "静态 ffmpeg 9.0 下载失败，将回退到系统 ffmpeg"
     fi
 
     set_permissions
