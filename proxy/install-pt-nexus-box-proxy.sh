@@ -570,7 +570,22 @@ stop_running_proxy() {
             rm -f "$PID_FILE"
         fi
     else
-        log "未检测到正在运行的代理程序"
+        log "未检测到 PID 文件，按进程名兜底检查..."
+    fi
+
+    # 兜底：PID 文件缺失（如手动 start-wrapper.sh 启动）或 kill 失败时，
+    # 用 pkill 按二进制名停掉残留进程——否则运行中的二进制会占用文件，
+    # 导致下一步 curl 覆盖下载报 `Text file busy` / `curl: (23)`。
+    if pgrep -f "pt-nexus-box-proxy" > /dev/null 2>&1; then
+        warn "仍检测到 pt-nexus-box-proxy 进程，强制按进程名清理..."
+        pkill -9 -f "pt-nexus-box-proxy" 2>/dev/null || true
+        sleep 1
+    fi
+
+    # 若二进制文件仍被占用（旧进程未及时释放），先移除旧文件再下载，
+    # 避免 curl 以覆盖写方式打开运行中文件时报 ETXTBSY。
+    if [ -f "$INSTALL_DIR/pt-nexus-box-proxy" ]; then
+        rm -f "$INSTALL_DIR/pt-nexus-box-proxy" 2>/dev/null || true
     fi
 }
 
