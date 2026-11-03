@@ -260,6 +260,106 @@ func Detail(apiBase, apiKey, torrentID string, timeout time.Duration) (DetailDat
 	return detail, nil
 }
 
+// MemberProfile 表示 M-Team /api/member/profile 返回的用户信息。
+// 只保留用户 ID 与昵称/账号名，其余字段不解析。
+type MemberProfile struct {
+	ID       string `json:"id"`
+	Nickname string `json:"nickname"`
+	Account  string `json:"account"`
+	Username string `json:"username"`
+}
+
+// DisplayName 返回用户的可读名称，优先昵称，其次账号名，再次 username。
+func (p MemberProfile) DisplayName() string {
+	for _, name := range []string{p.Nickname, p.Account, p.Username} {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// Profile 调用 /api/member/profile 读取当前令牌对应用户的信息。
+// 参数/返回：apiBase 为 API 根地址，apiKey 为存取令牌；返回用户 ID 与昵称。
+// 失败场景：缺少令牌、网络错误、HTTP 非 2xx、响应非 JSON、接口返回 code!=0。
+// 副作用：发起一次 HTTP 请求。
+//
+// 说明：该端点在 M-Team 官方「允许第三方调用」清单内（/member/profile），
+// 用 x-api-key 鉴权即可调通；响应既可能是 {result:{...}} 也可能是 {data:{...}}，
+// 故解析时两种包裹都尝试。
+//
+// 注意：M-Team 官方 API **只支持 POST**，GET 会返回 code=1「Request method 'GET'
+// is not supported」，故此处用 POST（空 form body）。
+func Profile(apiBase, apiKey string, timeout time.Duration) (MemberProfile, error) {
+	var profile MemberProfile
+	// apiBase 可能是网页域名（如 kp.m-team.cc）或 API 域名；用 APIBaseFor 统一推导到 API 根。
+	root := APIBaseFor(apiBase)
+	token := strings.TrimSpace(apiKey)
+	if token == "" {
+		return profile, errors.New("缺少 API 令牌")
+	}
+	if timeout <= 0 {
+		timeout = 45 * time.Second
+	}
+
+	endpoint := root + "/api/member/profile"
+	request, err := http.NewRequest(http.MethodPost, endpoint, nil)
+	if err != nil {
+		return profile, fmt.Errorf("构造请求失败: %w", err)
+	}
+	request.Header.Set("User-Agent", WebUserAgent)
+	request.Header.Set("Accept", "application/json, text/plain, */*")
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("x-api-key", token)
+
+	client := &http.Client{Timeout: timeout}
+	response, err := client.Do(request)
+	if err != nil {
+		return profile, fmt.Errorf("请求 m-team 失败: %w", err)
+	}
+	defer response.Body.Close()
+
+	respBody, err := io.ReadAll(response.Body)
+	if err != nil {
+		return profile, fmt.Errorf("读取响应失败: %w", err)
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return profile, fmt.Errorf("m-team 返回 HTTP %d: %s", response.StatusCode, BodySnippet(respBody))
+	}
+
+	// 先按通用响应解析 code/message，判断业务是否成功。
+	var parsed Response
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return profile, fmt.Errorf("m-team 响应解析失败: %s", BodySnippet(respBody))
+	}
+	if !parsed.IsSuccess() {
+		message := strings.TrimSpace(parsed.Message)
+		if message == "" {
+			message = BodySnippet(respBody)
+		}
+		return profile, fmt.Errorf("m-team 接口返回失败(code=%s): %s", parsed.CodeString(), message)
+	}
+
+	// 用户信息可能被 result 或 data 字段包裹（不同接口/版本字段名不同），也可能平铺在顶层。
+	// 用 RawMessage 兜底，按 result > data > 顶层 顺序取第一个非空对象。
+	var wrapper map[string]json.RawMessage
+	_ = json.Unmarshal(respBody, &wrapper)
+	payload := respBody
+	for _, key := range []string{"result", "data"} {
+		if raw, ok := wrapper[key]; ok && len(raw) > 0 && raw[0] == '{' {
+			payload = raw
+			break
+		}
+	}
+	if err := json.Unmarshal(payload, &profile); err != nil {
+		return profile, fmt.Errorf("m-team 用户信息解析失败: %s", BodySnippet(respBody))
+	}
+	if strings.TrimSpace(profile.ID) == "" && strings.TrimSpace(profile.DisplayName()) == "" {
+		return profile, fmt.Errorf("m-team 用户信息缺少 id/nickname（令牌可能无效）")
+	}
+	return profile, nil
+}
+
 // BodySnippet 把响应体裁剪成单行短文本，用于日志与错误信息，避免刷屏。
 func BodySnippet(body []byte) string {
 	const limit = 200

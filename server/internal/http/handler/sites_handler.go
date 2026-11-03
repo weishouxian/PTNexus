@@ -11,10 +11,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/pt-nexus/server/internal/repository"
 	publishdupe "github.com/pt-nexus/server/internal/service/publish/dupe"
+	"github.com/pt-nexus/server/internal/service/sitehealth"
 )
 
 type SitesHandler struct {
-	repo *repository.SiteRepository
+	repo      *repository.SiteRepository
+	alertRepo *repository.SiteAlertRepository
+	health    *sitehealth.Service
 }
 
 var specialPublisherSiteCodes = map[string]struct{}{
@@ -25,6 +28,12 @@ var specialPublisherSiteCodes = map[string]struct{}{
 
 func NewSitesHandler(repo *repository.SiteRepository) *SitesHandler {
 	return &SitesHandler{repo: repo}
+}
+
+// SetSiteHealth 注入站点健康检测依赖（提醒仓库 + 检测服务），供定时检测与提醒接口使用。
+func (h *SitesHandler) SetSiteHealth(alertRepo *repository.SiteAlertRepository, health *sitehealth.Service) {
+	h.alertRepo = alertRepo
+	h.health = health
 }
 
 func (h *SitesHandler) SitesList(c *gin.Context) {
@@ -207,10 +216,10 @@ func (h *SitesHandler) UpdateSiteCookie(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("站点 '%s' 的 Cookie 已成功更新。", nickname)})
 }
 
-// CheckSiteCookie 校验站点 Cookie 是否有效。
-// 参数/返回：请求体可含 base_url 与 cookie（优先取请求体；缺省时按 id 从库读取）；
-// 返回 {"success":true,"valid":bool,"reason":"...","message":"..."}。
-// 说明：带 Cookie 访问站点首页判断登录态，供站点管理「检验 Cookie」按钮使用。
+// CheckSiteCookie 校验站点 Cookie（或 M-Team API 令牌）是否有效。
+// 参数/返回：请求体可含 base_url、cookie 与 site（站点代码，用于识别非 NexusPHP 站点）；
+// 缺省时按 id 从库读取。返回 {"success":true,"valid":bool,"reason":"...","user_id":"...","username":"..."}。
+// 说明：M-Team 走 x-api-key 令牌通道（/member/profile），其余站点带 Cookie 访问首页判断登录态。
 // 副作用：向目标站点发起一次 GET 请求，只读。
 func (h *SitesHandler) CheckSiteCookie(c *gin.Context) {
 	payload := map[string]any{}
@@ -218,6 +227,8 @@ func (h *SitesHandler) CheckSiteCookie(c *gin.Context) {
 
 	baseURL := strings.TrimSpace(toString(payload["base_url"], ""))
 	cookie := strings.TrimSpace(toString(payload["cookie"], ""))
+	passkey := strings.TrimSpace(toString(payload["passkey"], ""))
+	siteCode := strings.TrimSpace(toString(payload["site"], ""))
 
 	// 未直接给 base_url/cookie 时，按站点 id 回读库里的配置，方便「列表页一键校验」。
 	if (baseURL == "" || cookie == "") && !isFalsyID(payload["id"]) {
@@ -229,10 +240,16 @@ func (h *SitesHandler) CheckSiteCookie(c *gin.Context) {
 			if cookie == "" {
 				cookie = strings.TrimSpace(toString(site["cookie"], ""))
 			}
+			if passkey == "" {
+				passkey = strings.TrimSpace(toString(site["passkey"], ""))
+			}
+			if siteCode == "" {
+				siteCode = strings.TrimSpace(toString(site["site"], ""))
+			}
 		}
 	}
 
-	valid, reason, err := publishdupe.CheckCookie(baseURL, cookie)
+	valid, reason, user, err := publishdupe.CheckCookie(baseURL, siteCode, cookie, passkey)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -243,11 +260,77 @@ func (h *SitesHandler) CheckSiteCookie(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"valid":   valid,
-		"reason":  reason,
-		"message": reason,
+		"success":  true,
+		"valid":    valid,
+		"reason":   reason,
+		"message":  reason,
+		"user_id":  user.UserID,
+		"username": user.Username,
 	})
+}
+
+// CheckAllSitesCookie 一键检测所有站点 Cookie/Passkey 的有效性。
+// 参数/返回：无入参；返回 {"success":true,"message":"..."}，检测结果异步写入站内提醒。
+// 说明：触发 sitehealth 服务立即跑一次全量检测，不阻塞等待完成。
+// 副作用：触发后台检测任务（对每个站点发起请求）。
+func (h *SitesHandler) CheckAllSitesCookie(c *gin.Context) {
+	if h.health == nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "站点健康检测服务未初始化"})
+		return
+	}
+	h.health.TriggerCheck()
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已触发全量检测，结果稍后写入站内提醒"})
+}
+
+// SiteAlerts 返回站内站点提醒列表（含未读数量）。
+// 参数/返回：query 参数 limit 限制条数（默认 100）；返回 {"success":true,"alerts":[...],"unread":N}。
+// 副作用：只读。
+func (h *SitesHandler) SiteAlerts(c *gin.Context) {
+	if h.alertRepo == nil {
+		c.JSON(http.StatusOK, gin.H{"success": true, "alerts": []any{}, "unread": 0})
+		return
+	}
+	limit := 100
+	if v, err := strconv.Atoi(c.DefaultQuery("limit", "100")); err == nil && v > 0 {
+		limit = v
+	}
+	alerts, err := h.alertRepo.ListRecent(limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "获取提醒列表失败"})
+		return
+	}
+	unread, _ := h.alertRepo.UnreadCount()
+	c.JSON(http.StatusOK, gin.H{"success": true, "alerts": alerts, "unread": unread})
+}
+
+// MarkSiteAlertsRead 将全部站点提醒标记为已读。
+// 参数/返回：无入参；返回 {"success":true}。
+// 副作用：更新 site_alerts 表的 read 标记。
+func (h *SitesHandler) MarkSiteAlertsRead(c *gin.Context) {
+	if h.alertRepo == nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	if err := h.alertRepo.MarkAllRead(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "标记已读失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// ClearSiteAlerts 清空全部站点提醒（物理删除）。
+// 参数/返回：无入参；返回 {"success":true}。
+// 副作用：删除 site_alerts 表全部记录。
+func (h *SitesHandler) ClearSiteAlerts(c *gin.Context) {
+	if h.alertRepo == nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	if err := h.alertRepo.ClearAll(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "清空提醒失败"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
 func (h *SitesHandler) SitesStatus(c *gin.Context) {

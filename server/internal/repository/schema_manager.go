@@ -72,6 +72,11 @@ func (m *SchemaManager) EnsureSchema() error {
 		}
 	}
 
+	// 站点健康检测提醒表（sqlite/mysql 通用，GORM 推导列结构）。
+	if err := NewSiteAlertRepository(m.store).Migrate(); err != nil {
+		return fmt.Errorf("创建站点提醒表失败: %w", err)
+	}
+
 	for tableName, columns := range m.columnSpecs() {
 		if err := m.ensureTableColumns(tableName, columns); err != nil {
 			return err
@@ -1261,6 +1266,8 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			// tags 站点自定义标签（JSON 字符串数组，如 ["电影","通用"]），发布时按标签一键勾选站点。
 			{name: "tags", definition: map[string]string{"sqlite": "TEXT", "mysql": "LONGTEXT", "postgresql": "TEXT"}},
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
+			// check_cookie_enabled 站点健康检测开关：1=参与定时 Cookie 检测，0=跳过该站点。
+			{name: "check_cookie_enabled", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 1", "mysql": "TINYINT(1) NOT NULL DEFAULT 1", "postgresql": "INTEGER NOT NULL DEFAULT 1"}},
 		},
 		"app_settings": {
 			{name: "setting_key", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(64) NOT NULL", "postgresql": "VARCHAR(64) NOT NULL"}},

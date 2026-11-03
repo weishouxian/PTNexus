@@ -24,6 +24,7 @@ import (
 	"github.com/pt-nexus/server/internal/service/bangumi"
 	migrationflow "github.com/pt-nexus/server/internal/service/migrationflow"
 	"github.com/pt-nexus/server/internal/service/scheduledseed"
+	"github.com/pt-nexus/server/internal/service/sitehealth"
 )
 
 // App 封装 Gin 引擎实例，供主程序启动 HTTP 服务。
@@ -79,6 +80,9 @@ func NewApp() (*App, error) {
 	crossSeedService := service.NewCrossSeedService(repository.NewCrossSeedRepository(store), cfgManager)
 
 	siteRepo := repository.NewSiteRepository(store)
+	alertRepo := repository.NewSiteAlertRepository(store)
+	siteHealthService := sitehealth.NewService(siteRepo, alertRepo, cfgManager)
+	siteHealthService.Start()
 	torrentRepo := repository.NewTorrentRepository(store)
 	migrateRepo := repository.NewMigrateRepository(store)
 	queueRepo := repository.NewPublishQueueRepository(store)
@@ -190,6 +194,7 @@ func NewApp() (*App, error) {
 	settingsHandler := handler.NewSettingsHandler(settingsService, torrentRepo, torrentDataRepo, siteRepo)
 	configHandler := handler.NewConfigHandler(settingsService)
 	sitesHandler := handler.NewSitesHandler(siteRepo)
+	sitesHandler.SetSiteHealth(alertRepo, siteHealthService)
 	torrentsHandler := handler.NewTorrentsHandler(torrentRepo)
 	torrentDataHandler := handler.NewTorrentDataHandler(torrentDataService)
 	statsHandler := handler.NewStatsHandler(statsService)
@@ -290,6 +295,10 @@ func registerRoutes(
 		api.POST("/sites/delete", sitesHandler.DeleteSite)
 		api.POST("/sites/update_cookie", sitesHandler.UpdateSiteCookie)
 		api.POST("/sites/check_cookie", sitesHandler.CheckSiteCookie)
+		api.POST("/sites/check_cookie_all", sitesHandler.CheckAllSitesCookie)
+		api.GET("/sites/alerts", sitesHandler.SiteAlerts)
+		api.POST("/sites/alerts/read", sitesHandler.MarkSiteAlertsRead)
+		api.POST("/sites/alerts/clear", sitesHandler.ClearSiteAlerts)
 		api.POST("/sites/update_order", sitesHandler.UpdateSitesOrder)
 		// 站点标签批量操作（列表页勾选多个站点后统一打标签）。
 		api.POST("/sites/batch_tags", sitesHandler.BatchUpdateSiteTags)

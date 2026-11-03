@@ -14,9 +14,10 @@ import (
 //
 // JSON 不支持注释，字段缺失一律按零值处理（allow_episode_publish 即 false）。
 type SitesDataRow struct {
-	Site  string `json:"site"`
-	Nick  string `json:"nickname"`
-	Allow bool   `json:"allow_episode_publish"`
+	Site      string `json:"site"`
+	Nick      string `json:"nickname"`
+	Allow     bool   `json:"allow_episode_publish"`
+	Migration int    `json:"migration"`
 }
 
 // EnvAllowEpisodePublish 是「分集发布」全局总开关的环境变量名。
@@ -85,4 +86,69 @@ func loadSitesDataRows() ([]SitesDataRow, error) {
 		return nil, err
 	}
 	return rows, nil
+}
+
+// IsSupportedSite 判断站点标识是否在站点注册表（sites_data.json）中声明。
+// 参数/返回：siteCode 为站点标识（大小写不敏感）；返回是否受支持。
+//
+// 说明：
+//  1. 这是「站点是否受本项目支持」的唯一判据——sites_data.json 是站点身份、
+//     migration 角色、限速等元数据的唯一真源（启动时 SyncSitesFromJSON 据此同步进 sites 表）；
+//  2. 匹配与 SyncSitesFromJSON / SiteAllowsEpisodePublish 一致：先按 site（统一小写）匹配，
+//     再按 nickname 匹配（兼容传昵称）；
+//  3. 读文件失败一律返回 false（fail-closed），不误判为受支持。
+//
+// 副作用：每次调用读一次 sites_data.json（同 SiteAllowsEpisodePublish）。
+func IsSupportedSite(siteCode string) bool {
+	code := strings.TrimSpace(siteCode)
+	if code == "" {
+		return false
+	}
+	rows, err := loadSitesDataRows()
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if strings.ToLower(strings.TrimSpace(row.Site)) == strings.ToLower(code) {
+			return true
+		}
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(row.Nick) == code {
+			return true
+		}
+	}
+	return false
+}
+
+// SiteIsActive 判断站点是否「参与发种/转种」——即 sites_data.json 中 migration ∈ {1,2,3}。
+// 参数/返回：siteCode 为站点标识（大小写不敏感，可传 site 或 nickname）；返回是否参与。
+//
+// 说明：
+//  1. 与前端「已有支持站点」筛选口径一致：migration=0 表示仅登记在册、不参与发种/转种，
+//     这类站点不应纳入 Cookie 健康检测（用户不会给冷门站配凭据并期望被检测）；
+//  2. 匹配顺序与 IsSupportedSite 一致：先按 site（统一小写），再按 nickname（原样）；
+//  3. 读文件失败一律返回 false（fail-closed）。
+//
+// 副作用：每次调用读一次 sites_data.json。
+func SiteIsActive(siteCode string) bool {
+	code := strings.TrimSpace(siteCode)
+	if code == "" {
+		return false
+	}
+	rows, err := loadSitesDataRows()
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if strings.ToLower(strings.TrimSpace(row.Site)) == strings.ToLower(code) {
+			return row.Migration == 1 || row.Migration == 2 || row.Migration == 3
+		}
+	}
+	for _, row := range rows {
+		if strings.TrimSpace(row.Nick) == code {
+			return row.Migration == 1 || row.Migration == 2 || row.Migration == 3
+		}
+	}
+	return false
 }

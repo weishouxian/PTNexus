@@ -325,8 +325,8 @@ const defaultDupeUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:157.0
 // looksLikeVerificationError 判断响应是否为限流/人机验证提示页。
 func looksLikeVerificationError(body string) bool {
 	limit := len(body)
-	if limit > 8192 {
-		limit = 8192
+	if limit > 64*1024 {
+		limit = 64 * 1024
 	}
 	sample := body[:limit]
 	for _, marker := range []string{
@@ -341,17 +341,23 @@ func looksLikeVerificationError(body string) bool {
 }
 
 // looksLikeLoginPage 判断响应是否为登录页。
+//
+// 采样窗口取 64KB 而非早期的 8KB：部分站点（如猫站 pterclub）登录表单位于页面较靠后位置
+// （前面是大量 CSS/脚本/导航），8KB 采样会把 name="username" 等登录特征截断在窗口之外，
+// 导致无效 Cookie 被误判为「有效」。64KB 覆盖了绝大多数 NexusPHP 页面的表单区，同时避免全文扫描。
 func looksLikeLoginPage(body string, extraMarkers []string) bool {
 	limit := len(body)
-	if limit > 8192 {
-		limit = 8192
+	if limit > 64*1024 {
+		limit = 64 * 1024
 	}
 	sample := body[:limit]
 	lower := strings.ToLower(sample)
 	if !strings.Contains(lower, "<html") && !strings.HasPrefix(strings.TrimSpace(lower), "<!doctype") {
 		return false
 	}
-	markers := append([]string{`name="username"`, "login.php?returnto=", `action="login.php"`}, extraMarkers...)
+	// name="username" 是各 NexusPHP 站登录表单的通用用户名输入框名；
+	// action="takelogin.php" 是 NexusPHP 登录提交端点（猫站等实际用它，而非 login.php）。
+	markers := append([]string{`name="username"`, `action="takelogin.php"`, "login.php?returnto=", `action="login.php"`}, extraMarkers...)
 	for _, marker := range markers {
 		if strings.Contains(lower, strings.ToLower(marker)) {
 			return true

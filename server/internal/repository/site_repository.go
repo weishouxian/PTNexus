@@ -78,6 +78,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
 		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
 		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.audio_track_policy, s.tags, s.sort_order,
+		s.check_cookie_enabled,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -131,6 +132,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	}
 	for _, s := range sites {
 		s["can_publish"] = toIntWithDefault(s["can_publish"], 1) != 0
+		s["check_cookie_enabled"] = toIntWithDefault(s["check_cookie_enabled"], 1) != 0
 		s["forbidden_transfer_sites"] = siteStringListFromAny(s["forbidden_transfer_sites"])
 		s["dupe_check_enabled"] = toIntWithDefault(s["dupe_check_enabled"], 0) != 0
 		s["dupe_size_tolerance_bytes"] = toInt64WithDefault(s["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
@@ -174,6 +176,11 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		audioTrackPolicy = 0
 	}
 	sortOrder := toIntWithDefault(data["sort_order"], 0)
+	// 站点健康检测开关：默认开启（1）；传 0/空 均视为关闭。
+	checkCookieEnabled := 1
+	if toIntWithDefault(data["check_cookie_enabled"], 1) == 0 {
+		checkCookieEnabled = 0
+	}
 	// 站点自定义标签：统一编码成 JSON 数组入库；未配置时写 "[]"。
 	siteTags := encodeSiteStringList(data["tags"])
 
@@ -197,7 +204,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			dupe_rules = ?,
 			audio_track_policy = ?,
 			tags = ?,
-			sort_order = ?
+			sort_order = ?,
+			check_cookie_enabled = ?
 		WHERE id = ?
 	`, groupColumn)
 
@@ -221,6 +229,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		audioTrackPolicy,
 		siteTags,
 		sortOrder,
+		checkCookieEnabled,
 		siteID,
 	)
 	if result.Error != nil {
@@ -285,16 +294,16 @@ func (r *SiteRepository) UpdateSiteCookieBySite(siteCode, cookie string) (bool, 
 	return count > 0, nil
 }
 
-// GetSiteForCookieCheck 按站点 id 读取 Cookie 校验所需的 base_url 与 cookie。
-// 参数/返回：siteID 为 sites.id；返回 map（含 base_url/cookie）；未命中返回 nil。
+// GetSiteForCookieCheck 按站点 id 读取 Cookie 校验所需的 base_url、cookie、passkey 与站点代码。
+// 参数/返回：siteID 为 sites.id；返回 map（含 base_url/cookie/passkey/site）；未命中返回 nil。
 // 失败场景：数据库执行失败时返回错误。
 // 副作用：只读。
 func (r *SiteRepository) GetSiteForCookieCheck(siteID any) (map[string]any, error) {
-	var baseURL, cookie sql.NullString
+	var baseURL, cookie, passkey, site sql.NullString
 	err := r.store.DB.Raw(
-		"SELECT base_url, cookie FROM sites WHERE id = ? LIMIT 1",
+		"SELECT base_url, cookie, passkey, site FROM sites WHERE id = ? LIMIT 1",
 		siteID,
-	).Row().Scan(&baseURL, &cookie)
+	).Row().Scan(&baseURL, &cookie, &passkey, &site)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
@@ -304,6 +313,8 @@ func (r *SiteRepository) GetSiteForCookieCheck(siteID any) (map[string]any, erro
 	return map[string]any{
 		"base_url": baseURL.String,
 		"cookie":   cookie.String,
+		"passkey":  passkey.String,
+		"site":     site.String,
 	}, nil
 }
 
