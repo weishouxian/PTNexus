@@ -12,6 +12,10 @@ import (
 	"github.com/pt-nexus/server/internal/platform/logx"
 )
 
+// buildStamp 由 Dockerfile 通过 `-ldflags "-X main.buildStamp=<stamp>"` 注入，
+// 用于强制 server 编译层失效（规避 BuildKit 在部分 NAS 上对 COPY 目录缓存误判）。
+var buildStamp = ""
+
 // main 是服务启动入口，负责加载环境变量、初始化日志、创建并运行 HTTP 服务。
 func main() {
 	bootMessages := loadEnvFiles()

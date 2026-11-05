@@ -87,6 +87,12 @@ RUN go mod download
 COPY ./server/cmd ./cmd
 COPY ./server/internal ./internal
 
+# BUILD_STAMP 用于强制 server 编译层失效：BuildKit 对 COPY 目录的缓存 key
+# 在某些 NAS（fnOS 的 docker 0.25.2）上无法正确反映目录内容变化，导致改了
+# server/internal 下的 .go 后 COPY 层仍 CACHED、go build 复用旧二进制。
+# 通过每次 build 传入不同的 --build-arg BUILD_STAMP，可稳定触发重编译。
+ARG BUILD_STAMP=""
+
 RUN set -eux; \
     if [ "${TARGETARCH}" = "${BUILDARCH}" ]; then \
       cc=gcc; \
@@ -98,7 +104,7 @@ RUN set -eux; \
       esac; \
     fi; \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH="${TARGETARCH}" CC="$cc" \
-      go build -ldflags="-s -w" -o /out/server ./cmd/server
+      go build -ldflags="-s -w -X main.buildStamp=${BUILD_STAMP}" -o /out/server ./cmd/server
 
 
 # 阶段 4: 最终运行环境（纯 Go 运行时：updater 作为入口，反代到 server）
