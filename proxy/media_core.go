@@ -235,6 +235,13 @@ func takeScreenshot(videoPath, outputPath string, timePoint float64, subtitleSID
 // writes a full-resolution PNG. mpv 0.35's default vo=gpu does not understand DV Profile 5's
 // IPTPQc2 color space and would produce wrong colors, so DV sources bypass mpv entirely.
 func takeScreenshotDV(videoPath, outputPath string, timePoint float64) error {
+	if detectDolbyVisionProfile5(videoPath) {
+		// DV Profile 5 (IPTPQc2) carries no HDR10 backward-compatible layer. On the CPU-only hosts
+		// this proxy runs on, zscale has no color path (no path between colorspaces) and libplacebo
+		// renders DV through lavapipe with a broken IPTPQc2 conversion that emits a solid green frame
+		// (apply_dolbyvision makes no difference). Skipping is strictly better than a green image.
+		return fmt.Errorf("Dolby Vision Profile 5 source cannot be tone-mapped on this GPU-less host; skipping screenshot to avoid a green frame")
+	}
 	candidates := buildToneMapFilterCandidates(true, dvImageToneMapChainOptions)
 	_, output, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
 		args := prependToneMapPreArgs(candidate, []string{
@@ -283,6 +290,25 @@ func detectDolbyVisionFromVideo(videoPath string) bool {
 		strings.Contains(lower, "dolby vision") ||
 		strings.Contains(lower, "dolbyvision") ||
 		containsDolbyVisionToken(lower)
+}
+
+// detectDolbyVisionProfile5 reports whether the source is Dolby Vision Profile 5 (dvhe.05 / IPTPQc2).
+// DV P5 carries no HDR10 backward-compatible layer: its color_space/transfer/primaries are all
+// unannotated (unknown), unlike Profile 8.x which embeds BT.2020/PQ metadata for HDR10 fallback.
+// This matters because zscale can tone-map P8.1 (it reads the HDR10 tags) but has no color path for
+// P5's IPTPQc2, so P5 relies entirely on libplacebo — which fails on GPU-less hosts and falls through
+// to the passthrough chain, producing a green-tinted frame. Callers use this to suppress that bogus
+// green fallback.
+func detectDolbyVisionProfile5(videoPath string) bool {
+	if !detectDolbyVisionFromVideo(videoPath) {
+		return false
+	}
+	output, err := executeCommand("ffprobe", "-v", "error", "-show_streams", videoPath)
+	if err != nil {
+		return false
+	}
+	// DV P5 has no HDR10 backward-compatible metadata: none of the color triple is annotated.
+	return !hasKnownColorMetadata(output)
 }
 
 // isHDRMetadataText classifies ffprobe output as HDR. Standard color tags and Dolby Vision
@@ -515,7 +541,12 @@ func runToneMapFilterAttempts(outputPath string, candidates []toneMapFilterCandi
 	return toneMapFilterCandidate{}, lastOutput, lastErr
 }
 
-func takePreviewScreenshot(videoPath, outputPath string, timePoint float64, isHDR bool) error {
+func takePreviewScreenshot(videoPath, outputPath string, timePoint float64, isHDR bool, isDVProfile5 bool) error {
+	if isDVProfile5 {
+		// DV P5 (IPTPQc2) has no correct color path on GPU-less hosts (zscale fails, libplacebo renders
+		// green via lavapipe). Skip instead of producing a misleading green frame.
+		return fmt.Errorf("Dolby Vision Profile 5 source cannot be tone-mapped on this GPU-less host; skipping preview frame")
+	}
 	candidates := buildToneMapFilterCandidates(isHDR, previewToneMapChainOptions)
 	_, _, err := runToneMapFilterAttempts(outputPath, candidates, func(candidate toneMapFilterCandidate) (string, error) {
 		args := prependToneMapPreArgs(candidate, []string{
@@ -1124,6 +1155,7 @@ func generatePreviewCandidates(videoPath string, duration float64, count int, cu
 
 	isHDR := detectHDRFromVideo(videoPath)
 	isDV := detectDolbyVisionFromVideo(videoPath)
+	isDVProfile5 := detectDolbyVisionProfile5(videoPath)
 	needsDirectCapture := isHDR || isDV
 	candidates := make([]ScreenshotPreviewCandidate, 0, len(points))
 	for _, point := range points {
@@ -1133,7 +1165,7 @@ func generatePreviewCandidates(videoPath string, duration float64, count int, cu
 		if currentSubtitleSID > 0 && !needsDirectCapture {
 			err = takePreviewScreenshotWithSubtitle(videoPath, outputPath, point, currentSubtitleSID)
 		} else {
-			err = takePreviewScreenshot(videoPath, outputPath, point, isHDR)
+			err = takePreviewScreenshot(videoPath, outputPath, point, isHDR, isDVProfile5)
 		}
 		if err != nil {
 			log.Printf("preview capture skipped at %.2fs: %v", point, err)

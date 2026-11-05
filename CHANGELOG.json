@@ -19,6 +19,21 @@
   ],
   "history": [
     {
+      "version": "v4.0.14",
+      "date": "2026.11.03",
+      "changes": [
+        "新增：站点 Cookie/令牌健康检测与失效提醒——新增 sitehealth 定时检测服务与 site_alerts 提醒表，按间隔检测已填凭据且参与发种/转种（migration>0）的站点，失效后汇总提醒；全局头部栏新增提醒铃铛（SiteAlertsBell），站点管理支持检测间隔设置、一键检测、单站「检测 Cookie」开关",
+        "新增：Cookie 校验按站点分流——M-Team（令牌）、YemaPT、朱雀（TNode API）各走正确鉴权通道，非 NexusPHP 站点接入用户信息提取避免误判失效；登录页判定采样窗口 8KB→64KB，修复猫站等无效 Cookie 误判有效",
+        "新增：站点管理「基础URL」字段明确为「域名」，并新增 Cookie 有效性校验（带 Cookie 访问站点首页判断登录态，不落库）",
+        "新增：种子列表最左侧新增「转种」列快速发起转种；列显隐弹窗支持 ↑↓ 调整显示顺序，隐藏列保留原位不跳末尾",
+        "新增：pixhost 海报/截图增加缩略图显示（原图下方，加载更快、点击看原图），复用 imageUrl 工具",
+        "修复：HDR 截图色调映射候选链 zscale 优先于 libplacebo（CPU-only 机器软件 Vulkan 会产绿屏/花屏，zscale 纯 CPU 稳定处理 HDR10/HLG，libplacebo 仅兜底 DV P5）；HEVC 蓝光原盘快速 seek 加 -accurate_seek 对齐关键帧",
+        "修复：install 脚本 stop_running_proxy 加 pkill 兜底，避免手动部署后重跑卡 Text file busy",
+        "修复：hdsky 抓取侧「剧集(合集)」映射到标准键 category.tv_series，避免季集推断/完结判断/发布分类识别不到",
+        "修复：多音轨预生成标题对 TrueHD 漏判——MediaInfo 把 TrueHD 的 Format 写作 MLP FBA，真实编码在 Commercial name/Codec ID，单看 Format 会漏判且大码率千位分隔空格（3 223 kb/s）被抓成 3，导致「码率最高/规格最高」策略错选 DD 5.1；同时修正 Atmos 展示顺序为「编码+声道+Atmos」（TrueHD 7.1 Atmos）"
+      ]
+    },
+    {
       "version": "v4.0.13",
       "date": "2026.11.01",
       "changes": [

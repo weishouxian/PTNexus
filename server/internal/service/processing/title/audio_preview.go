@@ -104,22 +104,34 @@ func BuildAudioTitlePreviewsFromTracks(components []map[string]any, tracks []par
 	return trackPreviews, previews
 }
 
-// audioTrackDisplay 把一条音轨拼成标题里的展示写法：编码 + 声道布局（+ Atmos，已并入编码 token）。
+// audioTrackDisplay 把一条音轨拼成标题里的展示写法：编码 + 声道布局（Atmos 后缀挪到声道之后）。
 // 参数/返回：track 为 extract 包的结构化音轨；编码键无法识别时返回空串。
 // 副作用：无。
 //
 // 声道布局由声道总数映射：8→7.1、6→5.1、2→2.0、1→1.0，其余按 N.0；
 // 该口径与 processing/media:channelLayoutFromMediaInfo 的 count 分支一致，满足「区分音轨」的展示需求。
+// Atmos 细分键（audio.truehd_atmos / audio.ddp_atmos）的展示 token 是 `TrueHD Atmos` / `DDP Atmos`，
+// 其中 Atmos 已并入编码 token，故需把 Atmos 拆到声道布局之后，得到标准的 `TrueHD 7.1 Atmos` 顺序
+// （对齐 processing/media:buildAudioInfoValue 的「编码 + 声道 + Atmos」口径）。
 func audioTrackDisplay(track parser.AudioTrack) string {
 	codec := parser.AudioDisplayTokenFromCodecKey(track.CodecKey)
 	if codec == "" {
 		return ""
 	}
-	layout := channelsLayoutLabel(track.Channels)
-	if layout != "" {
-		return codec + " " + layout
+	atmos := ""
+	if idx := strings.LastIndex(codec, " Atmos"); idx >= 0 && strings.HasSuffix(codec, " Atmos") {
+		atmos = " Atmos"
+		codec = strings.TrimSpace(codec[:idx])
 	}
-	return codec
+	layout := channelsLayoutLabel(track.Channels)
+	switch {
+	case layout != "" && atmos != "":
+		return codec + " " + layout + atmos
+	case layout != "":
+		return codec + " " + layout
+	default:
+		return codec + atmos
+	}
 }
 
 // channelsLayoutLabel 把声道总数映射为声道布局展示（8→7.1、6→5.1、2→2.0…）。

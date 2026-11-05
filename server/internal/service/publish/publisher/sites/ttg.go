@@ -60,10 +60,8 @@ func (ttgPublisher) AdjustFormFields(input publisher.PublishInput, formFields ma
 		}
 	}
 
-	// TTG 必填字段：匿名发布选择（默认非匿名）、禁转选择（默认否）和 HR 制度（默认否）
-	if _, exists := formFields["anonymity"]; !exists {
-		formFields["anonymity"] = "no"
-	}
+	// 匿名发布（anonymity）由全局设置 upload_settings.anonymous_upload 控制，
+	// 交由公共发种器的 ApplyAnonymousFormFields 统一注入（详见 anonymous.go / public.go），此处不再硬编码。
 	if _, exists := formFields["nodistr"]; !exists {
 		formFields["nodistr"] = "no"
 	}

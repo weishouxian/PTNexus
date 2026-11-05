@@ -971,6 +971,12 @@ func compressPNGWithFFmpeg(ffmpegPath string, srcPNG string, dstPNG string, isHD
 // 由 ffmpeg 的 libplacebo 滤镜直接从源视频做 BT.2020/PQ → BT.709 转换，避免偏色。
 // 参数/返回：ffmpegPath 为 ffmpeg 路径；videoPath 为源视频；second 为截图时间点；dstPNG 为输出 PNG。
 func captureDVPNGWithFFmpeg(ffmpegPath string, videoPath string, second float64, dstPNG string) error {
+	if ffprobePath, resolveErr := resolveBinary("ffprobe", "PTNEXUS_FFPROBE_PATH"); resolveErr == nil &&
+		detectDolbyVisionProfile5(ffprobePath, videoPath) {
+		// DV P5（IPTPQc2）无 HDR10 后备层：zscale 无色彩转换路径，libplacebo 在无 GPU 主机上走
+		// lavapipe 软渲染会把 IPTPQc2 转成绿帧（apply_dolbyvision 也无济于事）。跳过比产出绿图更好。
+		return fmt.Errorf("Dolby Vision Profile 5 源在无 GPU 主机上无法色调映射，已跳过截图以避免绿帧")
+	}
 	candidates := buildToneMapFilterCandidates(true, pngToneMapChainOptions)
 	_, output, err := runToneMapFilterAttempts(dstPNG, candidates, func(candidate toneMapFilterCandidate) ([]byte, error) {
 		args := prependToneMapPreArgs(candidate, []string{

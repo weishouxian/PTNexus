@@ -12,7 +12,9 @@ var (
 	// reMediaInfoFormatField 提取段落内 "Format : xxx" / "Format : xxx / yyy" 的取值。
 	reMediaInfoFormatField = regexp.MustCompile(`(?im)^\s*Format\s*:\s*([^\r\n]+)`)
 	// reMediaInfoBitRateField 提取段落内 "Bit rate : 192 kb/s"（兼容 kb/s、kbps、Mbps、bps 写法）。
-	reMediaInfoBitRateField = regexp.MustCompile(`(?im)^\s*Bit\s*[Rr]ate\s*(?:mode)?\s*:\s*([0-9]+(?:\.[0-9]+)?)\s*(k|K|M|b|B)?[bB]?(?:/s|ps)?\b`)
+	// 数字部分允许千位分隔空格（MediaInfo 把大码率写作 `3 223 kb/s`），
+	// 匹配到后整体去掉空格再归一，避免把 `3 223` 抓成 `3`（2026-11-05 夜访吸血鬼 TrueHD 轨实测）。
+	reMediaInfoBitRateField = regexp.MustCompile(`(?im)^\s*Bit\s*[Rr]ate\s*(?:mode)?\s*:\s*([0-9]+(?:[ .][0-9]+)*)\s*(k|K|M|b|B)?[bB]?(?:/s|ps)?\b`)
 	// reMediaInfoChannelsField 提取段落内 "Channel(s) : 2 channels"。
 	reMediaInfoChannelsField = regexp.MustCompile(`(?im)^\s*Channel\(?s?\)?\s*:\s*(\d+)`)
 	// reMediaInfoDefaultField 提取段落内 "Default : Yes"。
@@ -263,6 +265,13 @@ func parseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
 		if format != "" {
 			codecKey = audioCodecKeyFromFormatText(format)
 		}
+		if codecKey == "" && format != "" {
+			// Format 字段识别不到标准键时，用整段兜底判定。
+			// 典型场景：MediaInfo 把 TrueHD 的 Format 写作 `MLP FBA 16-ch`，
+			// 真正的编码名（TrueHD/Atmos）在 `Commercial name :` 与 `Codec ID : A_TRUEHD` 里，
+			// 单看 Format 会漏判（2026-11-05 夜访吸血鬼 TrueHD 轨实测被判成空 → 规格/码率策略全落到 DD 5.1）。
+			codecKey = audioCodecKeyFromAudioSection(section)
+		}
 		if codecKey == "" && format == "" {
 			// 既无 format 也无 codec，跳过该段（可能是误切分）。
 			continue
@@ -392,7 +401,8 @@ func mediaInfoBitRateKbps(section string) float64 {
 	if len(m) < 2 {
 		return 0
 	}
-	value, err := strconv.ParseFloat(strings.TrimSpace(m[1]), 64)
+	// 去掉千位分隔空格（`3 223` → `3223`）后再解析。
+	value, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(m[1]), " ", ""), 64)
 	if err != nil {
 		return 0
 	}
@@ -605,6 +615,29 @@ func videoCodecKeyFromFormatText(format string) string {
 	default:
 		return ""
 	}
+}
+
+// audioCodecKeyFromAudioSection 用整段 MediaInfo Audio 段兜底判定标准音频编码键。
+// 参数/返回：section 为单个 Audio 段全文（含 Format / Commercial name / Codec ID 等字段）；无法识别时返回空串。
+// 副作用：无。
+//
+// 背景：`audioCodecKeyFromFormatText` 只吃 `Format :` 字段，但 MediaInfo 对部分编码的 Format 写法不含编码名：
+// ① TrueHD 的 Format 是 `MLP FBA 16-ch`，真实编码在 `Commercial name : Dolby TrueHD with Dolby Atmos`
+//    与 `Codec ID : A_TRUEHD` 里；② 同理需覆盖 DTS-HD MA（`DTS XLL`）等已在 Format 层覆盖、但此处仅补 TrueHD 一类缺口。
+// 故仅当 Format 层识别失败时调用本函数，用整段文本（含 Commercial name / Codec ID）判定。
+func audioCodecKeyFromAudioSection(section string) string {
+	upper := strings.ToUpper(strings.TrimSpace(section))
+	if upper == "" {
+		return ""
+	}
+	// TrueHD：Format 为 `MLP FBA`，编码名在 Commercial name（Dolby TrueHD）与 Codec ID（A_TRUEHD）。
+	if strings.Contains(upper, "TRUEHD") || strings.Contains(upper, "MLP FBA") || strings.Contains(upper, "A_TRUEHD") {
+		if strings.Contains(upper, "ATMOS") {
+			return "audio.truehd_atmos"
+		}
+		return "audio.truehd"
+	}
+	return ""
 }
 
 // audioCodecKeyFromFormatText 把 MediaInfo 的 Format 文本映射为标准音频编码键。

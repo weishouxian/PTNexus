@@ -9,6 +9,14 @@ form_fields:
   imdb_url: "imdb_c"
   douban_url: "douban_id"
 
+# 匿名发布：跟随全局设置 upload_settings.anonymous_upload（默认开启）。
+# TTG 的匿名字段为 anonymity，值为 yes/no（非 NexusPHP 默认的 uplver）。
+anonymous:
+  field: "anonymity"
+  enabled_value: "yes"
+  disabled_value: "no"
+  omit_when_disabled: false
+
 source_parsers:
   source_params:
     type:

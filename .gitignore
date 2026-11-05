@@ -36,6 +36,7 @@
 /proxy/pt-nexus-box-proxy-arm64
 /proxy/pt-nexus-box-proxy-linux-amd64
 /proxy/pt-nexus-box-proxy.exe
+/proxy/qb-proxy.exe
 
 # Local IDE/agent private settings
 /.claude/

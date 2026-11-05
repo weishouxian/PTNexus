@@ -960,6 +960,30 @@ func detectHDRFromVideo(ffprobePath, videoPath string) bool {
 	return isHDRMetadataText(string(out))
 }
 
+// detectDolbyVisionProfile5 判断视频源是否为 Dolby Vision Profile 5（dvhe.05 / IPTPQc2）。
+// DV P5 不带 HDR10 后向兼容层，其 color_space/transfer/primaries 三元组全部未标注（unknown），
+// 而 Profile 8.x 会内嵌 BT.2020/PQ 元数据供 HDR10 兜底。区别在于：zscale 能读 HDR10 标签对 P8.1
+// 正确色调映射，但对 P5 的 IPTPQc2 无色彩转换路径；P5 只能依赖 libplacebo，而 libplacebo 在无 GPU
+// 机器上连 Vulkan 设备都建不起来，最终会落到 passthrough 兜底链、把 IPTPQc2 当普通 YUV 解码出绿帧。
+// 调用方据此去掉 passthrough 兜底，让截图返回明确错误而不是一张误导的绿图。
+func detectDolbyVisionProfile5(ffprobePath, videoPath string) bool {
+	cmd := exec.Command(ffprobePath, "-v", "error", "-show_streams", "-select_streams", "v:0", videoPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(out))
+	isDV := strings.Contains(lower, "dovi") ||
+		strings.Contains(lower, "dolby vision") ||
+		strings.Contains(lower, "dolbyvision") ||
+		containsDolbyVisionToken(lower)
+	if !isDV {
+		return false
+	}
+	// DV P5 无 HDR10 后向兼容元数据：色彩三元组全部未标注。
+	return !hasKnownColorMetadata(lower)
+}
+
 func sanitizeSelectedScreenshotTimes(values []float64, duration float64, maxCount int) []float64 {
 	clean := make([]float64, 0, len(values))
 	for _, value := range values {
