@@ -30,6 +30,9 @@ func main() {
 	for _, message := range bootMessages {
 		logx.Infof("启动", "%s", message)
 	}
+	if buildStamp != "" {
+		logx.Infof("启动", "构建时间戳: %s", buildStamp)
+	}
 
 	app, err := bootstrap.NewApp()
 	if err != nil {
