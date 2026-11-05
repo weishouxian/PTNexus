@@ -61,6 +61,14 @@ func NormalizeSeedRow(row map[string]any) map[string]any {
 	// （第一条音轨 / 码率最高 / 规格最高），供前端核对页「主要信息」在主标题下方展示。
 	// 注意：audio_tracks 在库中为 JSON 字符串；反序列化失败或非多音轨时不返回，前端按无多音轨处理。
 	if tracks := parseAudioTracks(item["audio_tracks"]); len(tracks) >= 2 {
+		// 历史坏数据兜底：修复 TrueHD(MLP FBA) 漏判后，早期落库的音轨可能 codec_key 为空或码率为 0/极小，
+		// 直接按库内数据生成会把「码率最高/规格最高」错选到次轨（如 DD 5.1）。此时用 mediainfo 字段重新解析，
+		// 保证预生成标题与最新判定口径一致，无需逐条改库。
+		if mediainfo := strings.TrimSpace(toStringWithFallback(item["mediainfo"], "")); mediainfo != "" && hasUnresolvedAudioTrack(tracks) {
+			if reparsed := parser.ParseAudioTracksFromMediainfo(mediainfo); len(reparsed) >= 2 {
+				tracks = reparsed
+			}
+		}
 		componentMaps := titleComponentsToMaps(titleComponents)
 		trackPreviews, previews := processingtitle.BuildAudioTitlePreviewsFromTracks(componentMaps, tracks)
 		if len(trackPreviews) > 0 {
@@ -70,6 +78,21 @@ func NormalizeSeedRow(row map[string]any) map[string]any {
 	}
 
 	return item
+}
+
+// hasUnresolvedAudioTrack 判断音轨列表里是否存在「历史坏数据」：codec_key 为空，或码率异常（0 或过小）。
+// 参数/返回：tracks 为音轨列表；存在空编码或码率 ≤ 0 的音轨时返回 true。
+// 副作用：无。
+//
+// 背景：TrueHD(MLP FBA) 漏判修复前，首轨 TrueHD 会落库成 codec_key=""、bit_rate_kbps 被抓成 3，
+// 这类坏数据会让「码率最高/规格最高」策略错选到次轨。调用方据此决定是否用 mediainfo 重新解析。
+func hasUnresolvedAudioTrack(tracks []parser.AudioTrack) bool {
+	for _, track := range tracks {
+		if strings.TrimSpace(track.CodecKey) == "" || track.BitRateKbps <= 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // parseAudioTracks 把 audio_tracks 字段（JSON 字符串 / []any / 已反序列化切片）解析为 []parser.AudioTrack。
