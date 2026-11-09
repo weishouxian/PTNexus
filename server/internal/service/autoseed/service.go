@@ -910,7 +910,7 @@ func (s *Service) PublishItems(ids []int64, targetSites []string) (map[string]an
 		_ = s.repo.UpdateItemPublishFeedback(id, string(encoded), reason)
 	}
 	if queuedItems == 0 {
-		return map[string]any{"success": false, "results": results}, errors.New("所有目标站点均未加入发布队列")
+		return map[string]any{"success": false, "results": results}, errors.New("所有目标站点均未加入下载器发布队列")
 	}
 	return map[string]any{"success": true, "results": results}, nil
 }

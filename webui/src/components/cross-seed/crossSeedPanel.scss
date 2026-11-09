@@ -1182,6 +1182,49 @@
     margin: 8px 0 24px 0;
   }
 
+  /* 本次发布种子的关键参数（选择发布站点步骤顶部，便于不回编辑页核对） */
+  .seed-summary-bar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 6px 18px;
+    width: fit-content;
+    max-width: 860px;
+    margin: 0 auto 20px;
+    padding: 10px 18px;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    background: #fafbfc;
+  }
+
+  .seed-summary-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 13px;
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+
+  .seed-summary-label {
+    color: #909399;
+  }
+
+  .seed-summary-label::after {
+    content: '：';
+  }
+
+  .seed-summary-value {
+    color: #303133;
+    font-weight: 600;
+  }
+
+  .seed-summary-value.empty {
+    color: #c0c4cc;
+    font-weight: 500;
+  }
+
   .select-all-container {
     margin-bottom: 24px;
   }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
@@ -25,10 +26,12 @@ const (
 )
 
 type publishQueueConfig struct {
-	Enabled            bool
-	MaxQueueSize       int64
-	MaxRetries         int
-	MaxRetryDelaySec   int
+	Enabled          bool
+	MaxQueueSize     int64
+	MaxRetries       int
+	MaxRetryDelaySec int
+	// MaxWorkers 是单个下载器队列每轮最多领取的任务数（全局默认值）；
+	// 下载器配置里的 publish_concurrency 会覆盖它，形成各下载器自己的并发数。
 	MaxWorkers         int
 	MonitorIntervalSec int
 	RetryDelayBase     int
@@ -95,7 +98,7 @@ func (s *MigrateService) runPublishQueueWorker() {
 	ticker := time.NewTicker(time.Duration(intervalSec) * time.Second)
 	defer ticker.Stop()
 
-	logx.Infof(publishQueueLogModule, "发布队列线程已启动 interval=%ds enabled=%v workers=%d", intervalSec, cfg.Enabled, clampInt(cfg.MaxWorkers, 1, 20))
+	logx.Infof(publishQueueLogModule, "发布队列线程已启动 interval=%ds enabled=%v workers_per_downloader=%d（按下载器分桶）", intervalSec, cfg.Enabled, clampInt(cfg.MaxWorkers, 1, 20))
 
 	// 「立即发布」的进度记录（dispatched）依赖进程内的实时 runner 推进，
 	// 服务重启后不会再有线程执行它们，统一标记为失败，避免进度页留下永远「待发布」的僵尸记录。
@@ -187,7 +190,7 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 
 	ctx, ok := s.contextState.Get(taskID)
 	if !ok {
-		return map[string]any{"success": false, "message": "任务上下文已过期，请重新打开编辑面板后再加入队列"}, 400
+		return map[string]any{"success": false, "message": "任务上下文已过期，请重新打开编辑面板后再加入下载器发布队列"}, 400
 	}
 
 	targetSites := processingshared.ToStringSlice(payload["targetSites"])
@@ -239,6 +242,10 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	if downloaderID == "" {
 		downloaderID = strings.TrimSpace(ctx.DownloaderID)
 	}
+	// 按下载器拆队列后每条任务必须有明确归属；缺失时回退到默认下载器，避免落进无归属的默认桶。
+	if downloaderID == "" {
+		downloaderID = strings.TrimSpace(s.resolveDefaultPublishDownloaderID())
+	}
 
 	scene := strings.TrimSpace(processingshared.ToString(payload["publish_scene"], ""))
 	trigger := "queue"
@@ -274,6 +281,8 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 		downloaderID,
 		resolvePayloadPublishIntervalMinutes(payload),
 	)
+	// 该下载器自己的队列时间轴：已有排到更晚的任务时，本批次从队尾之后再顺延一个间隔。
+	waveBase := s.queueWaveBaseTime(downloaderID, now, publishInterval)
 	waveIndex := 0
 	for _, target := range targetSites {
 		targetSite := strings.TrimSpace(target)
@@ -281,11 +290,12 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 			continue
 		}
 
-		// 显式 scheduled_at 优先；否则由波次推算本站的计划发布时间。
+		// 显式 scheduled_at 优先；否则由该下载器队列的波次推算本站的计划发布时间。
 		plannedAt := scheduledAt
 		if plannedAt == nil && publishInterval > 0 {
-			if wave := waveIndex / pacingConcurrency; wave > 0 {
-				planned := now.Add(time.Duration(wave) * publishInterval)
+			wave := waveIndex / pacingConcurrency
+			if wave > 0 || waveBase.After(now) {
+				planned := waveBase.Add(time.Duration(wave) * publishInterval)
 				plannedAt = &planned
 			}
 		}
@@ -352,7 +362,7 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 	logx.Infof(publishQueueLogModule, "已入队 group_id=%s task_id=%s torrent_id=%s sites=%d", groupID, taskID, torrentID, len(queueTasks))
 	return map[string]any{
 		"success":  true,
-		"message":  fmt.Sprintf("已加入队列（%d 个站点）", len(queueTasks)),
+		"message":  fmt.Sprintf("已加入下载器发布队列（%d 个站点，下载器：%s）", len(queueTasks), firstNonEmptyString(downloaderID, "默认")),
 		"group_id": groupID,
 		"count":    len(queueTasks),
 	}, 200
@@ -428,6 +438,8 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 	// 页面填了「发种间隔时间」>0 时以页面值为准（本次请求内所有下载器共用该间隔）。
 	pacingOverrideMinutes := resolvePayloadPublishIntervalMinutes(payload)
 	pacingSequence := map[string]int{}
+	// 每个下载器独立一条队列时间轴：本批次第一波从该下载器现有队尾之后顺延一个间隔。
+	waveBases := map[string]time.Time{}
 
 	for idx, raw := range rawSeeds {
 		seed, ok := raw.(map[string]any)
@@ -540,14 +552,19 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 			uploadData["downloader_id"] = downloaderID
 		}
 
-		// 发布节奏：显式 scheduled_at 优先；否则按该下载器的「分钟间隔/并发数」把这一批分摊到时间轴上。
+		// 发布节奏：显式 scheduled_at 优先；否则按该下载器队列时间轴上的波次错开计划发布时间。
 		plannedAt := scheduledAt
 		if plannedAt == nil {
 			if interval, pacingConcurrency := s.resolvePublishPacing(downloaderID, pacingOverrideMinutes); interval > 0 {
+				base, exists := waveBases[downloaderID]
+				if !exists {
+					base = s.queueWaveBaseTime(downloaderID, now, interval)
+					waveBases[downloaderID] = base
+				}
 				wave := pacingSequence[downloaderID] / pacingConcurrency
 				pacingSequence[downloaderID]++
-				if wave > 0 {
-					planned := now.Add(time.Duration(wave) * interval)
+				if wave > 0 || base.After(now) {
+					planned := base.Add(time.Duration(wave) * interval)
 					plannedAt = &planned
 				}
 			}
@@ -652,7 +669,7 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 
 	queuedCount := len(createdTasks)
 	skipped = len(rawSeeds) - queuedCount
-	message := fmt.Sprintf("已加入队列（%d/%d）", queuedCount, len(rawSeeds))
+	message := fmt.Sprintf("已加入下载器发布队列（%d/%d）", queuedCount, len(rawSeeds))
 
 	logx.Infof(publishQueueLogModule, "批量入队完成 group_id=%s trigger=%s target_site=%s requested=%d queued=%d skipped=%d", groupID, publishTrigger, targetSite, len(rawSeeds), queuedCount, skipped)
 	return map[string]any{
@@ -1087,18 +1104,35 @@ func (s *MigrateService) insertBatchQueueSkipLog(input ExternalPublishLogInput) 
 	}
 }
 
-// drainPublishQueueOnce 领取并执行最多 MaxWorkers 条可运行的队列任务。
-// 参数/返回：cfg 为当前队列配置；返回本轮实际执行的任务数。
-// 失败场景：仓储异常时记录日志并提前返回已执行数量。
+// drainPublishQueueOnce 按下载器逐桶领取并执行可运行的队列任务，返回本轮实际执行的任务数。
+// 参数/返回：cfg 为全局队列配置；返回本轮实际执行的任务数。
+// 失败场景：列出下载器或领取任务失败时记录日志；单个下载器失败只跳过该桶，不影响其它下载器。
 // 副作用：更新 publish_queue_tasks / publish_logs，并可能向目标站点发种。
+// 说明：每个下载器是一条独立队列，各自按自己的并发数与触发条件推进；
+// 桶间并行执行，某个下载器的任务因门控重排队或被阻塞时，其它下载器的队列照常推进。
 func (s *MigrateService) drainPublishQueueOnce(cfg publishQueueConfig) int {
 	if s == nil || s.queueRepo == nil {
 		return 0
 	}
 
-	workers := clampInt(cfg.MaxWorkers, 1, 20)
 	now := time.Now()
-	executed := 0
+	ids, err := s.queueRepo.ListQueuedDownloaderIDs()
+	if err != nil {
+		logx.Warnf(publishQueueLogModule, "列出下载器队列失败 err=%v", err)
+		return 0
+	}
+	if len(ids) == 0 {
+		return 0
+	}
+
+	type downloaderQueueBucket struct {
+		downloaderID string
+		cfg          publishQueueConfig
+	}
+	buckets := make([]downloaderQueueBucket, 0, len(ids))
+	for _, id := range ids {
+		buckets = append(buckets, downloaderQueueBucket{downloaderID: id, cfg: s.resolveDownloaderQueueConfig(cfg, id)})
+	}
 
 	latestSpeeds := map[string]float64{}
 	if cfg.TriggerUploadSpeedBelowMBps > 0 && s.statsRepo != nil {
@@ -1113,18 +1147,37 @@ func (s *MigrateService) drainPublishQueueOnce(cfg publishQueueConfig) int {
 		}
 	}
 
-	for i := 0; i < workers; i++ {
-		task, ok, err := s.queueRepo.ClaimNextRunnableTask(now)
-		if err != nil {
-			logx.Warnf(publishQueueLogModule, "领取队列任务失败 err=%v", err)
-			return executed
-		}
-		if !ok || task == nil {
-			return executed
-		}
-		s.executePublishQueueTask(cfg, *task, latestSpeeds)
-		executed++
+	// 桶间并行、桶内串行：某一路下载器的慢任务或门控等待不会拖住其它下载器的队列。
+	executed := 0
+	var executedMu sync.Mutex
+	var wg sync.WaitGroup
+	for _, bucket := range buckets {
+		wg.Add(1)
+		go func(b downloaderQueueBucket) {
+			defer wg.Done()
+			workers := clampInt(b.cfg.MaxWorkers, 1, 20)
+			bucketExecuted := 0
+			for i := 0; i < workers; i++ {
+				task, ok, err := s.queueRepo.ClaimNextRunnableTaskForDownloader(now, b.downloaderID)
+				if err != nil {
+					logx.Warnf(publishQueueLogModule, "领取下载器队列任务失败 downloader_id=%s err=%v", b.downloaderID, err)
+					break
+				}
+				if !ok || task == nil {
+					break
+				}
+				s.executePublishQueueTask(b.cfg, *task, latestSpeeds)
+				bucketExecuted++
+			}
+			if bucketExecuted > 0 {
+				executedMu.Lock()
+				executed += bucketExecuted
+				executedMu.Unlock()
+				logx.Infof(publishQueueLogModule, "下载器队列已执行 downloader_id=%s workers=%d executed=%d", b.downloaderID, workers, bucketExecuted)
+			}
+		}(bucket)
 	}
+	wg.Wait()
 	return executed
 }
 
@@ -1490,6 +1543,11 @@ func (s *MigrateService) resolveQueueTaskDownloaderID(task repository.PublishQue
 	}
 	if downloaderID == "" {
 		downloaderID = strings.TrimSpace(ctx.DownloaderID)
+	}
+	// 任务自身记录的下载器优先：按下载器分桶后，门控与触发条件必须按任务所属下载器判断，
+	// 不能被全局默认下载器覆盖（否则 A 下载器的任务会拿 B 下载器的统计数据做门控）。
+	if downloaderID != "" {
+		return downloaderID
 	}
 
 	root := map[string]any{}

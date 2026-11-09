@@ -139,7 +139,7 @@ func (h *AutoSeedHandler) OrganizeItem(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "整理信息已保存"})
 }
 
-// PublishItems 将一个或多个自动发种记录投递到发布队列。
+// PublishItems 将一个或多个自动发种记录投递到所属下载器的发布队列。
 func (h *AutoSeedHandler) PublishItems(c *gin.Context) {
 	payload := map[string]any{}
 	if err := c.ShouldBindJSON(&payload); err != nil {

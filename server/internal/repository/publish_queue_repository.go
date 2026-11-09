@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"database/sql"
 	"errors"
 	"strings"
 	"time"
@@ -213,11 +214,97 @@ func (r *PublishQueueRepository) CountActiveTasks() (int64, error) {
 	return count, nil
 }
 
-// ClaimNextRunnableTask 原子领取下一条可执行的 queued 任务，并标记为 running。
+// ListQueuedDownloaderIDs 列出当前有待执行任务的下载器 ID（去重、排序）。
+// 参数/返回：无入参；返回下载器 ID 列表（无 downloader_id 的旧数据归入空字符串桶）。
+// 失败场景：数据库查询失败返回 error。
+// 副作用：读取 publish_queue_tasks。
+// 说明：按下载器拆分队列后，调度器据此逐桶领取，某个下载器阻塞不会饿死其它下载器。
+func (r *PublishQueueRepository) ListQueuedDownloaderIDs() ([]string, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, errors.New("publish queue repo is nil")
+	}
+	rows := make([]struct {
+		DownloaderID string `gorm:"column:downloader_id"`
+	}, 0)
+	err := r.store.DB.Table("publish_queue_tasks").
+		Select("DISTINCT COALESCE(downloader_id, '') AS downloader_id").
+		Where("status = ?", PublishQueueStatusQueued).
+		Order("downloader_id ASC").
+		Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, strings.TrimSpace(row.DownloaderID))
+	}
+	return ids, nil
+}
+
+// LatestQueuedScheduledAt 返回指定下载器活跃队列任务中最晚的计划/下次运行时间。
+// 参数/返回：downloaderID 为下载器 ID（空字符串表示无归属的旧数据）；返回最晚时间，无任务或未解析出时间时返回 nil。
+// 失败场景：数据库查询失败返回 error；单条时间格式异常时跳过该值而不是整体失败。
+// 副作用：读取 publish_queue_tasks。
+func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*time.Time, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return nil, errors.New("publish queue repo is nil")
+	}
+	row := struct {
+		ScheduledAt sql.NullString `gorm:"column:scheduled_at"`
+		NextRunAt   sql.NullString `gorm:"column:next_run_at"`
+	}{}
+	err := r.store.DB.Table("publish_queue_tasks").
+		Select("MAX(COALESCE(scheduled_at, next_run_at, created_at)) AS scheduled_at, MAX(COALESCE(next_run_at, created_at)) AS next_run_at").
+		Where("status IN ?", []string{PublishQueueStatusQueued, PublishQueueStatusRunning}).
+		Where("COALESCE(downloader_id, '') = ?", strings.TrimSpace(downloaderID)).
+		Scan(&row).Error
+	if err != nil {
+		return nil, err
+	}
+
+	var latest time.Time
+	found := false
+	for _, raw := range []sql.NullString{row.ScheduledAt, row.NextRunAt} {
+		if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+			continue
+		}
+		parsed, parseErr := time.ParseInLocation(PublishQueueTimeLayout, strings.TrimSpace(raw.String), time.Local)
+		if parseErr != nil {
+			continue
+		}
+		if !found || parsed.After(latest) {
+			latest = parsed
+			found = true
+		}
+	}
+	if !found {
+		return nil, nil
+	}
+	return &latest, nil
+}
+
+// ClaimNextRunnableTask 原子领取全局下一条可执行的 queued 任务，并标记为 running。
 // 参数/返回：now 为当前时间；返回任务、是否命中与 error。
 // 失败场景：事务/更新/查询失败返回 error。
 // 副作用：更新 publish_queue_tasks.status/started_at/updated_at。
+// 说明：按下载器拆队列后调度器改用 ClaimNextRunnableTaskForDownloader，本方法保留给其它调用方。
 func (r *PublishQueueRepository) ClaimNextRunnableTask(now time.Time) (*PublishQueueTask, bool, error) {
+	return r.claimNextRunnableTask(now, "", false)
+}
+
+// ClaimNextRunnableTaskForDownloader 原子领取指定下载器队列下一条可执行的 queued 任务。
+// 参数/返回：now 为当前时间；downloaderID 为空时领取无归属的旧数据；返回任务、是否命中与 error。
+// 失败场景：事务/更新/查询失败返回 error。
+// 副作用：更新 publish_queue_tasks.status/started_at/updated_at。
+func (r *PublishQueueRepository) ClaimNextRunnableTaskForDownloader(now time.Time, downloaderID string) (*PublishQueueTask, bool, error) {
+	return r.claimNextRunnableTask(now, strings.TrimSpace(downloaderID), true)
+}
+
+// claimNextRunnableTask 为上面两个入口的共用实现；scoped=true 时限制 downloader_id。
+// 参数/返回：now 为当前时间；返回任务、是否命中与 error。
+// 失败场景：事务/更新/查询失败返回 error。
+// 副作用：更新 publish_queue_tasks.status/started_at/updated_at。
+func (r *PublishQueueRepository) claimNextRunnableTask(now time.Time, downloaderID string, scoped bool) (*PublishQueueTask, bool, error) {
 	if r == nil || r.store == nil || r.store.DB == nil {
 		return nil, false, errors.New("publish queue repo is nil")
 	}
@@ -229,18 +316,18 @@ func (r *PublishQueueRepository) ClaimNextRunnableTask(now time.Time) (*PublishQ
 		row := struct {
 			ID int64 `gorm:"column:id"`
 		}{}
-		if err := tx.Raw(
-			`SELECT id
+		query := `SELECT id
 			 FROM publish_queue_tasks
 			 WHERE status = ?
 			   AND (scheduled_at IS NULL OR scheduled_at <= ?)
-			   AND (next_run_at IS NULL OR next_run_at <= ?)
-			 ORDER BY COALESCE(next_run_at, created_at) ASC, id ASC
-			 LIMIT 1`,
-			PublishQueueStatusQueued,
-			nowText,
-			nowText,
-		).Scan(&row).Error; err != nil {
+			   AND (next_run_at IS NULL OR next_run_at <= ?)`
+		args := []any{PublishQueueStatusQueued, nowText, nowText}
+		if scoped {
+			query += ` AND COALESCE(downloader_id, '') = ?`
+			args = append(args, downloaderID)
+		}
+		query += ` ORDER BY COALESCE(next_run_at, created_at) ASC, id ASC LIMIT 1`
+		if err := tx.Raw(query, args...).Scan(&row).Error; err != nil {
 			return err
 		}
 		if row.ID == 0 {

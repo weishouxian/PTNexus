@@ -277,6 +277,8 @@ export interface CrossSeedPanelContext {
   allSitesStatus: Ref<SiteStatus[]>
   selectedTargetSites: Ref<string[]>
   publishIntervalMinutes: Ref<number>
+  /** 本次发布种子的体积文本（列表行已知大小优先，其次 MediaInfo/BDInfo 解析），未知时为空串。 */
+  seedSizeText: ComputedRef<string>
   selectAllTargetSites: () => void
   clearAllTargetSites: () => void
   getButtonType: (site: SiteStatus) => ElButtonType

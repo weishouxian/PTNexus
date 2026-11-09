@@ -64,7 +64,7 @@
         :loading="isEnqueueing"
         :disabled="isLoading || selectedTargetSites.length === 0"
       >
-        加入队列
+        加入下载器发布队列
       </el-button>
       <el-button
         type="primary"

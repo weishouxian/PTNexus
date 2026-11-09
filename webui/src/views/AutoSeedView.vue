@@ -1003,7 +1003,7 @@ const publishSelected = async () => {
     ids: publishRows.value.map((row) => row.id),
     target_sites: publishTargetSites.value,
   })
-  ElMessage.success('已加入发布队列')
+  ElMessage.success('已加入下载器发布队列')
   publishDialogVisible.value = false
   await fetchItems()
   await fetchProgress()

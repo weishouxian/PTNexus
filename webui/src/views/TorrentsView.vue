@@ -2194,7 +2194,7 @@ const executeBatchPublish = async () => {
       const queued = Number(result?.queued || 0)
       const requested = Number(result?.requested_names || selectedRows.value.length)
       ElMessage.success(
-        `${result.message || `批量加入队列完成（${queued}/${requested}）`}${publishTrigger ? `（${publishTrigger}）` : ''}`,
+        `${result.message || `批量加入下载器发布队列完成（${queued}/${requested}）`}${publishTrigger ? `（${publishTrigger}）` : ''}`,
       )
 
       const unresolved = result.unresolved_names as string[] | undefined

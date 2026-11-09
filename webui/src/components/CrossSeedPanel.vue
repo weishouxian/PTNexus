@@ -206,6 +206,7 @@ import type {
   TorrentData,
 } from './cross-seed/crossSeedPanelContext'
 import { buildPreviewTitleWithAudio } from './cross-seed/panel/audioTitlePreview'
+import { buildMediaInfoSummary } from './cross-seed/panel/mediaInfoSummary'
 
 // 过滤多余空行的辅助函数
 const filterExtraEmptyLines = (text: string): string => {
@@ -860,6 +861,30 @@ const formatFileSize = (bytes: number) => {
 
   return `${size.toFixed(2)} ${units[unitIndex]}`
 }
+
+// 本次发布种子的体积文本：优先用列表行带来的体积（下载器/库内均已知道），
+// 回退到 MediaInfo 的 File size；原盘 ISO 的媒体文本是 BDInfo，改读 Disc Size。
+// 「选择发布站点」步骤要在看不到编辑页的情况下核对该种子，因此这里做一次兜底解析。
+const seedSizeText = computed(() => {
+  const size = Number(torrent.value?.size || 0)
+  if (size > 0) {
+    return torrent.value?.size_formatted || formatFileSize(size)
+  }
+
+  const mediaText = String(torrentData.value.mediainfo || '')
+  if (!mediaText.trim()) return ''
+
+  const summary = buildMediaInfoSummary(mediaText)
+  const fileSize = summary.general.find((field) => field.label.toLowerCase() === 'file size')
+  if (fileSize?.value) return fileSize.value
+
+  const discSizeMatch = mediaText.match(/^\s*Disc\s*Size\s*:\s*([\d,]+)\s*bytes/im)
+  if (discSizeMatch) {
+    const bytes = Number(discSizeMatch[1].replace(/,/g, ''))
+    if (bytes > 0) return formatFileSize(bytes)
+  }
+  return ''
+})
 
 // 日志进度组件相关
 const showLogProgress = ref(false)
@@ -2923,6 +2948,7 @@ provide(crossSeedPanelContextKey, {
   allSitesStatus,
   selectedTargetSites,
   publishIntervalMinutes,
+  seedSizeText,
   selectAllTargetSites,
   clearAllTargetSites,
   getButtonType,

@@ -135,7 +135,7 @@
         border
         style="width: 100%"
         height="100%"
-        empty-text="当前筛选下暂无发布队列任务"
+        empty-text="当前筛选下暂无下载器发布队列任务"
         class="glass-table"
       >
         <el-table-column label="种子" min-width="320">
@@ -177,7 +177,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="加入队列" width="145" align="center">
+        <el-table-column label="入队时间" width="145" align="center">
           <template #default="scope">
             <div class="datetime-cell">{{ formatDateTimeTwoLines(scope.row.created_at) }}</div>
           </template>
@@ -186,7 +186,7 @@
         <el-table-column label="预计发布时间" width="165" align="center">
           <template #header>
             <el-tooltip
-              content="任务真正可执行的时间：取计划时间与下次可运行时间中较晚者；到点后由后台队列调度器领取执行。填了下载器「发布节奏」的任务会按波次错开这个时间。"
+              content="任务真正可执行的时间：取计划时间与下次可运行时间中较晚者；到点后由后台队列调度器领取执行。每个下载器是一条独立队列，各自按自己的并发数、间隔与触发条件推进，互不阻塞；填了下载器「发布节奏」的任务会在该下载器队列时间轴上按波次顺延错峰。"
               placement="top"
               :hide-after="0"
             >
@@ -379,7 +379,7 @@ type StatusCounts = {
   exists: number
 }
 
-// 「待发布」在库里有两种来源：加入队列的 queued、立即发布登记的 dispatched（同样在等待执行）。
+// 「待发布」在库里有两种来源：加入下载器发布队列的 queued、立即发布登记的 dispatched（同样在等待执行）。
 const STATUS_FILTER_VALUES: Record<string, string[]> = {
   waiting: ['queued', 'dispatched'],
   running: ['running'],
@@ -648,7 +648,7 @@ const fetchTasks = async (options: { silent?: boolean } = {}) => {
     })
 
     if (!response.data?.success) {
-      throw new Error(response.data?.message || '获取发布队列失败')
+      throw new Error(response.data?.message || '获取下载器发布队列失败')
     }
     if (currentFetchSeq !== fetchSeq) return
 
@@ -693,7 +693,7 @@ const fetchTasks = async (options: { silent?: boolean } = {}) => {
           e.message)
         : e instanceof Error
           ? e.message
-          : '获取发布队列失败'
+          : '获取下载器发布队列失败'
       error.value = message
     }
   } finally {

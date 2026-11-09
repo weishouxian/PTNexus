@@ -9,6 +9,14 @@
       }}
     </p>
 
+    <!-- 本次发布的种子关键参数：避免为了核对而反复退回编辑页 -->
+    <div class="seed-summary-bar">
+      <span v-for="item in seedSummaryItems" :key="item.label" class="seed-summary-item">
+        <span class="seed-summary-label">{{ item.label }}</span>
+        <span :class="['seed-summary-value', { empty: item.empty }]">{{ item.value }}</span>
+      </span>
+    </div>
+
     <!-- 禁止转载警告 -->
     <el-alert
       v-if="isUbitsDisabled"
@@ -56,7 +64,7 @@
                   同一条种子发往多个目标站时的错峰节奏。<br />
                   <b>填 0</b>：沿用「设置 → 下载器」里该下载器的发布节奏（默认行为）。<br />
                   <b>填大于 0</b>：本次发布按此间隔错峰，每 N 分钟发一波；每波发几个站仍取该下载器的「并发数」。<br />
-                  对「立即发布」与「加入队列」都生效。
+                  对「立即发布」与「加入下载器发布队列」都生效；加入队列时按当前下载器排入它自己的队列时间轴。
                 </div>
               </template>
               <span class="toolbar-toggle-text interval-label">发种间隔时间</span>
@@ -178,9 +186,31 @@ const {
   isAutoUpdateHighlightSite,
   selectedTargetSites,
   publishIntervalMinutes,
+  seedSizeText,
+  getMappedValue,
   isIloliconSite,
   isCurrentSeedAnimationRelated,
 } = useCrossSeedPanelContext()
+
+// 顶部信息条：把本次要发出去的种子关键参数摊开显示。
+// 取值口径与「发布参数预览」一致（standardized_params 经反向映射表转成展示名），
+// 大小取自面板传入的种子体积（列表行优先，其次 MediaInfo/BDInfo 解析）。
+const seedSummaryItems = computed(() => {
+  const items: Array<{ label: string; value: string }> = [
+    { label: '大小', value: String(seedSizeText.value || '').trim() },
+    { label: '类型', value: getMappedValue('type') },
+    { label: '媒介', value: getMappedValue('medium') },
+    { label: '分辨率', value: getMappedValue('resolution') },
+    { label: '视频编码', value: getMappedValue('video_codec') },
+    { label: '音频编码', value: getMappedValue('audio_codec') },
+    { label: '制作组', value: getMappedValue('team') },
+  ]
+  return items.map((item) => ({
+    ...item,
+    value: item.value || 'N/A',
+    empty: !item.value || item.value === 'N/A',
+  }))
+})
 
 // 目标站点 + 各自标签：不可发布的站点在标签里也会被排除（disabled）。
 const tagSiteItems = computed(() =>

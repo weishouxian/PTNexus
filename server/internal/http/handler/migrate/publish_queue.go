@@ -11,7 +11,7 @@ import (
 	"github.com/pt-nexus/server/internal/repository"
 )
 
-// PublishQueueEnqueue 接收“加入队列”请求，将当前已审核的发布内容写入发种队列。
+// PublishQueueEnqueue 接收「加入下载器发布队列」请求，将当前已审核的发布内容按所属下载器写入该下载器的发布队列。
 // 参数/返回：请求体为发布 payload（需包含 task_id/upload_data/targetSites）；返回入队结果与状态码。
 // 失败场景：参数缺失、上下文过期或入库失败会返回 4xx/5xx。
 // 副作用：写入 publish_queue_tasks，并由后台线程异步触发发布。
@@ -43,7 +43,7 @@ func (h *Handler) PublishQueueEnqueueBatch(c *gin.Context) {
 	c.JSON(status, result)
 }
 
-// PublishQueueEnqueueBatchByNames 接收”一种多站”批量入队请求，根据种子名称查找 seed_parameters 后加入队列。
+// PublishQueueEnqueueBatchByNames 接收「一种多站」批量入队请求，根据种子名称查找 seed_parameters 后加入对应下载器的发布队列。
 // 参数/返回：请求体需包含 torrent_names 与 target_site_name；返回批量入队统计与批次标识。
 // 失败场景：参数缺失、队列未初始化、seed_parameters 未找到会跳过。
 // 副作用：写入 publish_queue_tasks 与 publish_logs。
@@ -177,7 +177,7 @@ func queueQueryValues(value any) []string {
 	}
 }
 
-// PublishQueueTasks 分页查询发布队列任务（供前端「下载器发布进度」页面使用）。
+// PublishQueueTasks 分页查询按下载器分桶的发布队列任务（供前端「下载器发布进度」页面使用）。
 // 参数/返回：querystring 支持 page/page_size/search/status/scene/trigger/target_site/source_site/torrent_id/group_id/downloader_ids；
 // 其中 status 与 downloader_ids 支持逗号分隔多值；返回任务列表、分页信息与状态概览。
 // 失败场景：队列服务未初始化或查询失败时返回 5xx。

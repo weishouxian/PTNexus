@@ -960,17 +960,20 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       })
 
       if (!response.data?.success || !response.data?.group_id) {
-        throw new Error(response.data?.message || '加入队列失败')
+        throw new Error(response.data?.message || '加入下载器发布队列失败')
       }
 
+      const downloaderHint = currentTorrent.downloaderId
+        ? ` · 下载器 ${currentTorrent.downloaderId}`
+        : ''
       ElNotification.success({
-        title: '已加入队列',
-        message: `队列分组: ${response.data.group_id}（${response.data.count || 0} 个站点）`,
+        title: '已加入下载器发布队列',
+        message: `队列分组: ${response.data.group_id}（${response.data.count || 0} 个站点）${downloaderHint}`,
         duration: 3000,
       })
       emit('cancel')
     } catch (error: unknown) {
-      handleApiError(error, '加入队列失败')
+      handleApiError(error, '加入下载器发布队列失败')
     } finally {
       isEnqueueing.value = false
     }
