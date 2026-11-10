@@ -264,7 +264,9 @@ func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*
 		Select("scheduled_at").
 		Where("status IN ?", []string{PublishQueueStatusQueued, PublishQueueStatusRunning, PublishQueueStatusDispatched}).
 		Where("COALESCE(downloader_id, '') = ?", strings.TrimSpace(downloaderID)).
-		Where("scheduled_at IS NOT NULL AND scheduled_at <> ''").
+		// 注意：scheduled_at 在 MySQL/PostgreSQL 是 DATETIME 类型，不能与空串比较
+		// （会抛 Error 1525 Incorrect DATETIME value: ''），只能判 IS NOT NULL。
+		Where("scheduled_at IS NOT NULL").
 		Order("scheduled_at DESC").
 		Limit(1).
 		Scan(&row).Error
@@ -815,7 +817,8 @@ func (r *PublishQueueRepository) ListPendingWaves(query PublishQueueTaskQuery, n
 
 	if err := r.applyTaskFilters(r.store.DB.Model(&PublishQueueTask{}), query).
 		Where("status = ?", PublishQueueStatusQueued).
-		Where("scheduled_at IS NOT NULL AND scheduled_at <> '' AND scheduled_at > ?", nowText).
+		// scheduled_at 是 DATETIME，不能判 <> ''（MySQL 报 1525），只判 IS NOT NULL。
+		Where("scheduled_at IS NOT NULL AND scheduled_at > ?", nowText).
 		Select("group_id, scheduled_at, COUNT(*) AS task_count").
 		Group("group_id, scheduled_at").
 		Order("scheduled_at ASC, group_id ASC").
