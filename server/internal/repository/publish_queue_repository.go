@@ -246,6 +246,9 @@ func (r *PublishQueueRepository) ListQueuedDownloaderIDs() ([]string, error) {
 // 参数/返回：downloaderID 为下载器 ID（空字符串表示无归属的旧数据）；返回最晚的 scheduled_at，无值或格式异常时返回 nil。
 // 规则：只看 scheduled_at —— 它是入队时按该下载器发布节奏排定的计划发布时间，代表队列的节奏位置，
 // 新批次据此顺延即可实现"加到队列后面"。
+// 状态范围与进度页「待发布」一致：queued / running / dispatched。
+// 必须含 dispatched（「立即发布」登记的待执行记录）：它同样占用该下载器接下来的发布时刻，
+// 漏掉会出现"进度页明明还有待发布，新入队批次却从当前时间立刻开跑"的情况（2026-11-10 实测）。
 // 刻意不看 next_run_at：它是门控/失败重试产生的临时等待（例如上传速度过高被推迟 30 分钟、
 // 或等可发种时间），不代表节奏位置；混入后会把新加入的整批任务一路推到很久以后。
 // 失败场景：数据库查询失败返回 error；时间格式异常返回 nil 而不是整体失败。
@@ -259,7 +262,7 @@ func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*
 	}{}
 	err := r.store.DB.Table("publish_queue_tasks").
 		Select("scheduled_at").
-		Where("status IN ?", []string{PublishQueueStatusQueued, PublishQueueStatusRunning}).
+		Where("status IN ?", []string{PublishQueueStatusQueued, PublishQueueStatusRunning, PublishQueueStatusDispatched}).
 		Where("COALESCE(downloader_id, '') = ?", strings.TrimSpace(downloaderID)).
 		Where("scheduled_at IS NOT NULL AND scheduled_at <> ''").
 		Order("scheduled_at DESC").

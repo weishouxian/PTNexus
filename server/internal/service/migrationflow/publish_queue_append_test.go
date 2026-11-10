@@ -85,6 +85,39 @@ func TestQueueAppendBaseTimeFallsBackToNow(t *testing.T) {
 	}
 }
 
+// insertDispatchedTask 写入一条「立即发布」登记的待执行记录（status=dispatched）。
+func insertDispatchedTask(t *testing.T, repo *repository.PublishQueueRepository, downloaderID, scheduledAt string) {
+	t.Helper()
+	value := scheduledAt
+	task := repository.PublishQueueTask{
+		Status:       repository.PublishQueueStatusDispatched,
+		DownloaderID: downloaderID,
+		TargetSite:   "立即发布站",
+		CreatedAt:    scheduledAt,
+		UpdatedAt:    scheduledAt,
+		ScheduledAt:  &value,
+	}
+	if err := repo.DB().Create(&task).Error; err != nil {
+		t.Fatalf("写入 dispatched 任务失败: %v", err)
+	}
+}
+
+// TestQueueAppendBaseTimeCountsDispatched 「立即发布」还没执行的记录也要算进队尾。
+// 回归点：队列尾部查询只统计 queued/running，22:00 入队时进度页里 22:05 的 dispatched
+// 记录被忽略，导致新批次第一波从当前时间立刻发出（2026-11-10 生产实测）。
+func TestQueueAppendBaseTimeCountsDispatched(t *testing.T) {
+	svc, repo := newAppendBaseTestService(t)
+	now := time.Date(2026, 11, 10, 22, 0, 0, 0, time.Local)
+	liveAt := now.Add(5 * time.Minute)
+	insertDispatchedTask(t, repo, "dl1", liveAt.Format(repository.PublishQueueTimeLayout))
+
+	got := svc.queueAppendBaseTime("dl1", now, 10*time.Minute)
+	want := liveAt.Add(10 * time.Minute)
+	if !got.Equal(want) {
+		t.Fatalf("dispatched 记录应计入队尾: got=%s want=%s", got.Format(repository.PublishQueueTimeLayout), want.Format(repository.PublishQueueTimeLayout))
+	}
+}
+
 // TestQueueAppendBaseTimeIgnoresOtherDownloaders 每个下载器一条队列：计算基准时不受其它下载器影响。
 func TestQueueAppendBaseTimeIgnoresOtherDownloaders(t *testing.T) {
 	svc, repo := newAppendBaseTestService(t)
