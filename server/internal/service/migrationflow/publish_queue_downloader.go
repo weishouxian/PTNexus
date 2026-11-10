@@ -39,13 +39,19 @@ func (s *MigrateService) resolveDownloaderQueueConfig(base publishQueueConfig, d
 	return out
 }
 
-// queueWaveBaseTime 计算本次入队在该下载器队列时间轴上的第一波起点。
+// queueAppendBaseTime 返回本批次入队在该下载器队列时间轴上的基准时间（新任务不插队）。
 // 参数/返回：downloaderID 为下载器 ID；now 为当前时间；interval 为该下载器的发种间隔（<=0 表示未启用节奏）。
-// 返回本批次第一波的基准时间：队列里已有更晚的计划时间时顺延一个间隔，否则返回 now。
+// 返回规则：
+//   - 队列里已有更晚的计划时间（scheduled_at）时：未启用节奏 → 直接用队尾时间（紧跟在已排队任务之后）；
+//     启用节奏 → 队尾再顺延一个间隔（本批次整体排在上一批的最后一波之后）。
+//   - 队列里没有更晚的计划时间，或查询失败 → 返回 now（可立即参与发布）。
+//
+// 队尾只认 scheduled_at（发布节奏位置），不认 next_run_at（门控/重试的临时等待）。
+// 「立即发布」不走本函数：它从当前时间起按同一套下载器节奏分波，不参与队列排队。
 // 失败场景：查询队列尾部失败时记录日志并退回 now（不影响入队）。
 // 副作用：读取 publish_queue_tasks。
-func (s *MigrateService) queueWaveBaseTime(downloaderID string, now time.Time, interval time.Duration) time.Time {
-	if interval <= 0 || s == nil || s.queueRepo == nil {
+func (s *MigrateService) queueAppendBaseTime(downloaderID string, now time.Time, interval time.Duration) time.Time {
+	if s == nil || s.queueRepo == nil {
 		return now
 	}
 	latest, err := s.queueRepo.LatestQueuedScheduledAt(downloaderID)
@@ -55,6 +61,9 @@ func (s *MigrateService) queueWaveBaseTime(downloaderID string, now time.Time, i
 	}
 	if latest == nil || !latest.After(now) {
 		return now
+	}
+	if interval <= 0 {
+		return *latest
 	}
 	return latest.Add(interval)
 }

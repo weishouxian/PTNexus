@@ -241,9 +241,13 @@ func (r *PublishQueueRepository) ListQueuedDownloaderIDs() ([]string, error) {
 	return ids, nil
 }
 
-// LatestQueuedScheduledAt 返回指定下载器活跃队列任务中最晚的计划/下次运行时间。
-// 参数/返回：downloaderID 为下载器 ID（空字符串表示无归属的旧数据）；返回最晚时间，无任务或未解析出时间时返回 nil。
-// 失败场景：数据库查询失败返回 error；单条时间格式异常时跳过该值而不是整体失败。
+// LatestQueuedScheduledAt 返回指定下载器队列在「发布节奏时间轴」上的队尾计划时间。
+// 参数/返回：downloaderID 为下载器 ID（空字符串表示无归属的旧数据）；返回最晚的 scheduled_at，无值或格式异常时返回 nil。
+// 规则：只看 scheduled_at —— 它是入队时按该下载器发布节奏排定的计划发布时间，代表队列的节奏位置，
+// 新批次据此顺延即可实现"加到队列后面"。
+// 刻意不看 next_run_at：它是门控/失败重试产生的临时等待（例如上传速度过高被推迟 30 分钟、
+// 或等可发种时间），不代表节奏位置；混入后会把新加入的整批任务一路推到很久以后。
+// 失败场景：数据库查询失败返回 error；时间格式异常返回 nil 而不是整体失败。
 // 副作用：读取 publish_queue_tasks。
 func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*time.Time, error) {
 	if r == nil || r.store == nil || r.store.DB == nil {
@@ -251,36 +255,26 @@ func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*
 	}
 	row := struct {
 		ScheduledAt sql.NullString `gorm:"column:scheduled_at"`
-		NextRunAt   sql.NullString `gorm:"column:next_run_at"`
 	}{}
 	err := r.store.DB.Table("publish_queue_tasks").
-		Select("MAX(COALESCE(scheduled_at, next_run_at, created_at)) AS scheduled_at, MAX(COALESCE(next_run_at, created_at)) AS next_run_at").
+		Select("scheduled_at").
 		Where("status IN ?", []string{PublishQueueStatusQueued, PublishQueueStatusRunning}).
 		Where("COALESCE(downloader_id, '') = ?", strings.TrimSpace(downloaderID)).
+		Where("scheduled_at IS NOT NULL AND scheduled_at <> ''").
+		Order("scheduled_at DESC").
+		Limit(1).
 		Scan(&row).Error
 	if err != nil {
 		return nil, err
 	}
-
-	var latest time.Time
-	found := false
-	for _, raw := range []sql.NullString{row.ScheduledAt, row.NextRunAt} {
-		if !raw.Valid || strings.TrimSpace(raw.String) == "" {
-			continue
-		}
-		parsed, parseErr := time.ParseInLocation(PublishQueueTimeLayout, strings.TrimSpace(raw.String), time.Local)
-		if parseErr != nil {
-			continue
-		}
-		if !found || parsed.After(latest) {
-			latest = parsed
-			found = true
-		}
-	}
-	if !found {
+	if !row.ScheduledAt.Valid || strings.TrimSpace(row.ScheduledAt.String) == "" {
 		return nil, nil
 	}
-	return &latest, nil
+	parsed, parseErr := time.ParseInLocation(PublishQueueTimeLayout, strings.TrimSpace(row.ScheduledAt.String), time.Local)
+	if parseErr != nil {
+		return nil, nil
+	}
+	return &parsed, nil
 }
 
 // ClaimNextRunnableTask 原子领取全局下一条可执行的 queued 任务，并标记为 running。
@@ -326,7 +320,7 @@ func (r *PublishQueueRepository) claimNextRunnableTask(now time.Time, downloader
 			query += ` AND COALESCE(downloader_id, '') = ?`
 			args = append(args, downloaderID)
 		}
-		query += ` ORDER BY COALESCE(next_run_at, created_at) ASC, id ASC LIMIT 1`
+		query += ` ORDER BY ` + publishQueuePendingOrderClause + ` LIMIT 1`
 		if err := tx.Raw(query, args...).Scan(&row).Error; err != nil {
 			return err
 		}
@@ -701,10 +695,16 @@ type PublishQueueTaskStatusCounts struct {
 	Exists     int64 `json:"exists"`
 }
 
-// publishQueueTaskOrderClause 让「发布中/待发布（含已派发）」按计划时间升序排到最前，历史记录按完成时间倒序跟随。
+// publishQueuePendingOrderClause 待发布任务的统一排序口径（进度页列表与队列线程领取共用同一条）。
+// 语义：计划时间早的先发；同一计划时间按 id 升序，即先入队的先发（严格 FIFO，列表所见即实际发布顺序）。
 // 排序语句为跨 DB 兼容写法（MySQL / PostgreSQL / SQLite 均支持），不含任何外部输入。
+const publishQueuePendingOrderClause = "COALESCE(scheduled_at, next_run_at, created_at) ASC, id ASC"
+
+// publishQueueTaskOrderClause 让「发布中/待发布（含已派发）」按计划时间升序排到最前，历史记录按完成时间倒序跟随。
+// 待发布段与 claimNextRunnableTask 使用同一口径（见 publishQueuePendingOrderClause），保证列表顺序就是发布顺序。
 const publishQueueTaskOrderClause = "CASE WHEN status IN ('running','queued','dispatched') THEN 0 ELSE 1 END ASC, " +
 	"CASE WHEN status IN ('running','queued','dispatched') THEN COALESCE(scheduled_at, next_run_at, created_at) END ASC, " +
+	"CASE WHEN status IN ('running','queued','dispatched') THEN id END ASC, " +
 	"CASE WHEN status IN ('running','queued','dispatched') THEN NULL ELSE COALESCE(finished_at, updated_at, created_at) END DESC, " +
 	"id DESC"
 
@@ -1067,6 +1067,34 @@ func (r *PublishQueueRepository) MarkDispatchedCancelled(ids []int64, reason str
 			"last_result": text,
 			"last_error":  "",
 			"updated_at":  nowText,
+		})
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
+// RequeueStaleRunningTasks 把残留的「发布中」任务放回队列（running → queued）。
+// 参数/返回：now 为当前时间；返回受影响条数与 error。
+// 失败场景：DB 未初始化或更新失败返回 error。
+// 副作用：更新 publish_queue_tasks（running → queued，清空 started_at）。
+// 说明：任务的实际执行者只存在于进程内，进程重启后不可能还有任务在跑；
+// 不清理会让进度页长期挂着「发布中」僵尸行，且这些行排在最前面，
+// 与「列表顺序 = 实际发布顺序」冲突（实测生产曾有一条从 8 月挂到 11 月的 running 记录）。
+// 前提：队列线程在每个实例启动时只执行一次，按单实例部署设计（生产为单容器）。
+func (r *PublishQueueRepository) RequeueStaleRunningTasks(now time.Time) (int64, error) {
+	if r == nil || r.store == nil || r.store.DB == nil {
+		return 0, errors.New("publish queue repo is nil")
+	}
+
+	nowText := now.Format(PublishQueueTimeLayout)
+	result := r.store.DB.Table("publish_queue_tasks").
+		Where("status = ?", PublishQueueStatusRunning).
+		Updates(map[string]any{
+			"status":     PublishQueueStatusQueued,
+			"started_at": nil,
+			"last_error": "服务重启，任务已放回队列重新排队",
+			"updated_at": nowText,
 		})
 	if result.Error != nil {
 		return 0, result.Error

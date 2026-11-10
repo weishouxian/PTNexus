@@ -108,6 +108,13 @@ func (s *MigrateService) runPublishQueueWorker() {
 		} else if count > 0 {
 			logx.Infof(publishQueueLogModule, "已把 %d 条残留的立即发布进度记录标记为失败", count)
 		}
+		// 同理，进程内执行者已随重启消失：残留的「发布中」任务放回队列重新排队，
+		// 否则它们会永远挂在进度页最前面（列表顺序就不再等于实际发布顺序）。
+		if count, err := s.queueRepo.RequeueStaleRunningTasks(time.Now()); err != nil {
+			logx.Warnf(publishQueueLogModule, "回收残留的发布中任务失败 err=%v", err)
+		} else if count > 0 {
+			logx.Infof(publishQueueLogModule, "已把 %d 条残留的「发布中」任务放回队列", count)
+		}
 	}
 
 	lastCleanup := time.Now()
@@ -281,8 +288,9 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 		downloaderID,
 		resolvePayloadPublishIntervalMinutes(payload),
 	)
-	// 该下载器自己的队列时间轴：已有排到更晚的任务时，本批次从队尾之后再顺延一个间隔。
-	waveBase := s.queueWaveBaseTime(downloaderID, now, publishInterval)
+	// 该下载器自己的队列时间轴：新入队的一律排在已有任务之后（不插队）。
+	// 未启用节奏时直接用队尾时间；启用节奏时队尾再顺延一个间隔，按波次错开。
+	waveBase := s.queueAppendBaseTime(downloaderID, now, publishInterval)
 	waveIndex := 0
 	for _, target := range targetSites {
 		targetSite := strings.TrimSpace(target)
@@ -292,10 +300,16 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 
 		// 显式 scheduled_at 优先；否则由该下载器队列的波次推算本站的计划发布时间。
 		plannedAt := scheduledAt
-		if plannedAt == nil && publishInterval > 0 {
-			wave := waveIndex / pacingConcurrency
-			if wave > 0 || waveBase.After(now) {
-				planned := waveBase.Add(time.Duration(wave) * publishInterval)
+		if plannedAt == nil {
+			if publishInterval > 0 {
+				wave := waveIndex / pacingConcurrency
+				if wave > 0 || waveBase.After(now) {
+					planned := waveBase.Add(time.Duration(wave) * publishInterval)
+					plannedAt = &planned
+				}
+			} else if waveBase.After(now) {
+				// 无节奏但队列里还有排到更晚的任务：本批排在这些任务之后，等它们发完再发。
+				planned := waveBase
 				plannedAt = &planned
 			}
 		}
@@ -552,21 +566,27 @@ func (s *MigrateService) EnqueuePublishQueueBatch(payload map[string]any) (map[s
 			uploadData["downloader_id"] = downloaderID
 		}
 
-		// 发布节奏：显式 scheduled_at 优先；否则按该下载器队列时间轴上的波次错开计划发布时间。
+		// 发布节奏：显式 scheduled_at 优先；否则排到该下载器队列尾部之后（不插队），
+		// 启用节奏时再按波次错开计划发布时间。
 		plannedAt := scheduledAt
 		if plannedAt == nil {
-			if interval, pacingConcurrency := s.resolvePublishPacing(downloaderID, pacingOverrideMinutes); interval > 0 {
-				base, exists := waveBases[downloaderID]
-				if !exists {
-					base = s.queueWaveBaseTime(downloaderID, now, interval)
-					waveBases[downloaderID] = base
-				}
+			interval, pacingConcurrency := s.resolvePublishPacing(downloaderID, pacingOverrideMinutes)
+			base, exists := waveBases[downloaderID]
+			if !exists {
+				base = s.queueAppendBaseTime(downloaderID, now, interval)
+				waveBases[downloaderID] = base
+			}
+			if interval > 0 {
 				wave := pacingSequence[downloaderID] / pacingConcurrency
 				pacingSequence[downloaderID]++
 				if wave > 0 || base.After(now) {
 					planned := base.Add(time.Duration(wave) * interval)
 					plannedAt = &planned
 				}
+			} else if base.After(now) {
+				// 无节奏但队列里还有排到更晚的任务：本批整体排在这些任务之后。
+				planned := base
+				plannedAt = &planned
 			}
 		}
 
