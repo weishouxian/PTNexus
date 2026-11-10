@@ -3,6 +3,7 @@ package repository
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -1074,21 +1075,43 @@ func (r *PublishQueueRepository) MarkDispatchedCancelled(ids []int64, reason str
 	return result.RowsAffected, nil
 }
 
-// RequeueStaleRunningTasks 把残留的「发布中」任务放回队列（running → queued）。
-// 参数/返回：now 为当前时间；返回受影响条数与 error。
+// publishQueueStaleRunningMaxAge 是「发布中」任务允许被重启回收的时限。
+// 超过该时限说明中断已久（进程早已不在），重跑会把过期内容重新发到站点，
+// 因此直接判失败，交由人工在进度页决定是否重试。
+const publishQueueStaleRunningMaxAge = 24 * time.Hour
+
+// RequeueStaleRunningTasks 启动时处理残留的「发布中」任务。
+// 参数/返回：now 为当前时间；返回（放回队列条数, 判失败条数, error）。
+// 规则：中断时间在 publishQueueStaleRunningMaxAge 内 → running 回退为 queued 重新排队；
+// 更早的（或 started_at/created_at 都缺失的）→ 直接置为 failed 并写明原因，不自动重跑。
 // 失败场景：DB 未初始化或更新失败返回 error。
-// 副作用：更新 publish_queue_tasks（running → queued，清空 started_at）。
-// 说明：任务的实际执行者只存在于进程内，进程重启后不可能还有任务在跑；
-// 不清理会让进度页长期挂着「发布中」僵尸行，且这些行排在最前面，
-// 与「列表顺序 = 实际发布顺序」冲突（实测生产曾有一条从 8 月挂到 11 月的 running 记录）。
-// 前提：队列线程在每个实例启动时只执行一次，按单实例部署设计（生产为单容器）。
-func (r *PublishQueueRepository) RequeueStaleRunningTasks(now time.Time) (int64, error) {
+// 副作用：更新 publish_queue_tasks 的 status/started_at/finished_at/last_error/updated_at。
+// 说明：任务的实际执行者只存在于进程内，进程重启后不可能还有任务在跑，因此必须回收，
+// 否则进度页会长期挂着「发布中」僵尸行、破坏「列表顺序 = 实际发布顺序」。
+// 但历史上不限时限的回收把 2026-08-01 的一条僵尸任务重新发到了目标站（站点判为 exists
+// 并更新了种子信息），故加时限保护。前提：按单实例部署（生产为单容器），每实例启动只跑一次。
+func (r *PublishQueueRepository) RequeueStaleRunningTasks(now time.Time) (int64, int64, error) {
 	if r == nil || r.store == nil || r.store.DB == nil {
-		return 0, errors.New("publish queue repo is nil")
+		return 0, 0, errors.New("publish queue repo is nil")
 	}
 
 	nowText := now.Format(PublishQueueTimeLayout)
-	result := r.store.DB.Table("publish_queue_tasks").
+	cutoffText := now.Add(-publishQueueStaleRunningMaxAge).Format(PublishQueueTimeLayout)
+
+	discarded := r.store.DB.Table("publish_queue_tasks").
+		Where("status = ?", PublishQueueStatusRunning).
+		Where("COALESCE(started_at, created_at) < ?", cutoffText).
+		Updates(map[string]any{
+			"status":      PublishQueueStatusFailed,
+			"finished_at": nowText,
+			"last_error":  fmt.Sprintf("任务中断已超过 %d 小时，重启时未自动重跑", int(publishQueueStaleRunningMaxAge/time.Hour)),
+			"updated_at":  nowText,
+		})
+	if discarded.Error != nil {
+		return 0, 0, discarded.Error
+	}
+
+	requeued := r.store.DB.Table("publish_queue_tasks").
 		Where("status = ?", PublishQueueStatusRunning).
 		Updates(map[string]any{
 			"status":     PublishQueueStatusQueued,
@@ -1096,10 +1119,10 @@ func (r *PublishQueueRepository) RequeueStaleRunningTasks(now time.Time) (int64,
 			"last_error": "服务重启，任务已放回队列重新排队",
 			"updated_at": nowText,
 		})
-	if result.Error != nil {
-		return 0, result.Error
+	if requeued.Error != nil {
+		return requeued.RowsAffected, discarded.RowsAffected, requeued.Error
 	}
-	return result.RowsAffected, nil
+	return requeued.RowsAffected, discarded.RowsAffected, nil
 }
 
 // FailStaleDispatchedTasks 把残留的「已派发」记录标记为失败。

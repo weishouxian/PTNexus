@@ -110,10 +110,16 @@ func (s *MigrateService) runPublishQueueWorker() {
 		}
 		// 同理，进程内执行者已随重启消失：残留的「发布中」任务放回队列重新排队，
 		// 否则它们会永远挂在进度页最前面（列表顺序就不再等于实际发布顺序）。
-		if count, err := s.queueRepo.RequeueStaleRunningTasks(time.Now()); err != nil {
+		// 中断超过时限的直接判失败：重跑会把过期内容重新发到站点（曾把 8 月的任务重发出去）。
+		if requeued, discarded, err := s.queueRepo.RequeueStaleRunningTasks(time.Now()); err != nil {
 			logx.Warnf(publishQueueLogModule, "回收残留的发布中任务失败 err=%v", err)
-		} else if count > 0 {
-			logx.Infof(publishQueueLogModule, "已把 %d 条残留的「发布中」任务放回队列", count)
+		} else {
+			if requeued > 0 {
+				logx.Infof(publishQueueLogModule, "已把 %d 条残留的「发布中」任务放回队列", requeued)
+			}
+			if discarded > 0 {
+				logx.Infof(publishQueueLogModule, "已把 %d 条中断超时的「发布中」任务标记为失败（不自动重跑）", discarded)
+			}
 		}
 	}
 

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -154,10 +155,11 @@ func TestLatestQueuedScheduledAtIgnoresNextRunAt(t *testing.T) {
 func TestRequeueStaleRunningTasks(t *testing.T) {
 	repo := newPublishQueueTestRepo(t)
 	now := time.Date(2026, 11, 10, 20, 0, 0, 0, time.Local)
-	started := now.Add(-72 * time.Hour).Format(PublishQueueTimeLayout)
+	// 中断 10 分钟：在回收时限内，应回队列继续执行。
+	started := now.Add(-10 * time.Minute).Format(PublishQueueTimeLayout)
 	stale := PublishQueueTask{
 		Status:     PublishQueueStatusRunning,
-		TargetSite: "僵尸站",
+		TargetSite: "中断站",
 		StartedAt:  &started,
 		CreatedAt:  started,
 		UpdatedAt:  started,
@@ -166,12 +168,12 @@ func TestRequeueStaleRunningTasks(t *testing.T) {
 		t.Fatalf("写入 running 任务失败: %v", err)
 	}
 
-	count, err := repo.RequeueStaleRunningTasks(now)
+	requeued, discarded, err := repo.RequeueStaleRunningTasks(now)
 	if err != nil {
 		t.Fatalf("回收 running 任务失败: %v", err)
 	}
-	if count != 1 {
-		t.Fatalf("回收条数不符: got=%d want=1", count)
+	if requeued != 1 || discarded != 0 {
+		t.Fatalf("回收条数不符: requeued=%d discarded=%d want=1/0", requeued, discarded)
 	}
 
 	task, ok, err := repo.FindTaskByID(stale.ID)
@@ -183,5 +185,42 @@ func TestRequeueStaleRunningTasks(t *testing.T) {
 	}
 	if task.StartedAt != nil {
 		t.Fatalf("started_at 未清空: %v", *task.StartedAt)
+	}
+}
+
+// TestRequeueStaleRunningTasksDiscardsExpired 中断超过时限的 running 任务直接判失败，不重新发布。
+// 回归点：曾不限时限回收，导致 2026-08-01 的僵尸任务在 11 月重启后被放回队列并真的发到了站点。
+func TestRequeueStaleRunningTasksDiscardsExpired(t *testing.T) {
+	repo := newPublishQueueTestRepo(t)
+	now := time.Date(2026, 11, 10, 20, 0, 0, 0, time.Local)
+	started := now.Add(-72 * time.Hour).Format(PublishQueueTimeLayout)
+	expired := PublishQueueTask{
+		Status:     PublishQueueStatusRunning,
+		TargetSite: "僵尸站",
+		StartedAt:  &started,
+		CreatedAt:  started,
+		UpdatedAt:  started,
+	}
+	if err := repo.store.DB.Create(&expired).Error; err != nil {
+		t.Fatalf("写入 running 任务失败: %v", err)
+	}
+
+	requeued, discarded, err := repo.RequeueStaleRunningTasks(now)
+	if err != nil {
+		t.Fatalf("回收 running 任务失败: %v", err)
+	}
+	if requeued != 0 || discarded != 1 {
+		t.Fatalf("回收条数不符: requeued=%d discarded=%d want=0/1", requeued, discarded)
+	}
+
+	task, ok, err := repo.FindTaskByID(expired.ID)
+	if err != nil || !ok || task == nil {
+		t.Fatalf("读取任务失败 ok=%v err=%v", ok, err)
+	}
+	if task.Status != PublishQueueStatusFailed {
+		t.Fatalf("超时任务应判为 failed，实际: %s", task.Status)
+	}
+	if task.FinishedAt == nil || strings.TrimSpace(*task.FinishedAt) == "" {
+		t.Fatalf("超时任务未写 finished_at")
 	}
 }
