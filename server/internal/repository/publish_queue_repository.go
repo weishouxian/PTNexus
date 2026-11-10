@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/platform/logx"
 	"gorm.io/gorm"
 )
 
@@ -276,11 +277,52 @@ func (r *PublishQueueRepository) LatestQueuedScheduledAt(downloaderID string) (*
 	if !row.ScheduledAt.Valid || strings.TrimSpace(row.ScheduledAt.String) == "" {
 		return nil, nil
 	}
-	parsed, parseErr := time.ParseInLocation(PublishQueueTimeLayout, strings.TrimSpace(row.ScheduledAt.String), time.Local)
-	if parseErr != nil {
+	parsed, ok := parsePublishQueueTime(row.ScheduledAt.String)
+	if !ok {
+		logx.Warnf("发布-队列", "队列尾部时间格式无法识别，按无计划时间处理 raw=%q", row.ScheduledAt.String)
 		return nil, nil
 	}
 	return &parsed, nil
+}
+
+// parsePublishQueueTime 解析队列时间列的文本值，兼容各驱动/各写入路径产生的形态。
+// 参数/返回：raw 为数据库读到的原始文本；返回解析结果与是否成功。
+// 兼容形态：
+//   - Go 写入路径的 "2006-01-02 15:04:05"（含毫秒变体）；
+//   - MySQL 在 parseTime=True 时读出的 RFC3339 "2006-01-02T15:04:05+08:00"；
+//   - time.Time.String() 的 "2006-01-02 15:04:05 +0800 CST"；
+//   - 前端写入的 ISO 无时区 "2006-01-02T15:04:05"。
+//
+// 失败场景：空值或无法识别的格式返回 false（调用方按"无计划时间"处理）。
+// 副作用：无。
+// 说明：只按 PublishQueueTimeLayout 单一格式解析会静默失败——MySQL 下 sql.NullString
+// 拿到的是 RFC3339，解析失败后队尾被当成"空队列"，新入队批次因此从当前时间立刻发车
+// （2026-11-10 22:17 实测：队里有 22:20 的待发布任务，新批次第一波仍是 22:17 立即发）。
+func parsePublishQueueTime(raw string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		PublishQueueTimeLayout,
+		"2006-01-02 15:04:05.999999999",
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05 -0700 MST",
+	}
+	for _, layout := range layouts {
+		if t, err := time.ParseInLocation(layout, trimmed, DatabaseTimeZone); err == nil {
+			return t, true
+		}
+	}
+	normalized := normalizeQueueTimeStringValue(trimmed)
+	if normalized != "" && normalized != trimmed {
+		if t, err := time.ParseInLocation(PublishQueueTimeLayout, normalized, DatabaseTimeZone); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
 }
 
 // ClaimNextRunnableTask 原子领取全局下一条可执行的 queued 任务，并标记为 running。
