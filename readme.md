@@ -265,6 +265,7 @@ wget -O - https://github.com/weishouxian/PTNexus/releases/latest/download/instal
 - 修复：重启回收「发布中」任务加 24 小时时效门限，避免僵尸任务在新版本启动后被重新发到站点
 - 修复：种子详情读取时兜底重解析历史坏 audio_tracks，避免多音轨信息丢失
 - 优化：发布队列按下载器拆分，选择站点步骤直接展示种子参数；server 编译层加 BUILD_STAMP 强制失效，规避 NAS BuildKit 缓存误判
+- 更新：杜比（HDDolby）站点域名改为 www.uhddolby.com——站点基础域名与简介过滤图片路径同步更新，旧域名 hddolby.com 仍保留在过滤列表中
 
 ### v4.0.14（2026.11.03）
 

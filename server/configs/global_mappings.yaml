@@ -1133,6 +1133,8 @@ content_filtering:
 
   # 需要过滤的图片URL列表（这些图片会在提取时被自动过滤掉）
   unwanted_image_urls:
+    - "https://www.uhddolby.com/pic/Mediainfo.png"
+    - "https://www.uhddolby.com/pic/MoreScreenshot.png"
     - "https://www.hddolby.com/pic/Mediainfo.png"
     - "https://www.hddolby.com/pic/MoreScreenshot.png"
     - "https://wawawa.me/team/frogteam.svg"
