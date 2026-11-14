@@ -931,9 +931,8 @@
                 :type="getSiteTagType(site)"
                 :class="{ 'is-selectable': isSourceSiteSelectable(site.name) }"
                 :style="
-                  (!site.has_cookie && site.name !== '肉丝') ||
-                  ((site.name === '杜比' || site.name === 'HDtime' || site.name === '肉丝') &&
-                    !site.has_passkey)
+                  !site.has_cookie ||
+                  ((site.name === '杜比' || site.name === 'HDtime') && !site.has_passkey)
                     ? 'opacity: 0.5'
                     : ''
                 "
@@ -2367,14 +2366,14 @@ const isSourceSiteSelectable = (siteName: string): boolean => {
     return false
   }
 
-  // 然后检查站点是否已配置Cookie（肉丝站点不需要cookie）
+  // 然后检查站点是否已配置Cookie
   const siteStatus = allSourceSitesStatus.value.find((s) => s.name === siteName)
-  if (!siteStatus || (!siteStatus.has_cookie && siteName !== '肉丝')) {
+  if (!siteStatus || !siteStatus.has_cookie) {
     return false
   }
 
-  // 对于杜比(hddolby)、HDtime、肉丝站点，还需要检查passkey
-  if (siteName === '杜比' || siteName === 'HDtime' || siteName === '肉丝') {
+  // 对于杜比(hddolby)、HDtime站点，还需要检查passkey
+  if (siteName === '杜比' || siteName === 'HDtime') {
     return !!siteStatus.has_passkey
   }
 
@@ -3039,7 +3038,7 @@ const getSiteTagType = (site: SiteStatus) => {
   const siteData = selectedTorrentForMigration.value!.sites[site.name]
 
   // 如果站点未配置Cookie，显示为红色错误样式
-  if (!site.has_cookie || ((site.name === '杜比' || site.name === '肉丝') && !site.has_passkey)) {
+  if (!site.has_cookie || (site.name === '杜比' && !site.has_passkey)) {
     return 'error'
   }
 

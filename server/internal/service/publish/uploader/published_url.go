@@ -9,10 +9,12 @@ import (
 )
 
 var (
-	reOfferID          = regexp.MustCompile(`(?is)offers\.php\?id=(\d+)`)
-	reDetailID         = regexp.MustCompile(`(?is)details\.php\?id=(\d+)`)
-	reDetailTorrentID  = regexp.MustCompile(`(?is)details\.php\?[^\s"']*torrent_id=(\d+)`)
-	reRousiUUIDs       = regexp.MustCompile(`(?is)/torrent/([0-9a-fA-F\-]{36})`)
+	reOfferID         = regexp.MustCompile(`(?is)offers\.php\?id=(\d+)`)
+	reDetailID        = regexp.MustCompile(`(?is)details\.php\?id=(\d+)`)
+	reDetailTorrentID = regexp.MustCompile(`(?is)details\.php\?[^\s"']*torrent_id=(\d+)`)
+	reRousiUUIDs      = regexp.MustCompile(`(?is)/torrent/([0-9a-fA-F\-]{36})`)
+	// PeerGo 平台详情页改为 /torrents/{数字 id}（旧版是 /torrent/{uuid}）。
+	reRousiPeerGoID    = regexp.MustCompile(`(?is)/torrents/(\d+)`)
 	reZhuqueID         = regexp.MustCompile(`(?is)/torrent/info/(\d+)`)
 	reTTGDownload      = regexp.MustCompile(`(?is)/dl/(\d+)/([a-zA-Z0-9]+)`)
 	reDownhashAbsolute = regexp.MustCompile(`(?is)https?://[^"'\s<>]+/download\.php\?[^"'\s<>]*downhash=[^"'\s<>]+`)
@@ -88,6 +90,10 @@ func BuildDirectDownloadURLForPublished(baseURL string, passkey string, siteCode
 	trimmedPasskey := strings.TrimSpace(passkey)
 	trimmedSiteCode := strings.ToLower(strings.TrimSpace(siteCode))
 	if strings.Contains(trimmedSiteCode, "rousi") {
+		// PeerGo 平台：详情页 /torrents/{id}，下载走 /api/v1/torrents/{id}/download（会话 Cookie 鉴权）。
+		if match := reRousiPeerGoID.FindStringSubmatch(url); len(match) >= 2 {
+			return fmt.Sprintf("%s/api/v1/torrents/%s/download", strings.TrimRight(normalizedBase, "/"), match[1])
+		}
 		if trimmedPasskey == "" {
 			return ""
 		}

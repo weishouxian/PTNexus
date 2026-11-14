@@ -1927,8 +1927,12 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
 
     try {
       const normalizeRousiViewUrl = (urlObj: URL) => {
-        if (urlObj.hostname === 'rousi.pro' && urlObj.pathname.startsWith('/api/v1/torrents/')) {
-          urlObj.pathname = urlObj.pathname.replace('/api/v1/torrents/', '/torrent/')
+        // 肉丝（PeerGo）直链是 /api/v1/torrents/{id}/download，查看页是 /torrents/{id}。
+        if (urlObj.hostname.includes('rousi') && urlObj.pathname.startsWith('/api/v1/torrents/')) {
+          const matched = urlObj.pathname.match(/^\/api\/v1\/torrents\/(\d+)/)
+          if (matched) {
+            urlObj.pathname = `/torrents/${matched[1]}`
+          }
         }
       }
 

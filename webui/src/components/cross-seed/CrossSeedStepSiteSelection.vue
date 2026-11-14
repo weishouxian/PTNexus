@@ -100,7 +100,7 @@
         :key="site.name"
         class="site-button"
         :type="getButtonType(site)"
-        :plain="!site.has_cookie && site.name !== '肉丝'"
+        :plain="!site.has_cookie"
         :disabled="site.can_publish === false || !isTargetSiteSelectable(site.name)"
         @click="toggleSiteSelection(site.name)"
       >

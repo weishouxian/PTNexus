@@ -57,6 +57,11 @@ func CheckCookie(baseURL, siteCode, credential, passkey string) (valid bool, rea
 		return checkZhuqueCookie(baseURL, credential)
 	}
 
+	// 肉丝升级 PeerGo 平台后同样是 SPA，没有 NexusPHP 登录态；会话信息只能从 /api/v1/session 拿。
+	if isRousiPeerGoSite(siteCode, baseURL) {
+		return checkRousiPeerGoCookie(baseURL, credential, passkey)
+	}
+
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if trimmedBase == "" {
 		return false, "", CookieUser{}, fmt.Errorf("站点缺少域名（base_url），无法校验 Cookie")
@@ -190,6 +195,93 @@ func isYemaPTSite(siteCode, baseURL string) bool {
 		}
 	}
 	return false
+}
+
+// isRousiPeerGoSite 判断站点是否为肉丝（PeerGo 平台）。
+// 参数/返回：siteCode 为站点代码，baseURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isRousiPeerGoSite(siteCode, baseURL string) bool {
+	for _, raw := range []string{siteCode, baseURL} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(raw)), "rousi") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkRousiPeerGoCookie 校验肉丝 PeerGo 会话 Cookie：调 /api/v1/session 拿当前用户信息。
+// 判据：HTTP 200 且返回 user.username 非空即视为有效；401/403 视为 Cookie 失效。
+// 说明：Passkey 栏在肉丝已降级为「Cookie 备用栏」，两栏都空才报错。
+// 副作用：向目标站点发起一次 GET 请求。
+func checkRousiPeerGoCookie(baseURL, credential, passkey string) (bool, string, CookieUser, error) {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmedBase == "" {
+		return false, "", CookieUser{}, fmt.Errorf("肉丝缺少域名（base_url），无法校验 Cookie")
+	}
+
+	cookie := strings.TrimSpace(credential)
+	if cookie == "" {
+		cookie = strings.TrimSpace(passkey)
+	}
+	if cookie == "" {
+		return false, "", CookieUser{}, fmt.Errorf("肉丝 Cookie 为空，无法校验")
+	}
+	if !strings.Contains(strings.ToLower(cookie), "peergo_session=") {
+		cookie = "__Host-peergo_session=" + cookie
+	}
+
+	normalized := normalizeSiteBaseURLForCheck(trimmedBase)
+	checkURL := normalized + "/api/v1/session"
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, checkURL, nil)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("创建肉丝 Cookie 校验请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", defaultDupeUserAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("肉丝 Cookie 校验请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sharedBodyLimit))
+	if readErr != nil {
+		return false, "", CookieUser{}, fmt.Errorf("读取肉丝 Cookie 校验响应失败: %w", readErr)
+	}
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, "肉丝 Cookie 已失效或已过期（会话接口返回未登录）", CookieUser{}, nil
+	}
+	if resp.StatusCode >= 400 {
+		if looksLikeCloudflareChallenge(string(body)) {
+			return false, CookieCheckCloudflareReason, CookieUser{}, nil
+		}
+		return false, fmt.Sprintf("肉丝 Cookie 校验响应状态异常: %d", resp.StatusCode), CookieUser{}, nil
+	}
+
+	parsed := struct {
+		User struct {
+			ID          string `json:"id"`
+			Username    string `json:"username"`
+			DisplayName string `json:"display_name"`
+		} `json:"user"`
+	}{}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("肉丝会话响应解析失败: %w", err)
+	}
+
+	username := strings.TrimSpace(parsed.User.Username)
+	if username == "" {
+		username = strings.TrimSpace(parsed.User.DisplayName)
+	}
+	if username == "" {
+		return false, "肉丝 Cookie 已失效或未登录（未能获取到用户信息）", CookieUser{}, nil
+	}
+	return true, "Cookie 有效（已获取到用户信息）", CookieUser{UserID: strings.TrimSpace(parsed.User.ID), Username: username}, nil
 }
 
 // checkYemaPTCookie 校验 YemaPT Cookie：调 /api/user/profile 拿当前用户信息。

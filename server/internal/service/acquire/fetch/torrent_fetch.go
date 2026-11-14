@@ -31,6 +31,8 @@ var (
 	reTTGDetailURL = regexp.MustCompile(`(?is)/dl/(\d+)(?:/([a-zA-Z0-9]+))?`)
 	// YemaPT 详情页为 SPA hash 路由：https://www.yemapt.org/#/torrent/detail/{id}
 	reYemaPTDetailID = regexp.MustCompile(`(?i)/torrent/detail/(\d+)`)
+	// 肉丝（PeerGo）详情页 /torrents/{id}、下载直链 /api/v1/torrents/{id}/download，ID 都是纯数字。
+	reRousiTorrentPathID = regexp.MustCompile(`(?i)/(?:api/v1/)?torrents/(\d+)`)
 )
 
 const sourceDownloadLogModule = "迁移-种子下载"
@@ -135,7 +137,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	// M-Team（馒头）同样是 SPA，详情页里没有任何 .torrent 链接；
 	// 下载直链必须用存取令牌调 /api/torrent/genDlToken 换取（站点对同一顆種子每天最多下载 10 次）。
 	isMTeam := isMTeamSource(siteCode, baseURL, detailURL)
-	isSPADetail := isYemaPT || isMTeam
+	// 肉丝（rousi.pro）升级 PeerGo 后详情页同样是 React Router SPA，HTML 里没有任何下载链接，
+	// 直链固定为 /api/v1/torrents/{id}/download，凭会话 Cookie 鉴权。
+	isRousi := isRousiSource(siteCode, baseURL, detailURL)
+	isSPADetail := isYemaPT || isMTeam || isRousi
 
 	downloadCandidates := make([]string, 0)
 	if isYemaPT {
@@ -158,6 +163,9 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		spaKind := "YemaPT"
 		if isMTeam {
 			spaKind = "M-Team"
+		}
+		if isRousi {
+			spaKind = "肉丝(PeerGo)"
 		}
 		logx.Infof(sourceDownloadLogModule, "%s 详情页为 SPA，跳过 HTML 解析 source_site=%s torrent_id=%s", spaKind, siteName, trimmedID)
 	} else {
@@ -189,6 +197,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		if isMTeam {
 			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=M-Team 接口未返回下载直链", siteName, trimmedID)
 			return "", detailURL, nil, errors.New("馒头未能通过接口换取下载直链：请在站点配置的 Passkey 或 Cookie 栏填写控制台生成的存取令牌（网页 Cookie 无效）")
+		}
+		if isRousi {
+			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s detail_url=%s 原因=肉丝未识别出数字种子 ID", siteName, trimmedID, detailURL)
+			return "", detailURL, nil, fmt.Errorf("肉丝未能识别出种子 ID（详情页应为 %s/torrents/{数字ID}）", strings.TrimRight(baseURL, "/"))
 		}
 		logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=详情页无有效链接", siteName, trimmedID)
 		return "", detailURL, nil, errors.New("详情页中未找到可用下载链接")
@@ -621,14 +633,20 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 			return fmt.Sprintf("%s/detail/%s", strings.TrimRight(baseURL, "/"), id)
 		}
 	}
+	// 肉丝（PeerGo）：详情页为 SPA 路由 /torrents/{id}，下载直链 /api/v1/torrents/{id}/download
+	if isRousiSource(siteCode, baseURL, trimmed) {
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+		if id := extractRousiTorrentID(trimmed); id != "" {
+			return fmt.Sprintf("%s/torrents/%s", strings.TrimRight(baseURL, "/"), id)
+		}
+	}
 	if strings.Contains(trimmed, "details.php") || strings.Contains(trimmed, "torrent/") {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
 			return trimmed
 		}
 		return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(trimmed, "/")
-	}
-	if strings.Contains(strings.ToLower(siteCode), "rousi") && reUUIDInURL.MatchString(trimmed) {
-		return fmt.Sprintf("%s/torrent/%s", strings.TrimRight(baseURL, "/"), reUUIDInURL.FindString(trimmed))
 	}
 	// TTG: 将 /dl/{id}/{passkey} 下载 URL 转换为详情页 URL
 	if match := reTTGDetailURL.FindStringSubmatch(trimmed); len(match) >= 2 {
@@ -658,11 +676,16 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return ""
 	}
 	trimmedPasskey := strings.TrimSpace(passkey)
-	if strings.Contains(strings.ToLower(siteCode), "rousi") && trimmedPasskey != "" {
-		uuid := reUUIDInURL.FindString(detailURL)
-		if uuid != "" {
-			return fmt.Sprintf("%s/api/torrent/%s/download/%s", strings.TrimRight(baseURL, "/"), uuid, neturl.PathEscape(trimmedPasskey))
+	// 肉丝（PeerGo）：直链是 API 形式 /api/v1/torrents/{id}/download，凭会话 Cookie 鉴权，不再需要 passkey。
+	// 用户直接把下载直链粘进来时原样使用，避免再拼一次。
+	if isRousiSource(siteCode, baseURL, detailURL) {
+		if id := extractRousiTorrentID(detailURL, torrentID); id != "" {
+			if strings.Contains(strings.ToLower(detailURL), "/download") {
+				return strings.TrimSpace(detailURL)
+			}
+			return fmt.Sprintf("%s/api/v1/torrents/%s/download", strings.TrimRight(baseURL, "/"), id)
 		}
+		return ""
 	}
 	// TTG: 使用 /dl/{id}/{passkey} 格式而非标准 download.php
 	if strings.Contains(strings.ToLower(siteCode), "ttg") && trimmedPasskey != "" {
@@ -678,6 +701,42 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return fmt.Sprintf("%s/download.php?id=%s&passkey=%s", strings.TrimRight(baseURL, "/"), id, neturl.QueryEscape(trimmedPasskey))
 	}
 	return fmt.Sprintf("%s/download.php?id=%s", strings.TrimRight(baseURL, "/"), id)
+}
+
+// isRousiSource 判断源站是否为肉丝（PeerGo 平台）。
+// 参数/返回：siteCode 为站点代码，baseURL/detailURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isRousiSource(siteCode, baseURL, detailURL string) bool {
+	if strings.Contains(strings.ToLower(strings.TrimSpace(siteCode)), "rousi") {
+		return true
+	}
+	for _, raw := range []string{baseURL, detailURL} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(raw)), "rousi.pro") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractRousiTorrentID 从详情页、下载直链或裸 ID 中提取肉丝的数字种子 ID。
+// 参数/返回：依次尝试各值，命中 /torrents/{id}、/api/v1/torrents/{id}/download 或纯数字时返回 ID。
+// 失败场景：输入为空或无法识别 ID 时返回空串。
+// 副作用：无。
+func extractRousiTorrentID(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if match := reRousiTorrentPathID.FindStringSubmatch(trimmed); len(match) >= 2 {
+			return match[1]
+		}
+		if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // isYemaPTSource 判断源站是否为 YemaPT。

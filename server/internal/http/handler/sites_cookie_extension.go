@@ -59,7 +59,7 @@ func (h *SitesHandler) CookieSyncTargets(c *gin.Context) {
 			"base_url":               baseURL,
 			"special_tracker_domain": specialTrackerDomain,
 			"domains":                domains,
-			"cookie_required":        !strings.EqualFold(siteCode, "rousi"),
+			"cookie_required":        true,
 			"has_cookie":             hasCookieConfigured(site["has_cookie"]),
 		})
 	}

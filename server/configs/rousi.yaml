@@ -1,64 +1,67 @@
-# Rousi 站点配置（API v1 发种）
+# Rousi（肉丝）站点配置 —— PeerGo 平台发种映射
 #
 # 说明：
-# - 该站点走 API JSON 上传，不使用传统表单字段；这里主要用于“标准化键 -> 站点需要的值”的映射。
-# - 你可以按站点实际枚举值修改 mappings 的 value。
-# - key 既可以写标准化键（如 category.animation / resolution.r1080p / tag.国语），也可以写直观文本（如 animation / 1080p / 国语）。
+# - 肉丝已升级为 PeerGo 平台：旧的 API v1（Bearer passkey + JSON）全部作废，站点也不提供 API Key。
+#   现在发种走 POST /api/v1/torrents（multipart），认证用浏览器会话 Cookie：
+#   站点配置的 passkey 字段填 __Host-peergo_session 的值（或整段 `__Host-peergo_session=xxx`）。
+#   Cookie 会过期，发种报「会话 Cookie 无效或已过期」时到浏览器重新复制即可。
+# - 分类走 category_id（movies/tv/anime/...），填表维度由站点按分类下发，
+#   本文件只负责「标准化值 → 站点取值」的换算；站点下发的选项里没有的值会被自动丢弃。
+# - genre_options_by_type 是维度接口不可用时的降级数据，key 必须用站点分类 id。
 
 site_name: "Rousi"
 
 mappings:
-  # type：从标准化类型映射到站点需要的 type 值（不带前缀）
+  # 标准化类型 → 站点 category_id
   type:
-    "category.animation": "animation"
-    "category.movie": "movie"
+    "category.movie": "movies"
+    "category.animation": "anime"
     "category.tv_series": "tv"
     "category.tv_shows": "variety"
+    "category.documentaries": "documentary"
     "category.music": "music"
     "category.mv": "music"
-    "category.documentaries": "documentary"
     "category.sports": "sports"
     "category.software": "software"
-    "category.ebook": "ebook"
+    "category.ebook": "ebooks"
     "category.game": "other"
     "category.other": "other"
     "default": "other"
 
-  # region：来源地国家/地区（按站点实际值修改）
-  # - 注意：现有数据里 region 可能来自 upload_data.region/attributes.region，
-  #   也可能来自 standardized_params.source（旧逻辑里“产地”会落到 source 字段）。
+  # 产地 → 站点 region 选项 key
   region:
-    "source.china": "大陆"
-    "source.hongkong": "香港"
-    "source.taiwan": "台湾"
-    "source.japan": "日本"
-    "source.korea": "韩国"
-    "source.western": "美国"
-    "source.uk": "英国"
-    "source.france": "法国"
-    "source.germany": "德国"
-    "source.italy": "意大利"
-    "source.spain": "西班牙"
-    "source.russia": "俄罗斯"
-    "source.india": "印度"
-    "source.thailand": "泰国"
-    "source.australia": "澳大利亚"
-    "default": ""
+    "source.china": "mainland-china"
+    "source.hongkong": "hong-kong"
+    "source.taiwan": "taiwan"
+    "source.japan": "japan"
+    "source.korea": "south-korea"
+    "source.western": "usa"
+    "source.usa": "usa"
+    "source.uk": "uk"
+    "source.france": "france"
+    "source.germany": "germany"
+    "source.italy": "italy"
+    "source.spain": "spain"
+    "source.russia": "russia"
+    "source.canada": "canada"
+    "source.newzealand": "new-zealand"
+    "source.india": "india"
+    "source.thailand": "thailand"
+    "source.australia": "australia"
+    "default": "other"
 
-  # resolution：分辨率（按站点实际值修改）
+  # 分辨率 → 站点 resolution 选项 key
   resolution:
-    "resolution.r2160p": "4K / 2160p"
+    "resolution.r2160p": "2160p"
     "resolution.r1080p": "1080p"
     "resolution.r1080i": "1080i"
     "resolution.r720p": "720p"
-    "resolution.sd": "SD"
-    "resolution.other": "其他"
-    "default": "其他"
+    "resolution.sd": "sd"
+    "resolution.other": "other"
+    "default": "other"
 
-# 用于从 tags 推导 attributes.genre（取交集）
-# 格式来自 server/data/a.txt：type:选项1、选项2...
 genre_options_by_type:
-  movie:
+  movies:
     - 剧情
     - 喜剧
     - 动作
@@ -110,6 +113,11 @@ genre_options_by_type:
     - 武侠
     - 古装
     - 都市
+    - 热血
+    - 搞笑
+    - 战斗
+    - 机战
+    - 其它
   documentary:
     - 自然
     - 历史
@@ -124,7 +132,7 @@ genre_options_by_type:
     - 音乐
     - 艺术
     - 其它
-  animation:
+  anime:
     - 剧情
     - 动画
     - 热血
@@ -149,6 +157,8 @@ genre_options_by_type:
     - 社会
     - 恐怖
     - 致郁
+    - 动作
+    - 喜剧
     - 其它
   music:
     - 流行
@@ -204,7 +214,7 @@ genre_options_by_type:
     - 安全软件
     - 游戏
     - 其它
-  ebook:
+  ebooks:
     - 小说
     - 文学
     - 历史
@@ -220,11 +230,13 @@ genre_options_by_type:
     - 漫画
     - 杂志
     - 其它
-  9kg:
-    - 日本有码
-    - 日本无码
+  "9kg":
     - FC2
-    - 订阅平台
-    - 欧美无码
     - HACG
     - 写真
+    - 日本有码
+    - 日本无码
+    - 欧美无码
+    - 订阅平台
+  other:
+    - 其它

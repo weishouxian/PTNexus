@@ -409,8 +409,7 @@
           :sort-orders="['ascending', 'descending']"
         >
           <template #default="scope">
-            <el-tag v-if="scope.row.site === 'rousi'" type="info"> 无需配置 </el-tag>
-            <el-tag v-else :type="scope.row.has_cookie ? 'success' : 'danger'">
+            <el-tag :type="scope.row.has_cookie ? 'success' : 'danger'">
               {{ scope.row.has_cookie ? '已配置' : '未配置' }}
             </el-tag>
           </template>
@@ -425,7 +424,7 @@
         >
           <template #default="scope">
             <el-tag
-              v-if="['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(scope.row.site)"
+              v-if="['hddolby', 'm-team', 'hdtime', 'colapt'].includes(scope.row.site)"
               :type="scope.row.has_passkey ? 'success' : 'danger'"
             >
               {{ scope.row.has_passkey ? '已配置' : '未配置' }}
@@ -599,20 +598,18 @@
               :rows="3"
               :placeholder="
                 siteForm.site === 'rousi'
-                  ? '无需设置'
+                  ? '肉丝（PeerGo）必须填 Cookie：浏览器 F12 → Network → 任意 rousi.pro 请求里复制 Cookie，必须含 __Host-peergo_session=；会话过期后重发会报「会话 Cookie 无效或已过期」'
                   : siteForm.site === 'colapt'
                     ? '浏览器 F12 → Network → Fetch/XHR 里复制任意 /api/v1 请求的完整 Cookie（必须含 reelcore_session=，只有 reelcore_session_marker 是无效的）'
                     : siteForm.site === 'm-team'
                       ? 'M-Team 无需 Cookie；令牌请填下方 Passkey 栏'
                       : '从浏览器获取的Cookie字符串'
               "
-              :disabled="siteForm.site === 'rousi'"
             ></el-input>
             <div class="cookie-check-row">
               <el-button
                 size="small"
                 :loading="isCheckingCookie"
-                :disabled="siteForm.site === 'rousi'"
                 @click="handleCheckCookie"
               >
                 {{ siteForm.site === 'm-team' ? '检验令牌' : '检验 Cookie' }}
@@ -636,7 +633,9 @@
                 ? '控制台 → 实验室 → 存取令牌（36 位 UUID）'
                 : siteForm.site === 'colapt'
                   ? '站点「账号 → API 密钥」生成的 Key（需 torrent.upload 权限）'
-                  : '站点的Passkey'
+                  : siteForm.site === 'rousi'
+                    ? '肉丝无需填 Passkey（PeerGo 平台只认上面的会话 Cookie）'
+                    : '站点的Passkey'
             "
           ></el-input>
           <div
@@ -668,17 +667,8 @@
             class="form-tip"
             style="color: #409eff; font-weight: bold"
           >
-            获取肉丝passkey-
-            <el-button
-              type="primary"
-              size="small"
-              tag="a"
-              href="https://rousi.pro/account?tab=passkey"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              跳转
-            </el-button>
+            肉丝升级 PeerGo 平台后已取消 API Key：发种只认浏览器会话 Cookie（填上面的 Cookie
+            栏即可），这里的 Passkey 不用填；Cookie 过期后到浏览器重新复制。
           </div>
         </el-form-item>
         <el-form-item label="上传限速 (MB/s)" prop="speed_limit">
@@ -1468,9 +1458,9 @@ const isSiteConfigComplete = (site: SiteConfig) => {
   const hasCookie = Boolean(site?.has_cookie)
   const hasPasskey = Boolean(site?.has_passkey)
   // 与 Passkey 列展示规则保持一致：大多数站点自动获取，仅少数站点需要手动配置
-  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(site?.site)
-  // 肉丝不走 Cookie；可乐PT 两样都要：Cookie 用来抓源站数据，API Key 用来发种
-  const needsCookie = site?.site !== 'rousi'
+  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'colapt'].includes(site?.site)
+  // 肉丝（PeerGo）已取消 API Key，只认会话 Cookie；M-Team 反而只认存取令牌。
+  const needsCookie = site?.site !== 'm-team'
   return (!needsCookie || hasCookie) && (!needsPasskey || hasPasskey)
 }
 
@@ -1514,12 +1504,11 @@ const getSupportRank = (site: SiteConfig) => {
 }
 
 const getCookieSortKey = (site: SiteConfig) => {
-  if (site?.site === 'rousi') return 2 // 无需配置，放在已配置之后
   return site?.has_cookie ? 1 : 0
 }
 
 const getPasskeySortKey = (site: SiteConfig) => {
-  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'rousi', 'colapt'].includes(site?.site)
+  const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'colapt'].includes(site?.site)
   if (!needsPasskey) return 2 // 自动获取，放在已配置之后
   return site?.has_passkey ? 1 : 0
 }

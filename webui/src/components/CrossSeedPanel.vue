@@ -1491,16 +1491,13 @@ const isTargetSiteSelectable = (siteName: string): boolean => {
     return false
   }
 
-  // 肉丝站点不需要Cookie，其他站点需要配置Cookie
-  if (siteName !== '肉丝' && !siteStatus.has_cookie) {
+  // 所有目标站点都必须配置 Cookie（肉丝升级 PeerGo 后同样只认会话 Cookie）
+  if (!siteStatus.has_cookie) {
     return false
   }
 
   // 对于杜比(hddolby)和HDTime站点，还需要检查passkey
-  if (
-    (siteName === '杜比' || siteName === 'HDtime' || siteName === '肉丝') &&
-    !siteStatus.has_passkey
-  ) {
+  if ((siteName === '杜比' || siteName === 'HDtime') && !siteStatus.has_passkey) {
     return false
   }
 
@@ -1625,15 +1622,12 @@ const getButtonType = (site: SiteStatus) => {
   if (selectedTargetSites.value.includes(site.name)) {
     return 'success'
   }
-  // 如果站点没有Cookie（肉丝站点除外），显示为红色 (danger)
-  if (!site.has_cookie && site.name !== '肉丝') {
+  // 如果站点没有Cookie，显示为红色 (danger)
+  if (!site.has_cookie) {
     return 'danger'
   }
-  // 对于杜比、HDtime、肉丝站点，如果未配置Passkey，也显示为红色
-  if (
-    (site.name === '杜比' || site.name === 'HDtime' || site.name === '肉丝') &&
-    !site.has_passkey
-  ) {
+  // 对于杜比、HDtime站点，如果未配置Passkey，也显示为红色
+  if ((site.name === '杜比' || site.name === 'HDtime') && !site.has_passkey) {
     return 'danger'
   }
   // 其他情况（可选但未选中），显示为默认样式
