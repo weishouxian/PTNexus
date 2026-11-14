@@ -19,6 +19,20 @@
   ],
   "history": [
     {
+      "version": "v4.0.15",
+      "date": "2026.11.15",
+      "changes": [
+        "新增：肉丝（rousi.pro）全面适配 PeerGo 平台——站点已从 NexusPHP 迁到 React Router SPA + 自研 API，发种改走会话 Cookie + CSRF + multipart（category_id / facet_selections / screenshots / torrent_file），支持 movies/tv/documentary/anime/music/variety/sports/software/ebooks/9kg 分类与 genre/region/resolution 等维度自动映射，提交后状态为待审核",
+        "新增：肉丝上传图片按站点规则排序——第一张为封面（优先取海报），其余为截图，单张压进 2 MiB 以内、总数含封面最多 6 张；压缩链为原图直传 → ffmpeg → 纯 Go 降采样兜底，无 ffmpeg 环境也能压到上限内",
+        "新增：肉丝站点设置改为填会话 Cookie（__Host-peergo_session）并可一键检验，Passkey 不再需要；Cookie 失效会明确提示重新复制",
+        "修复：按 ID 或链接添加肉丝下载任务报「详情页中未找到可用下载链接」——新版下载直链为 /api/v1/torrents/{id}/download，兼容裸数字 ID、详情页链接与直链三种形态",
+        "修复：发布队列新入队任务抢在待发布任务之前执行——队尾查询不再在 MySQL DATETIME 列上比较空串，队尾时间兼容 RFC3339 / 空格 / 毫秒多格式，并把「立即发布」待执行记录计入队尾",
+        "修复：重启回收「发布中」任务加 24 小时时效门限，避免僵尸任务在新版本启动后被重新发到站点",
+        "修复：种子详情读取时兜底重解析历史坏 audio_tracks，避免多音轨信息丢失",
+        "优化：发布队列按下载器拆分，选择站点步骤直接展示种子参数；server 编译层加 BUILD_STAMP 强制失效，规避 NAS BuildKit 缓存误判"
+      ]
+    },
+    {
       "version": "v4.0.14",
       "date": "2026.11.03",
       "changes": [
