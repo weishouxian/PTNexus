@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -23,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/config"
+	"github.com/pt-nexus/server/internal/platform/netproxy"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
 	"github.com/pt-nexus/server/internal/service/publish/publisher"
@@ -100,6 +102,12 @@ const (
 	rousiImageFetchConcurrency = 4
 	rousiImageDownloadTimeout  = 180 * time.Second
 	rousiImageDownloadMaxBytes = 32 * 1024 * 1024
+	// 部分图床（如阿里云 ESA 加速的 img.seedvault.cn、境外的 pixhost.to）整段传输到几十 KB
+	// 就被对端断流（Go 侧表现为 stream error INTERNAL_ERROR，curl 侧是 transfer closed），
+	// 但对带 Range 的分片请求能正常返回 ⇒ 整段下载失败时改用 1 MiB 分片续传。
+	rousiImageChunkSize     = 1 << 20
+	rousiImageChunkTimeout  = 60 * time.Second
+	rousiImageChunkAttempts = 5
 	// 站点提交偶发 5xx（官方提示「请稍后重试」），自动重试两次；重试沿用同一 Idempotency-Key。
 	rousiUploadMaxAttempts = 3
 	// 5xx 后按 infohash 回查时，从提交前的公开最大 id 往后扫多少个 id。
@@ -1621,8 +1629,40 @@ func ffmpegConvertToJpegUnderBytesLimit(inputPath string, outputPath string, max
 	return try(scalesPrimary, qValuesPrimary) || try(scalesSecondary, qValuesSecondary)
 }
 
+var (
+	rousiImageClientOnce sync.Once
+	rousiImageClient     *http.Client
+)
+
+// rousiImageHTTPClient 返回图片下载专用客户端（强制 HTTP/1.1）。
+// 参数/返回：无入参；返回惰性初始化的共享客户端。
+// 失败场景：不适用。
+// 副作用：首次调用时创建 transport 并接入全局网络代理配置。
+//
+// 说明：img.seedvault.cn（阿里云 ESA）等图床的 HTTP/2 不回 WINDOW_UPDATE，
+// 流在 64 KiB（h2 默认流控窗口）处被对端 RST，Go 侧表现为
+// `stream error: stream ID n; INTERNAL_ERROR; received from peer`；
+// 同一地址在 HTTP/1.1 下（配合 Range 分片）能正常返回，因此图片下载固定走 h1.1。
+func rousiImageHTTPClient() *http.Client {
+	rousiImageClientOnce.Do(func() {
+		transport := &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ForceAttemptHTTP2:     false,
+			TLSClientConfig:       &tls.Config{NextProtos: []string{"http/1.1"}},
+			TLSHandshakeTimeout:   15 * time.Second,
+			MaxIdleConns:          8,
+			MaxIdleConnsPerHost:   8,
+			IdleConnTimeout:       90 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+		}
+		rousiImageClient = &http.Client{Transport: netproxy.ConfigureTransport(transport)}
+	})
+	return rousiImageClient
+}
+
 // downloadRousiImageToBytes 下载截图（同域请求自动带会话 Cookie）。
-// 说明：外链大图在慢线路上容易断流，这里放宽单张超时并在网络错误时重试一次；
+// 说明：整段下载先试一次；部分图床会把长响应在几十 KB 处直接断流（对端 RST / h2 INTERNAL_ERROR），
+// 这时回退到带 Range 的分片续传，按 1 MiB 一片拼完，单片失败最多重试 3 次。
 // 4xx 视为鉴权/防盗链问题，直接返回不重试。
 func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, targetURL string, referer string) ([]byte, error) {
 	buildRequest := func() (*http.Request, error) {
@@ -1656,39 +1696,160 @@ func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, 
 		return req, nil
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		req, err := buildRequest()
-		if err != nil {
-			return nil, err
-		}
-		client := &http.Client{Timeout: rousiImageDownloadTimeout}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
+	// 快路径：一次整段下载，应付正常图床。
+	req, err := buildRequest()
+	if err != nil {
+		return nil, err
+	}
+	fastCtx, fastCancel := context.WithTimeout(context.Background(), rousiImageDownloadTimeout)
+	resp, err := rousiImageHTTPClient().Do(req.WithContext(fastCtx))
+	if err == nil {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, rousiImageDownloadMaxBytes))
 		statusCode := resp.StatusCode
 		resp.Body.Close()
-
-		if statusCode < 200 || statusCode >= 300 {
+		fastCancel()
+		if statusCode >= 400 && statusCode < 500 {
 			preview := body
 			if len(preview) > 1024 {
 				preview = preview[:1024]
 			}
 			return nil, fmt.Errorf("HTTP %d: %s", statusCode, strings.TrimSpace(string(preview)))
 		}
-		if readErr != nil {
-			lastErr = readErr
-			continue
+		if statusCode >= 200 && statusCode < 300 && readErr == nil && len(body) > 0 {
+			return body, nil
 		}
-		return body, nil
+		if statusCode < 200 || statusCode >= 300 {
+			err = fmt.Errorf("HTTP %d", statusCode)
+		} else if readErr != nil {
+			err = readErr
+		}
+	} else {
+		fastCancel()
 	}
-	if lastErr == nil {
-		lastErr = errors.New("下载失败")
+
+	// 慢路径：分片续传。整段被提前断流时，Range 单片仍可正常返回。
+	data, rangeErr := downloadRousiImageByRange(buildRequest, targetURL)
+	if rangeErr == nil {
+		return data, nil
 	}
-	return nil, lastErr
+	return nil, fmt.Errorf("整段下载失败(%v)；分片续传失败(%v)", err, rangeErr)
+}
+
+// downloadRousiImageByRange 用 Range 分片把图片拉全，单片失败重试若干次并从断点继续。
+// 参数/返回：buildRequest 构造带鉴权头的请求；返回完整图片字节。
+// 失败场景：站点不支持 Range（非 206）、单片重试耗尽、超过整体大小上限时返回 error。
+// 副作用：按分片发起多次 HTTP GET。
+func downloadRousiImageByRange(buildRequest func() (*http.Request, error), targetURL string) ([]byte, error) {
+	var buffer bytes.Buffer
+	total := int64(-1)
+	maxChunks := int(rousiImageDownloadMaxBytes/rousiImageChunkSize) + 8
+
+	for chunkIndex := 0; chunkIndex < maxChunks; chunkIndex++ {
+		offset := int64(buffer.Len())
+		if total >= 0 && offset >= total {
+			break
+		}
+		if offset >= rousiImageDownloadMaxBytes {
+			return nil, fmt.Errorf("图片超过下载上限 %d 字节", rousiImageDownloadMaxBytes)
+		}
+
+		end := offset + rousiImageChunkSize - 1
+		if total > 0 && end >= total {
+			end = total - 1
+		}
+
+		var (
+			chunk     []byte
+			chunkErr  error
+			lastError error
+		)
+		for attempt := 0; attempt < rousiImageChunkAttempts; attempt++ {
+			// 图床在连发请求时会间歇性断流，重试之间留一点间隔，避免连撞限流。
+			if attempt > 0 {
+				time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+			}
+			req, err := buildRequest()
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, end))
+
+			client := rousiImageHTTPClient()
+			chunkCtx, chunkCancel := context.WithTimeout(context.Background(), rousiImageChunkTimeout)
+			resp, err := client.Do(req.WithContext(chunkCtx))
+			if err != nil {
+				chunkCancel()
+				lastError = err
+				continue
+			}
+			body, readErr := io.ReadAll(io.LimitReader(resp.Body, end-offset+1))
+			statusCode := resp.StatusCode
+			contentRange := resp.Header.Get("Content-Range")
+			resp.Body.Close()
+			chunkCancel()
+
+			if statusCode != http.StatusPartialContent {
+				// 服务器忽略 Range（回 200）或越界（416）：换分片也没意义，直接退出。
+				if statusCode == http.StatusOK {
+					return nil, fmt.Errorf("图床不支持 Range 分片下载: HTTP %d %s", statusCode, targetURL)
+				}
+				return nil, fmt.Errorf("分片下载失败: HTTP %d %s", statusCode, targetURL)
+			}
+			if total < 0 {
+				if parsed := parseRousiContentRangeTotal(contentRange); parsed > 0 {
+					total = parsed
+				}
+			}
+			if len(body) > 0 {
+				chunk = body
+				chunkErr = nil
+				break
+			}
+			chunkErr = readErr
+			if chunkErr == nil {
+				chunkErr = errors.New("分片返回空数据")
+			}
+			lastError = chunkErr
+		}
+
+		if len(chunk) == 0 {
+			if lastError != nil {
+				return nil, fmt.Errorf("偏移 %d 处取分片失败: %v", offset, lastError)
+			}
+			return nil, fmt.Errorf("偏移 %d 处取分片失败", offset)
+		}
+		buffer.Write(chunk)
+
+		// 没有 Content-Range 总长时，用「取到的字节数不足一片」判断已到结尾。
+		if total < 0 && int64(len(chunk)) < end-offset+1 {
+			break
+		}
+	}
+
+	if buffer.Len() == 0 {
+		return nil, errors.New("分片下载未取到任何数据")
+	}
+	return buffer.Bytes(), nil
+}
+
+// parseRousiContentRangeTotal 从 Content-Range 头（bytes 0-1048575/3955182）解析总长度。
+// 参数/返回：header 为响应头原文；解析不出时返回 -1。
+// 失败场景：格式不符（如 bytes 0-1023/*）时返回 -1。
+// 副作用：无。
+func parseRousiContentRangeTotal(header string) int64 {
+	value := strings.TrimSpace(header)
+	if value == "" {
+		return -1
+	}
+	slash := strings.LastIndex(value, "/")
+	if slash < 0 || slash == len(value)-1 {
+		return -1
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(value[slash+1:]), 10, 64)
+	if err != nil || total <= 0 {
+		return -1
+	}
+	return total
 }
 
 func defaultRousiRefererForURL(targetURL string) string {
