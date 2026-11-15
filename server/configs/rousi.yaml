@@ -11,6 +11,14 @@
 
 site_name: "Rousi"
 
+# info hash 隔离：非空时发种前会在种子 info 字典内写入 source=<该值>，
+# 让肉丝种子与源站种子拥有不同的 infohash —— 下载器里是两个独立任务，
+# 站点标签/分类/上传量统计互不覆盖。文件列表与 piece 数据保持原样，
+# 肉丝任务指向同一份文件即可直接校验做种，不会重新下载。
+# 留空（或删除该项）则保持与源站相同的 infohash（一个任务同时给两个站做种）。
+# 取值 "ROUSI" 与站点自己写入的 info.source 一致（站点对部分种子会补 source=ROUSI）。
+info_source_tag: "ROUSI"
+
 mappings:
   # 标准化类型 → 站点 category_id
   type:

@@ -113,3 +113,38 @@ func TestCompressRousiImageToJPEGUnderLimit(t *testing.T) {
 		t.Fatalf("压缩结果不是合法 JPEG: %v", err)
 	}
 }
+
+// 简介里的截图常常是「一行一个纯 URL」，没有 [img] 包裹，这类也必须识别出来。
+func TestCollectRousiImageSourcesPlainURLs(t *testing.T) {
+	uploadData := map[string]any{
+		"intro": map[string]any{
+			"screenshots": "https://img3.pixhost.to/images/6824/795836707_s1.png\n" +
+				"https://img3.pixhost.to/images/6824/795836721_s2.png\n" +
+				"http://img.zmpt.cc/i/2025/11/13/69156a199b5b8.jpg",
+		},
+	}
+
+	grouped := collectRousiImageSources(uploadData)
+	if len(grouped.Screenshots) != 3 {
+		t.Fatalf("纯 URL 截图应提取 3 张，实际 %d: %#v", len(grouped.Screenshots), grouped.Screenshots)
+	}
+	if grouped.Screenshots[0].URL != "https://img3.pixhost.to/images/6824/795836707_s1.png" {
+		t.Fatalf("首张截图顺序错误: %q", grouped.Screenshots[0].URL)
+	}
+}
+
+// 截图正文在 uploadData.screenshots 顶层时同样要能取到（早期只读 intro 会漏掉）。
+func TestCollectRousiImageSourcesTopLevelScreenshots(t *testing.T) {
+	uploadData := map[string]any{
+		"screenshots": "[img]https://img.example.com/shot-1.jpg[/img][img]https://img.example.com/shot-2.jpg[/img]",
+		"intro":       map[string]any{"poster": "[img]https://img.example.com/poster.jpg[/img]"},
+	}
+
+	ordered := flattenRousiImageSources(collectRousiImageSources(uploadData))
+	if len(ordered) != 3 {
+		t.Fatalf("应有 封面1 + 截图2，实际 %d: %#v", len(ordered), ordered)
+	}
+	if ordered[0].URL != "https://img.example.com/poster.jpg" {
+		t.Fatalf("第一张必须是封面，实际 %q", ordered[0].URL)
+	}
+}

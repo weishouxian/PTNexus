@@ -162,14 +162,77 @@ func (d Downloader) ApplyTorrentTags(hashes, tags []string) error {
 		return err
 	case "transmission":
 		client := newTransmissionClient(d)
-		_, err := client.Call("torrent-set", map[string]any{
-			"ids":    hashes,
-			"labels": tags,
-		})
-		return err
+		return mergeTransmissionLabels(client, hashes, tags)
 	default:
 		return fmt.Errorf("不支持的下载器类型: %s", d.Type)
 	}
+}
+
+// mergeTransmissionLabels 把 tags 并入任务现有 labels 后再写回。
+// Transmission 的 torrent-set:labels 是「整体替换」语义：转种发布后目标站种子与源站种子共享同一个
+// info hash，下载器里只会有一个任务，直接写入会把源站标签抹掉（表现为「源站种子的标签变成目标站」）。
+// 因此先 torrent-get 读现有 labels，去重合并后再 set（在替换/追加两种语义下都安全）；
+// 任务尚未入库时直接跳过，torrent-add 已经带过 labels。
+// 参数/返回：client 为已建好的 Transmission 客户端，hashes 为任务 hash，tags 为本次要追加的标签。
+// 失败场景：torrent-get 失败、或任一 torrent-set 失败时返回最后一个错误。
+// 副作用：会向 Transmission 发起 1 次读 + N 次写请求。
+func mergeTransmissionLabels(client *transmissionClient, hashes, tags []string) error {
+	response, err := client.Call("torrent-get", map[string]any{
+		"ids":    hashes,
+		"fields": []string{"hashString", "labels"},
+	})
+	if err != nil {
+		return err
+	}
+	rows := toSlice(toMap(response["arguments"])["torrents"])
+	if len(rows) == 0 {
+		return nil
+	}
+	var lastErr error
+	for _, raw := range rows {
+		row := toMap(raw)
+		hash := strings.TrimSpace(toString(row["hashString"], ""))
+		if hash == "" {
+			continue
+		}
+		if _, err := client.Call("torrent-set", map[string]any{
+			"ids":    []string{hash},
+			"labels": mergeLabelLists(torrentLabels(row["labels"]), tags),
+		}); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
+// torrentLabels 把 torrent-get 返回的 labels 字段统一转成去重后的字符串列表。
+// 参数/返回：raw 为 labels 原始值（[]string / []any / string）；返回清洗后的标签列表。
+// 失败场景：不适用（类型不识别时返回空列表）。
+// 副作用：无。
+func torrentLabels(raw any) []string {
+	result := make([]string, 0, 4)
+	switch typed := raw.(type) {
+	case []string:
+		result = append(result, typed...)
+	case []any:
+		for _, item := range typed {
+			result = append(result, toString(item, ""))
+		}
+	case string:
+		result = append(result, typed)
+	}
+	return compactStrings(result)
+}
+
+// mergeLabelLists 返回 existing 与 extra 合并去重后的标签列表，existing 顺序在前。
+// 参数/返回：existing 为任务已有标签，extra 为本次要追加的标签；返回合并后的列表。
+// 失败场景：不适用。
+// 副作用：无。
+func mergeLabelLists(existing, extra []string) []string {
+	merged := make([]string, 0, len(existing)+len(extra))
+	merged = append(merged, existing...)
+	merged = append(merged, extra...)
+	return compactStrings(merged)
 }
 
 func FromConfig(root map[string]any, downloaderID string) (Downloader, error) {

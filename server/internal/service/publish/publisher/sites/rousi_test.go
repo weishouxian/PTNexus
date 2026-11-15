@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
 )
 
@@ -222,5 +223,77 @@ func TestBuildRousiMultipartBody(t *testing.T) {
 	}
 	if len(fileParts) != 2 || fileParts[1] != "torrent_file:demo.torrent" {
 		t.Fatalf("文件 part 异常: %#v", fileParts)
+	}
+}
+
+// buildRousiMiniTorrent 构造一个最小 v1 私有种子，用于验证 info hash 隔离。
+func buildRousiMiniTorrent() []byte {
+	pieces := strings.Repeat("p", 20)
+	info := "d6:lengthi1024e4:name8:test.bin12:piece lengthi16384e6:pieces20:" + pieces + "7:privatei1ee"
+	return []byte("d8:announce28:https://example.org/announce4:info" + info + "e")
+}
+
+// TestRousiIsolateInfoHash 验证 info_source_tag 配置能让肉丝种子拿到与源站不同的 infohash；
+// 未配置时保持源站种子原样（两个站共用一个任务）。
+func TestRousiIsolateInfoHash(t *testing.T) {
+	original := buildRousiMiniTorrent()
+	origHash, err := acquirefetch.TorrentInfoHash(original)
+	if err != nil {
+		t.Fatalf("原始 infohash 计算失败: %v", err)
+	}
+
+	// 未配置：原样返回，日志说明会共用任务
+	same, note := rousiIsolateInfoHash(original, &publishmapping.SitePublishConfig{})
+	if !strings.Contains(note, "未配置 info_source_tag") {
+		t.Fatalf("未配置时的日志不符合预期: %s", note)
+	}
+	if got, _ := acquirefetch.TorrentInfoHash(same); got != origHash {
+		t.Fatalf("未配置时不应改动种子: %s vs %s", got, origHash)
+	}
+
+	// 配置后：infohash 必须变化，且日志给出前后值
+	rewritten, note := rousiIsolateInfoHash(original, &publishmapping.SitePublishConfig{InfoSourceTag: "ROUSI"})
+	if !strings.Contains(note, "独立任务") {
+		t.Fatalf("隔离日志不符合预期: %s", note)
+	}
+	newHash, err := acquirefetch.TorrentInfoHash(rewritten)
+	if err != nil {
+		t.Fatalf("改写后 infohash 计算失败: %v", err)
+	}
+	if newHash == origHash {
+		t.Fatalf("infohash 未变化: %s", newHash)
+	}
+	if !strings.Contains(note, origHash) || !strings.Contains(note, newHash) {
+		t.Fatalf("日志缺少前后 infohash: %s", note)
+	}
+
+	// 坏种子：不阻断发布，保持原字节并给出原因
+	brokenResult, brokenNote := rousiIsolateInfoHash([]byte("not-a-torrent"), &publishmapping.SitePublishConfig{InfoSourceTag: "ROUSI"})
+	if string(brokenResult) != "not-a-torrent" || !strings.Contains(brokenNote, "隔离失败") {
+		t.Fatalf("坏种子处理异常: note=%s", brokenNote)
+	}
+}
+
+// TestRousiExtractRequestID 校验 request_id 提取：优先 problem 字段，其次响应体里的 UUID。
+func TestRousiExtractRequestID(t *testing.T) {
+	body := `{"code":"internal_error","request_id":"df228cf5-2424-481e-b55d-b90944dc9edb"}`
+	if got := rousiExtractRequestID("", body); got != "df228cf5-2424-481e-b55d-b90944dc9edb" {
+		t.Fatalf("从响应体提取失败: %q", got)
+	}
+	if got := rousiExtractRequestID("aaaabbbb-1111-2222-3333-444455556666", ""); got != "aaaabbbb-1111-2222-3333-444455556666" {
+		t.Fatalf("优先字段失效: %q", got)
+	}
+	// 响应体没有 UUID 时不能凭空构造
+	if got := rousiExtractRequestID("", `{"code":"internal_error"}`); got != "" {
+		t.Fatalf("不应提取到 request_id: %q", got)
+	}
+}
+
+// TestRousiUploadRetryDelay 校验重试间隔递增且不为 0。
+func TestRousiUploadRetryDelay(t *testing.T) {
+	first := rousiUploadRetryDelay(1)
+	second := rousiUploadRetryDelay(2)
+	if first <= 0 || second <= first {
+		t.Fatalf("重试间隔不合理: %v, %v", first, second)
 	}
 }

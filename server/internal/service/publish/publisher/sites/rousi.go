@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -18,9 +19,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pt-nexus/server/internal/config"
+	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	publishmapping "github.com/pt-nexus/server/internal/service/publish/mapping"
 	"github.com/pt-nexus/server/internal/service/publish/publisher"
 )
@@ -39,6 +42,8 @@ import (
 //     torrent_file（原始私有 v1 .torrent）
 //   - 成功：201 {id, info_hash_v1, state(pending_review|published), content_name, ...}
 //     详情页为 /torrents/{id}（不再是 /torrent/{uuid}）
+//   - 失败：problem+json {code, title, detail, request_id}；5xx 多为瞬时故障，
+//     官方提示「请稍后重试」，这里自动重试（沿用同一 Idempotency-Key），失败时把 request_id 带进报错
 //
 // facet 维度由站点按分类返回（GET /api/v1/categories/{id}/facets），其中 required 必须给值，
 // 同 requirement_group 的多个 facet（source-medium / release-type）至少要有一个有值。
@@ -74,6 +79,7 @@ var (
 	reRousiBBCodeImgSource  = regexp.MustCompile(`(?is)\[img[^\]]*\](.*?)\[/img\]`)
 	reRousiMDImgSource      = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
 	reRousiHTMLImgSource    = regexp.MustCompile(`(?is)<img[^>]+src=["']([^"']+)["']`)
+	reRousiRawImageURL      = regexp.MustCompile(`(?i)https?://[^\s\[\]<>"']+\.(?:png|jpe?g|gif|webp)(?:\?[^\s\[\]<>"']*)?`)
 	reRousiImageExt         = regexp.MustCompile(`(?i)\.(png|jpe?g|gif|webp)(\?.*)?$`)
 	reRousiPixhostThumb     = regexp.MustCompile(`(?i)^https?://t(\d+)\.pixhost\.(?:to|cc)/thumbs/(.+)$`)
 	reRousiTorrentFilename  = regexp.MustCompile(`^([^-]+)-(\d+)-`)
@@ -89,6 +95,15 @@ const (
 	rousiScreenshotMaxBytes = 2*1024*1024 - 8*1024
 	rousiScreenshotMaxCount = 6
 	rousiScreenshotTotalMax = 12 * 1024 * 1024
+	// 截图往往是几 MB 的外链大图（如 pixhost 的 4K PNG），串行下载在慢线路上会一路超时，
+	// 表现成「只传了封面、截图全被跳过」，因此并发预取并放宽单张超时。
+	rousiImageFetchConcurrency = 4
+	rousiImageDownloadTimeout  = 180 * time.Second
+	rousiImageDownloadMaxBytes = 32 * 1024 * 1024
+	// 站点提交偶发 5xx（官方提示「请稍后重试」），自动重试两次；重试沿用同一 Idempotency-Key。
+	rousiUploadMaxAttempts = 3
+	// 5xx 后按 infohash 回查时，从提交前的公开最大 id 往后扫多少个 id。
+	rousiConfirmScanSpan = 20
 )
 
 type rousiImageSource struct {
@@ -306,8 +321,118 @@ func rousiFetchFacets(client *http.Client, baseURL string, cookie string, userAg
 	return facets, nil
 }
 
-// tryUploadTorrentRousiPeerGo 走 PeerGo 契约完成一次发种。
-// 参数/返回：见 PublishRousi；返回详情页 URL、是否“已存在”、过程日志与错误。
+// rousiTorrentDetail 是详情接口 GET /api/v1/torrents/{id} 里回查需要的字段。
+type rousiTorrentDetail struct {
+	ID         int64  `json:"id"`
+	InfoHashV1 string `json:"info_hash_v1"`
+	State      string `json:"state"`
+}
+
+// rousiMaxPublicTorrentID 取公开列表里最大的种子 id，作为提交前后的 id 基线。
+// 参数/返回：读取失败返回 0（调用方据此跳过回查）。
+// 副作用：一次只读 GET。
+func rousiMaxPublicTorrentID(client *http.Client, baseURL string, cookie string, userAgent string) int64 {
+	req, err := http.NewRequest(http.MethodGet, baseURL+"/api/v1/torrents?limit=20&offset=0", nil)
+	if err != nil {
+		return 0
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Referer", baseURL+"/torrents")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return 0
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	payload := struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}{}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return 0
+	}
+	maxID := int64(0)
+	for _, item := range payload.Items {
+		if item.ID > maxID {
+			maxID = item.ID
+		}
+	}
+	return maxID
+}
+
+// rousiFetchTorrentDetail 读取单个种子详情（含 info_hash_v1）。
+// 参数/返回：非 2xx 或非 JSON 时 ok=false。
+// 副作用：一次只读 GET。
+func rousiFetchTorrentDetail(client *http.Client, baseURL string, cookie string, userAgent string, id int64) (rousiTorrentDetail, bool) {
+	url := fmt.Sprintf("%s/api/v1/torrents/%d", baseURL, id)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return rousiTorrentDetail{}, false
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("User-Agent", userAgent)
+	req.Header.Set("Referer", url)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return rousiTorrentDetail{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+		return rousiTorrentDetail{}, false
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 128*1024))
+	detail := rousiTorrentDetail{}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		return rousiTorrentDetail{}, false
+	}
+	return detail, true
+}
+
+// rousiConfirmUploaded 在站点返回 5xx 后按 infohash 回查「是否其实已经落库」。
+// 站点在部分场景会「写库成功但响应 500」，此时用本次提交的 infohash 反查最近的种子即可确认。
+//
+// 参数/返回：baselineID 为提交前取到的公开最大 id；返回种子 id、状态与是否确认。
+// 失败场景：找不到（说明确实未落库）或接口不可用，返回 false 由调用方继续重试。
+// 副作用：最多发起 rousiConfirmScanSpan+4 次只读 GET。
+func rousiConfirmUploaded(client *http.Client, baseURL string, cookie string, userAgent string, infoHash string, baselineID int64) (int64, string, bool) {
+	infoHash = strings.ToLower(strings.TrimSpace(infoHash))
+	if infoHash == "" || baselineID <= 0 {
+		return 0, "", false
+	}
+	probe := &http.Client{Timeout: 10 * time.Second}
+	// 公开列表可能略有滞后，向后多探几个 id；新分配的 id 一定在 baseline 之后。
+	startID := baselineID - 3
+	if startID < 1 {
+		startID = 1
+	}
+	for id := startID; id <= baselineID+rousiConfirmScanSpan; id++ {
+		if id == baselineID {
+			// 基线本身是提交前就存在的种子，跳过以省一次请求
+			continue
+		}
+		detail, ok := rousiFetchTorrentDetail(probe, baseURL, cookie, userAgent, id)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(detail.InfoHashV1), infoHash) {
+			return detail.ID, detail.State, true
+		}
+	}
+	return 0, "", false
+}
+
+// tryUploadTorrentRousiPeerGo 走 PeerGo 契约完成一次发种。// 参数/返回：见 PublishRousi；返回详情页 URL、是否“已存在”、过程日志与错误。
 func tryUploadTorrentRousiPeerGo(
 	baseURL string,
 	targetName string,
@@ -355,6 +480,13 @@ func tryUploadTorrentRousiPeerGo(
 
 	siteCode := strings.TrimSpace(toStringAny(targetInfo["site"], "rousi"))
 	siteCfg, _ := publishmapping.LoadSitePublishConfig(siteCode)
+
+	// 让肉丝种子与源站种子成为「两个种子」：在 info 字典内写入 source 标记，
+	// infohash 随之改变（下载器里独立成任务），文件列表与 piece 数据保持不动。
+	if rewritten, note := rousiIsolateInfoHash(torrentFile, siteCfg); note != "" {
+		torrentFile = rewritten
+		detailLines = append(detailLines, note)
+	}
 
 	if uploadData == nil {
 		uploadData = map[string]any{}
@@ -452,50 +584,124 @@ func tryUploadTorrentRousiPeerGo(
 		return "", false, buildDetail(), err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/torrents", body)
-	if err != nil {
-		detailLines = append(detailLines, fmt.Sprintf("创建 HTTP 请求失败: %v", err))
-		return "", false, buildDetail(), err
-	}
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Accept", "application/json, application/problem+json")
-	req.Header.Set("Cookie", cookie)
-	req.Header.Set("User-Agent", userAgent)
-	req.Header.Set("Origin", baseURL)
-	req.Header.Set("Referer", baseURL+"/upload")
-	req.Header.Set("X-CSRF-Token", csrf)
-	req.Header.Set("Idempotency-Key", rousiNewUUID())
+	bodyBytes := body.Bytes()
+	// 提交摘要：站点报 5xx 时用于对照 request_id 自查（不打印正文，避免日志爆炸）。
+	detailLines = append(detailLines, fmt.Sprintf(
+		"提交摘要: category_id=%s facets=%d screenshots=%d torrent_bytes=%d description_chars=%d media_info_chars=%d",
+		categoryID, len(selections), len(screenshots), len(torrentFile), len([]rune(resolvedDescription)), len([]rune(resolvedMediaInfo)),
+	))
 
-	resp, err := client.Do(req)
-	if err != nil {
-		detailLines = append(detailLines, fmt.Sprintf("请求失败: %v", err))
-		return "", false, buildDetail(), err
-	}
-	defer resp.Body.Close()
+	// 站点 5xx 多为「上游/图片处理瞬时失败」，官方提示就是「请稍后重试」，
+	// 这里自动重试几次；重试沿用同一个 Idempotency-Key，站点若已落库会返回同一结果，不会重复发种。
+	idempotencyKey := rousiNewUUID()
+	// 本站在多次 500 场景下其实是「写库成功、响应报错」，因此 5xx 后按 infohash 回查确认。
+	ourInfoHash, _ := acquirefetch.TorrentInfoHash(torrentFile)
+	// 提交前的公开最大 id：5xx 回查时以它为基线扫描新分配的 id。
+	baselineTorrentID := rousiMaxPublicTorrentID(&http.Client{Timeout: 10 * time.Second}, baseURL, cookie, userAgent)
+	var (
+		respBody       []byte
+		requestID      string
+		responseDetail string
+		statusCode     int
+		statusText     string
+		confirmedID    int64
+		confirmedState string
+	)
+	problem := rousiProblemBody{}
 
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+	for attempt := 1; attempt <= rousiUploadMaxAttempts; attempt++ {
+		req, errReq := http.NewRequest(http.MethodPost, baseURL+"/api/v1/torrents", bytes.NewReader(bodyBytes))
+		if errReq != nil {
+			detailLines = append(detailLines, fmt.Sprintf("创建 HTTP 请求失败: %v", errReq))
+			return "", false, buildDetail(), errReq
+		}
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("Accept", "application/json, application/problem+json")
+		req.Header.Set("Cookie", cookie)
+		req.Header.Set("User-Agent", userAgent)
+		req.Header.Set("Origin", baseURL)
+		req.Header.Set("Referer", baseURL+"/upload")
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+
+		resp, errDo := client.Do(req)
+		if errDo != nil {
+			detailLines = append(detailLines, fmt.Sprintf("第 %d 次提交请求失败: %v", attempt, errDo))
+			if attempt < rousiUploadMaxAttempts {
+				time.Sleep(rousiUploadRetryDelay(attempt))
+				continue
+			}
+			return "", false, buildDetail(), errDo
+		}
+
+		respBody, _ = io.ReadAll(io.LimitReader(resp.Body, 512*1024))
+		resp.Body.Close()
+		statusCode = resp.StatusCode
+		statusText = strings.TrimSpace(resp.Status)
+		bodyText := string(respBody)
+		responseDetail = summarizeRousiResponseBody(bodyText)
+		problem = parseRousiProblem(bodyText)
+		requestID = rousiExtractRequestID(problem.RequestID, bodyText)
+
+		label := "响应状态"
+		if attempt > 1 {
+			label = fmt.Sprintf("第 %d 次提交响应状态", attempt)
+		}
+		detailLines = append(detailLines, fmt.Sprintf("%s: %s", label, statusText))
+		if responseDetail != "" {
+			detailLines = append(detailLines, fmt.Sprintf("站点响应: %s", responseDetail))
+		}
+
+		if statusCode >= 200 && statusCode < 300 {
+			break
+		}
+		if statusCode >= 500 && (attempt == 1 || attempt == rousiUploadMaxAttempts) {
+			// 站点在这个场景下经常「已写库但响应 500」：按 infohash 回查一次，命中就直接按成功返回。
+			// 只在首次和末次尝试后回查，避免每轮都扫一遍 id 段。
+			if id, state, ok := rousiConfirmUploaded(client, baseURL, cookie, userAgent, ourInfoHash, baselineTorrentID); ok {
+				confirmedID, confirmedState = id, state
+				detailLines = append(detailLines, fmt.Sprintf(
+					"站点返回 %d，但已回查确认种子落库: %s/torrents/%d（state=%s）", statusCode, baseURL, id, state))
+				break
+			}
+		}
+		if statusCode >= 500 && attempt < rousiUploadMaxAttempts {
+			delay := rousiUploadRetryDelay(attempt)
+			detailLines = append(detailLines, fmt.Sprintf(
+				"站点返回 %d，%s 后自动重试（沿用同一 Idempotency-Key=%s）", statusCode, delay, idempotencyKey))
+			time.Sleep(delay)
+			continue
+		}
+		break
+	}
+
 	bodyText := string(respBody)
-	responseDetail := summarizeRousiResponseBody(bodyText)
-	detailLines = append(detailLines, fmt.Sprintf("响应状态: %s", strings.TrimSpace(resp.Status)))
-	if responseDetail != "" {
-		detailLines = append(detailLines, fmt.Sprintf("站点响应: %s", responseDetail))
-	}
-
 	isExisting := looksLikeExistingTorrentForRousi(bodyText)
-	problem := parseRousiProblem(bodyText)
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := rousiProblemMessage(problem, resp.StatusCode)
+	if confirmedID <= 0 && (statusCode < 200 || statusCode >= 300) {
+		message := rousiProblemMessage(problem, statusCode)
 		if problem.Code != "" {
 			isExisting = isExisting || rousiLooksLikeDuplicateCode(problem.Code)
 		}
-		err = fmt.Errorf("HTTP %d 上传失败: %s", resp.StatusCode, message)
+		if requestID != "" {
+			message += fmt.Sprintf("（request_id=%s，可在向站点反馈时提供）", requestID)
+		}
+		err := fmt.Errorf("HTTP %d 上传失败: %s", statusCode, message)
 		detailLines = append(detailLines, fmt.Sprintf("尝试结论: %v", err))
+		if isExisting {
+			// 待审核的种子不会出现在公开搜索/列表里，只有站点的「我的发布」能看到。
+			detailLines = append(detailLines, "站点判定种子已存在：本次提交可能已落库（含待审核），请到站点「我的发布」核对详情页")
+		} else if statusCode >= 500 {
+			detailLines = append(detailLines, "站点内部错误：该次提交有可能已落库但响应失败，重发前建议先到站点「我的发布」核对，避免重复投稿")
+		}
 		return "", isExisting, buildDetail(), err
 	}
 
 	result := rousiSubmitResult{}
-	if err := json.Unmarshal(respBody, &result); err != nil || result.ID <= 0 {
+	if confirmedID > 0 {
+		// 站点响应 500 但已回查确认落库：用查到的详情拼装结果，按成功处理。
+		result = rousiSubmitResult{ID: confirmedID, InfoHashV1: ourInfoHash, State: confirmedState}
+	} else if err := json.Unmarshal(respBody, &result); err != nil || result.ID <= 0 {
 		err = fmt.Errorf("API 返回无法识别的提交结果: %s", responseDetail)
 		detailLines = append(detailLines, fmt.Sprintf("尝试结论: %v", err))
 		return "", isExisting, buildDetail(), err
@@ -517,10 +723,28 @@ func tryUploadTorrentRousiPeerGo(
 }
 
 type rousiProblemBody struct {
-	Code   string `json:"code"`
-	Detail string `json:"detail"`
-	Title  string `json:"title"`
-	Status int    `json:"status"`
+	Code      string `json:"code"`
+	Detail    string `json:"detail"`
+	Title     string `json:"title"`
+	Status    int    `json:"status"`
+	RequestID string `json:"request_id"`
+}
+
+// rousiUploadRetryDelay 返回第 attempt 次失败后的等待时间（3s、8s）。
+func rousiUploadRetryDelay(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 3 * time.Second
+	}
+	return 8 * time.Second
+}
+
+// rousiExtractRequestID 取站点返回的 request_id：优先 problem+json 的字段，
+// 其次在响应体里找任意 UUID（站点的反馈通道只认这个 id）。
+func rousiExtractRequestID(fromProblem string, body string) string {
+	if id := strings.TrimSpace(fromProblem); id != "" {
+		return id
+	}
+	return extractUUID(body)
 }
 
 func parseRousiProblem(body string) rousiProblemBody {
@@ -569,6 +793,36 @@ func rousiProblemMessage(problem rousiProblemBody, statusCode int) string {
 func rousiLooksLikeDuplicateCode(code string) bool {
 	lower := strings.ToLower(strings.TrimSpace(code))
 	return strings.Contains(lower, "duplicate") || strings.Contains(lower, "already_exists") || strings.Contains(lower, "exists")
+}
+
+// rousiIsolateInfoHash 按站点配置 info_source_tag 改写种子 info 字典（写入 source），
+// 让上传到肉丝的种子拥有与源站不同的 infohash —— 两个站就是两个独立任务，
+// 下载器里的站点标签、分类、上传量统计互不覆盖。
+//
+// 只动 info 里的普通键，pieces/files 原始字节不变：下载器指向同一份文件即可直接校验做种，不用重新下载。
+// 参数/返回：torrentFile 为源站种子字节；siteCfg 为站点发布配置（info_source_tag 为空则原样返回），
+// 返回（可能被改写的）种子字节与一行日志说明。
+// 失败场景：种子结构非法时保持源站字节不变，日志里给出原因（不阻断发布）。
+// 副作用：无。
+func rousiIsolateInfoHash(torrentFile []byte, siteCfg *publishmapping.SitePublishConfig) ([]byte, string) {
+	tag := ""
+	if siteCfg != nil {
+		tag = strings.TrimSpace(siteCfg.InfoSourceTag)
+	}
+	if tag == "" {
+		return torrentFile, "info hash 隔离: 未配置 info_source_tag，保持与源站相同的 infohash（下载器里会与源站共用同一个任务）"
+	}
+
+	before, _ := acquirefetch.TorrentInfoHash(torrentFile)
+	rewritten, err := acquirefetch.RewriteTorrentInfoSource(torrentFile, tag)
+	if err != nil {
+		return torrentFile, fmt.Sprintf("info hash 隔离失败（继续用源站种子，infohash 不变）: %v", err)
+	}
+	after, _ := acquirefetch.TorrentInfoHash(rewritten)
+	if before != "" && before == after {
+		return rewritten, fmt.Sprintf("info hash 隔离异常: 写入 source=%s 后 infohash 未变化（%s）", tag, after)
+	}
+	return rewritten, fmt.Sprintf("info hash 隔离: info.source=%s，infohash %s → %s（与源站不同，下载器里是独立任务）", tag, before, after)
 }
 
 // resolveRousiCategoryID 把标准化类型换算成站点分类 id（movies/tv/anime/...）。
@@ -1110,6 +1364,12 @@ func collectRousiScreenshots(baseURL string, cookie string, userAgent string, to
 	totalUsed := int64(0)
 	skipped := 0
 	firstFromCover := false
+	failures := make([]string, 0, 4)
+
+	// 先把所有来源并发落到本地，再按原顺序压缩：
+	// 截图常是几 MB 的外链大图（pixhost 的 4K PNG 就有 7MB+），串行下载会逐个超时，
+	// 最终表现成「只上传了封面，截图全被跳过」。
+	fetched := fetchRousiImagesConcurrently(baseURL, cookie, userAgent, workDir, sources)
 
 	for index, item := range sources {
 		if len(shots) >= rousiScreenshotMaxCount {
@@ -1120,38 +1380,23 @@ func collectRousiScreenshots(baseURL string, cookie string, userAgent string, to
 			continue
 		}
 
-		originalPath := ""
-		if strings.HasPrefix(sourceURL, "data:image/") {
-			_, ext, raw, ok := parseRousiDataURL(sourceURL)
-			if !ok {
-				skipped++
-				continue
-			}
-			originalPath = filepath.Join(workDir, fmt.Sprintf("%02d.original.%s", index, ext))
-			if err := os.WriteFile(originalPath, raw, 0o644); err != nil {
-				skipped++
-				continue
-			}
-		} else if strings.HasPrefix(sourceURL, "http://") || strings.HasPrefix(sourceURL, "https://") {
-			raw, err := downloadRousiImageToBytes(baseURL, cookie, userAgent, sourceURL, item.Referer)
-			if err != nil || len(raw) == 0 {
-				skipped++
-				continue
-			}
-			originalPath = filepath.Join(workDir, fmt.Sprintf("%02d.downloaded", index))
-			if err := os.WriteFile(originalPath, raw, 0o644); err != nil {
-				skipped++
-				continue
-			}
+		var fetchErr error
+		if index >= len(fetched) {
+			fetchErr = errors.New("预取结果缺失")
 		} else {
+			fetchErr = fetched[index].err
+		}
+		if fetchErr != nil {
 			skipped++
+			failures = append(failures, describeRousiImageFailure(index, sourceURL, fetchErr))
 			continue
 		}
 
 		jpegPath := filepath.Join(workDir, fmt.Sprintf("%02d.final.jpg", index))
-		data, ok := rousiPrepareScreenshotFile(originalPath, jpegPath, rousiScreenshotMaxBytes)
+		data, ok := rousiPrepareScreenshotFile(fetched[index].path, jpegPath, rousiScreenshotMaxBytes)
 		if !ok {
 			skipped++
+			failures = append(failures, fmt.Sprintf("#%d 压缩未达标（原图 >2 MiB）", index+1))
 			continue
 		}
 		if totalUsed+int64(len(data)) > rousiScreenshotTotalMax {
@@ -1181,10 +1426,112 @@ func collectRousiScreenshots(baseURL string, cookie string, userAgent string, to
 	}
 	summary := fmt.Sprintf("截图处理: cover=%d screenshots=%d uploaded=%d first=%s skipped=%d total_bytes=%d",
 		len(grouped.Cover), len(grouped.Screenshots), len(shots), firstLabel, skipped, totalUsed)
+	if len(failures) > 0 {
+		shown := failures
+		suffix := ""
+		if len(shown) > 3 {
+			shown = shown[:3]
+			suffix = fmt.Sprintf(" 等 %d 张", len(failures))
+		}
+		summary += "；失败: " + strings.Join(shown, " / ") + suffix
+	}
 	if len(shots) > 0 && len(grouped.Screenshots) == 0 {
 		summary += "；警告：简介里没有截图，本次只上传封面"
 	}
 	return shots, cleanup, summary, nil
+}
+
+// rousiFetchedImage 是并发预取的单张结果：path 为本地原图路径，err 为失败原因。
+type rousiFetchedImage struct {
+	path string
+	err  error
+}
+
+// fetchRousiImagesConcurrently 把所有图片来源并发落到 workDir。
+// 参数/返回：baseURL/cookie/userAgent 用于外链下载鉴权，workDir 为本次发布的工作目录，
+// sources 为待处理图片（含 data URL 与外链）；返回与 sources 等长、下标一一对应的结果。
+// 失败场景：单张失败只影响该下标（err 非空），不影响其它图片。
+// 副作用：写本地临时文件并发起网络请求。
+func fetchRousiImagesConcurrently(baseURL string, cookie string, userAgent string, workDir string, sources []rousiImageSource) []rousiFetchedImage {
+	result := make([]rousiFetchedImage, len(sources))
+	sem := make(chan struct{}, rousiImageFetchConcurrency)
+	var wg sync.WaitGroup
+
+	for index, item := range sources {
+		sourceURL := strings.TrimSpace(item.URL)
+		if sourceURL == "" {
+			result[index] = rousiFetchedImage{err: errors.New("图片地址为空")}
+			continue
+		}
+
+		if strings.HasPrefix(sourceURL, "data:image/") {
+			_, ext, raw, ok := parseRousiDataURL(sourceURL)
+			if !ok {
+				result[index] = rousiFetchedImage{err: errors.New("data URL 解析失败")}
+				continue
+			}
+			originalPath := filepath.Join(workDir, fmt.Sprintf("%02d.original.%s", index, ext))
+			if err := os.WriteFile(originalPath, raw, 0o644); err != nil {
+				result[index] = rousiFetchedImage{err: err}
+				continue
+			}
+			result[index] = rousiFetchedImage{path: originalPath}
+			continue
+		}
+
+		if !strings.HasPrefix(sourceURL, "http://") && !strings.HasPrefix(sourceURL, "https://") {
+			result[index] = rousiFetchedImage{err: fmt.Errorf("不支持的图片地址: %s", sourceURL)}
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, url string, referer string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			raw, err := downloadRousiImageToBytes(baseURL, cookie, userAgent, url, referer)
+			if err != nil {
+				result[idx] = rousiFetchedImage{err: err}
+				return
+			}
+			if len(raw) == 0 {
+				result[idx] = rousiFetchedImage{err: errors.New("图片内容为空")}
+				return
+			}
+			originalPath := filepath.Join(workDir, fmt.Sprintf("%02d.downloaded", idx))
+			if err := os.WriteFile(originalPath, raw, 0o644); err != nil {
+				result[idx] = rousiFetchedImage{err: err}
+				return
+			}
+			result[idx] = rousiFetchedImage{path: originalPath}
+		}(index, sourceURL, strings.TrimSpace(item.Referer))
+	}
+
+	wg.Wait()
+	return result
+}
+
+// describeRousiImageFailure 生成「#序号(域名): 原因」形式的失败摘要，供发布日志排查。
+// 参数/返回：index 为图片下标，sourceURL 为原始地址，err 为失败原因；返回单行摘要。
+// 失败场景：不适用。
+// 副作用：无。
+func describeRousiImageFailure(index int, sourceURL string, err error) string {
+	host := "本地"
+	if parsed, parseErr := neturl.Parse(strings.TrimSpace(sourceURL)); parseErr == nil && parsed.Host != "" {
+		host = parsed.Host
+	}
+	reason := "未知原因"
+	if err != nil {
+		reason = strings.TrimSpace(err.Error())
+	}
+	if reason == "" {
+		reason = "未知原因"
+	}
+	if len(reason) > 90 {
+		reason = reason[:90] + "…"
+	}
+	return fmt.Sprintf("#%d(%s): %s", index+1, host, reason)
 }
 
 // rousiPrepareScreenshotFile 把本地图片转成 ≤ maxBytes 且站点允许的格式。
@@ -1275,46 +1622,73 @@ func ffmpegConvertToJpegUnderBytesLimit(inputPath string, outputPath string, max
 }
 
 // downloadRousiImageToBytes 下载截图（同域请求自动带会话 Cookie）。
+// 说明：外链大图在慢线路上容易断流，这里放宽单张超时并在网络错误时重试一次；
+// 4xx 视为鉴权/防盗链问题，直接返回不重试。
 func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, targetURL string, referer string) ([]byte, error) {
-	req, err := http.NewRequest(http.MethodGet, targetURL, nil)
-	if err != nil {
-		return nil, err
+	buildRequest := func() (*http.Request, error) {
+		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		ua := strings.TrimSpace(userAgent)
+		if ua == "" {
+			ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+		}
+		req.Header.Set("User-Agent", ua)
+		req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+
+		chosenReferer := strings.TrimSpace(referer)
+		if !(strings.HasPrefix(chosenReferer, "http://") || strings.HasPrefix(chosenReferer, "https://")) {
+			chosenReferer = ""
+		}
+		if chosenReferer == "" {
+			chosenReferer = defaultRousiRefererForURL(targetURL)
+		}
+		if chosenReferer != "" {
+			req.Header.Set("Referer", chosenReferer)
+		}
+
+		// 站点自身的私有截图（如站点附件）需要会话 Cookie，外链图床不需要也不该带。
+		if shouldAttachRousiCookie(baseURL, targetURL) && strings.TrimSpace(cookie) != "" {
+			req.Header.Set("Cookie", cookie)
+		}
+		return req, nil
 	}
 
-	ua := strings.TrimSpace(userAgent)
-	if ua == "" {
-		ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-	}
-	req.Header.Set("User-Agent", ua)
-	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		req, err := buildRequest()
+		if err != nil {
+			return nil, err
+		}
+		client := &http.Client{Timeout: rousiImageDownloadTimeout}
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		body, readErr := io.ReadAll(io.LimitReader(resp.Body, rousiImageDownloadMaxBytes))
+		statusCode := resp.StatusCode
+		resp.Body.Close()
 
-	chosenReferer := strings.TrimSpace(referer)
-	if !(strings.HasPrefix(chosenReferer, "http://") || strings.HasPrefix(chosenReferer, "https://")) {
-		chosenReferer = ""
+		if statusCode < 200 || statusCode >= 300 {
+			preview := body
+			if len(preview) > 1024 {
+				preview = preview[:1024]
+			}
+			return nil, fmt.Errorf("HTTP %d: %s", statusCode, strings.TrimSpace(string(preview)))
+		}
+		if readErr != nil {
+			lastErr = readErr
+			continue
+		}
+		return body, nil
 	}
-	if chosenReferer == "" {
-		chosenReferer = defaultRousiRefererForURL(targetURL)
+	if lastErr == nil {
+		lastErr = errors.New("下载失败")
 	}
-	if chosenReferer != "" {
-		req.Header.Set("Referer", chosenReferer)
-	}
-
-	// 站点自身的私有截图（如站点附件）需要会话 Cookie，外链图床不需要也不该带。
-	if shouldAttachRousiCookie(baseURL, targetURL) && strings.TrimSpace(cookie) != "" {
-		req.Header.Set("Cookie", cookie)
-	}
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		preview, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(preview)))
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 32*1024*1024))
+	return nil, lastErr
 }
 
 func defaultRousiRefererForURL(targetURL string) string {
@@ -1393,6 +1767,12 @@ func extractRousiImageSourcesFromText(text string) []rousiImageSource {
 			appendURL(imgURL, "")
 		}
 	}
+	// 纯文本 URL（简介里常常一行一个、没有 [img] 包裹）也要收，否则会漏掉全部截图。
+	for _, raw := range reRousiRawImageURL.FindAllString(source, -1) {
+		if imgURL := strings.TrimSpace(raw); imgURL != "" {
+			appendURL(imgURL, "")
+		}
+	}
 
 	seen := map[string]struct{}{}
 	result := make([]rousiImageSource, 0, len(items))
@@ -1458,7 +1838,11 @@ func collectRousiImageSources(uploadData map[string]any) rousiImageSources {
 	intro := mapStringAny(uploadData["intro"])
 
 	// 封面（海报）：站点把第一张图当封面，所以海报排在截图之前，且最多取一张。
-	for _, item := range extractRousiImageSourcesFromText(toStringLoose(intro["poster"])) {
+	posterText := strings.TrimSpace(toStringLoose(intro["poster"]))
+	if posterText == "" {
+		posterText = strings.TrimSpace(toStringLoose(uploadData["poster"]))
+	}
+	for _, item := range extractRousiImageSourcesFromText(posterText) {
 		if url := strings.TrimSpace(item.URL); url != "" {
 			grouped.Cover = append(grouped.Cover, rousiImageSource{URL: url, Referer: strings.TrimSpace(item.Referer)})
 			break
@@ -1475,7 +1859,8 @@ func collectRousiImageSources(uploadData map[string]any) rousiImageSources {
 			grouped.Screenshots = append(grouped.Screenshots, rousiImageSource{URL: trimmed})
 		}
 	}
-	for _, item := range extractRousiImageSourcesFromText(toStringLoose(intro["screenshots"])) {
+	// 截图正文既可能在 uploadData.screenshots，也可能在 intro.screenshots，统一用同一套语义取。
+	for _, item := range extractRousiImageSourcesFromText(resolveUploadSection(uploadData, "screenshots")) {
 		if url := strings.TrimSpace(item.URL); url != "" {
 			grouped.Screenshots = append(grouped.Screenshots, rousiImageSource{URL: url, Referer: strings.TrimSpace(item.Referer)})
 		}

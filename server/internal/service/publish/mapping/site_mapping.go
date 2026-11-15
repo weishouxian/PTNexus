@@ -36,6 +36,10 @@ type SitePublishConfig struct {
 	// DupeCheck 定义 dupe 校验的站点参数：检索维度到搜索参数的命名规则。
 	// 为空表示该站点未实现 dupe 校验（即使站点开了开关也不会执行）。
 	DupeCheck SiteDupeCheckConfig
+	// InfoSourceTag 非空时，发布前会在种子 info 字典内写入 source=该值，
+	// 使目标站种子的 infohash 与源站不同（下载器里成为独立任务，标签/统计互不覆盖）。
+	// 文件列表与 piece 数据保持不变，可指向同一份文件直接校验做种。
+	InfoSourceTag string
 }
 
 // SiteDupeCheckConfig 描述站点 dupe 检索所需的参数命名规则。
@@ -129,6 +133,7 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		CheckboxTagValue:   strings.TrimSpace(toStringAny(raw["checkbox_tag_value"])),
 		TypeByTag:          mapStringMap(raw["type_by_tag"]),
 		DupeCheck:          mapDupeCheckConfig(raw["dupe_check"]),
+		InfoSourceTag:      strings.TrimSpace(toStringAny(raw["info_source_tag"])),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil
