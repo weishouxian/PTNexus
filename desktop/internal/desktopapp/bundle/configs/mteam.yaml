@@ -34,11 +34,12 @@ category:
   movie_dvd: "420"      # 电影/DVDiSo
   movie_bluray: "421"   # 电影/BluRay
   movie_remux: "439"    # 电影/Remux
-  # 影剧/综艺：SD / HD / DVDiSo / BluRay（Remux 并入 BluRay）
+  # 影剧/综艺：SD / HD / DVDiSo / BluRay（无 Remux 档，剧集 Remux 落 HD）
   tv: "402"             # 影剧/综艺/HD（兜底）
   tv_sd: "403"          # 影剧/综艺/SD
   tv_dvd: "435"         # 影剧/综艺/DVDiSo
-  tv_bluray: "438"      # 影剧/综艺/BluRay
+  tv_bluray: "438"      # 影剧/综艺/BluRay（蓝光原盘；Remux 不进这里）
+  tv_remux: "402"       # 剧集 Remux → 影剧/综艺/HD
   # 动画：BluRay / 其他
   anime: "405"          # 动画
   anime_bluray: "453"   # 动画/BluRay

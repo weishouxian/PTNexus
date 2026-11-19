@@ -16,6 +16,7 @@ import (
 type SitesDataRow struct {
 	Site      string `json:"site"`
 	Nick      string `json:"nickname"`
+	BaseURL   string `json:"base_url"`
 	Allow     bool   `json:"allow_episode_publish"`
 	Migration int    `json:"migration"`
 }
@@ -70,6 +71,37 @@ func SiteAllowsEpisodePublish(siteCode string) bool {
 		}
 	}
 	return false
+}
+
+// SiteBaseURL 读取站点在 sites_data.json 中声明的域名（base_url，仅域名不含协议）。
+// 参数/返回：siteCode 为站点标识（大小写不敏感，可传 site 或 nickname）；返回域名，未声明或读文件失败返回空串。
+//
+// 说明：base_url 是「源站域名」的唯一随包发布的来源——发布链路据此拼源站页面地址
+// （例如图床防盗链时的 Referer 候选）。匹配顺序与 SiteAllowsEpisodePublish 一致。
+// 副作用：每次调用读一次 sites_data.json（发布时才查，开销可忽略）。
+func SiteBaseURL(siteCode string) string {
+	code := strings.TrimSpace(siteCode)
+	if code == "" {
+		return ""
+	}
+	rows, err := loadSitesDataRows()
+	if err != nil {
+		return ""
+	}
+	match := func(row SitesDataRow, key string) bool {
+		return strings.EqualFold(strings.TrimSpace(key), code) && strings.TrimSpace(row.BaseURL) != ""
+	}
+	for _, row := range rows {
+		if match(row, row.Site) {
+			return strings.TrimSpace(row.BaseURL)
+		}
+	}
+	for _, row := range rows {
+		if match(row, row.Nick) {
+			return strings.TrimSpace(row.BaseURL)
+		}
+	}
+	return ""
 }
 
 // loadSitesDataRows 读取 sites_data.json 的全部站点条目。

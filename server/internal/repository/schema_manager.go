@@ -480,6 +480,18 @@ func (m *SchemaManager) createTableSQLs() []string {
 				cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
 				PRIMARY KEY (stat_datetime, downloader_id)
 			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
+			`CREATE TABLE IF NOT EXISTS traffic_stats_daily (
+				stat_date VARCHAR(10) NOT NULL,
+				downloader_id VARCHAR(64) NOT NULL,
+				uploaded BIGINT NOT NULL DEFAULT 0,
+				downloaded BIGINT NOT NULL DEFAULT 0,
+				start_cumulative_uploaded BIGINT NOT NULL DEFAULT 0,
+				start_cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
+				end_cumulative_uploaded BIGINT NOT NULL DEFAULT 0,
+				end_cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
+				settled_at DATETIME NOT NULL,
+				PRIMARY KEY (stat_date, downloader_id)
+			) ENGINE=InnoDB ROW_FORMAT=Dynamic`,
 			`CREATE TABLE IF NOT EXISTS torrents (
 				hash VARCHAR(64) NOT NULL,
 				name TEXT NOT NULL,
@@ -715,6 +727,18 @@ func (m *SchemaManager) createTableSQLs() []string {
 				cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
 				PRIMARY KEY (stat_datetime, downloader_id)
 			)`,
+			`CREATE TABLE IF NOT EXISTS traffic_stats_daily (
+				stat_date VARCHAR(10) NOT NULL,
+				downloader_id VARCHAR(64) NOT NULL,
+				uploaded BIGINT NOT NULL DEFAULT 0,
+				downloaded BIGINT NOT NULL DEFAULT 0,
+				start_cumulative_uploaded BIGINT NOT NULL DEFAULT 0,
+				start_cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
+				end_cumulative_uploaded BIGINT NOT NULL DEFAULT 0,
+				end_cumulative_downloaded BIGINT NOT NULL DEFAULT 0,
+				settled_at TIMESTAMP NOT NULL,
+				PRIMARY KEY (stat_date, downloader_id)
+			)`,
 			`CREATE TABLE IF NOT EXISTS torrents (
 				hash VARCHAR(64) NOT NULL,
 				name TEXT NOT NULL,
@@ -946,6 +970,18 @@ func (m *SchemaManager) createTableSQLs() []string {
 				cumulative_uploaded INTEGER NOT NULL DEFAULT 0,
 				cumulative_downloaded INTEGER NOT NULL DEFAULT 0,
 				PRIMARY KEY (stat_datetime, downloader_id)
+			)`,
+			`CREATE TABLE IF NOT EXISTS traffic_stats_daily (
+				stat_date TEXT NOT NULL,
+				downloader_id TEXT NOT NULL,
+				uploaded INTEGER NOT NULL DEFAULT 0,
+				downloaded INTEGER NOT NULL DEFAULT 0,
+				start_cumulative_uploaded INTEGER NOT NULL DEFAULT 0,
+				start_cumulative_downloaded INTEGER NOT NULL DEFAULT 0,
+				end_cumulative_uploaded INTEGER NOT NULL DEFAULT 0,
+				end_cumulative_downloaded INTEGER NOT NULL DEFAULT 0,
+				settled_at TEXT NOT NULL,
+				PRIMARY KEY (stat_date, downloader_id)
 			)`,
 			`CREATE TABLE IF NOT EXISTS torrents (
 				hash TEXT NOT NULL,
@@ -1179,6 +1215,17 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "samples", definition: map[string]string{"sqlite": "INTEGER DEFAULT 0", "mysql": "INTEGER DEFAULT 0", "postgresql": "INTEGER DEFAULT 0"}},
 			{name: "cumulative_uploaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
 			{name: "cumulative_downloaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+		},
+		"traffic_stats_daily": {
+			{name: "stat_date", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(10) NOT NULL", "postgresql": "VARCHAR(10) NOT NULL"}},
+			{name: "downloader_id", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(64) NOT NULL", "postgresql": "VARCHAR(64) NOT NULL"}},
+			{name: "uploaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "downloaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "start_cumulative_uploaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "start_cumulative_downloaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "end_cumulative_uploaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "end_cumulative_downloaded", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "BIGINT NOT NULL DEFAULT 0", "postgresql": "BIGINT NOT NULL DEFAULT 0"}},
+			{name: "settled_at", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "DATETIME NOT NULL", "postgresql": "TIMESTAMP NOT NULL"}},
 		},
 		"auto_seed_rules": {
 			{name: "seed_retention_minutes", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},

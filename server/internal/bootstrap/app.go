@@ -25,12 +25,14 @@ import (
 	migrationflow "github.com/pt-nexus/server/internal/service/migrationflow"
 	"github.com/pt-nexus/server/internal/service/scheduledseed"
 	"github.com/pt-nexus/server/internal/service/sitehealth"
+	"github.com/pt-nexus/server/internal/service/trafficdaily"
 )
 
 // App 封装 Gin 引擎实例，供主程序启动 HTTP 服务。
 type App struct {
 	Engine        *gin.Engine
 	trackerWorker *service.TrackerService
+	dailyWorker   *trafficdaily.Service
 }
 
 // NewApp 初始化配置、数据库、服务与路由，并返回可运行的应用实例。
@@ -70,6 +72,9 @@ func NewApp() (*App, error) {
 	statsService := service.NewStatsService(statsRepo, cfgManager)
 	trackerService := service.NewTrackerService(statsRepo, cfgManager)
 	trackerService.Start()
+	// 日结算：把每天的上传/下载增量固化到 traffic_stats_daily，供「本月」直接累加。
+	trafficDailyService := trafficdaily.New(statsRepo)
+	trafficDailyService.Start()
 	torrentDataRepo := repository.NewTorrentDataRepository(store)
 	torrentDataService := service.NewTorrentDataService(torrentDataRepo, cfgManager)
 	torrentDataService.SetIYUULogger(func(level string, message string) {
@@ -245,7 +250,7 @@ func NewApp() (*App, error) {
 		bangumiHandler,
 	)
 
-	return &App{Engine: engine, trackerWorker: trackerService}, nil
+	return &App{Engine: engine, trackerWorker: trackerService, dailyWorker: trafficDailyService}, nil
 }
 
 // registerRoutes 统一注册所有 API 路由与静态资源回退逻辑。

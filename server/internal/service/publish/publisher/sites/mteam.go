@@ -66,7 +66,7 @@ var mteamDefaultConfig = mteamConfig{
 	// 分类按「类型 + 介质」二维划分，这里只存各细分 ID，落点由 resolveMTeamCategory 计算。
 	Category: map[string]string{
 		"movie": "419", "movie_sd": "401", "movie_dvd": "420", "movie_bluray": "421", "movie_remux": "439",
-		"tv": "402", "tv_sd": "403", "tv_dvd": "435", "tv_bluray": "438",
+		"tv": "402", "tv_sd": "403", "tv_dvd": "435", "tv_bluray": "438", "tv_remux": "402",
 		"anime": "405", "anime_bluray": "453",
 		"documentary": "404", "music": "434", "mv": "406", "sports": "407",
 		"game": "423", "software": "422", "ebook": "427", "audiobook": "442",
@@ -798,7 +798,11 @@ func resolveMTeamCategory(cfg mteamConfig, category, medium, resolution string, 
 		}
 	case "tv":
 		switch {
-		case remux || bluray:
+		// 剧集 Remux 落「影剧/综艺/HD」：站点影剧大类下没有 Remux 档，
+		// 影剧/BluRay(438) 表达的是蓝光原盘，Remux 不属于该档（2026-11 按站点要求修正）。
+		case remux:
+			return pickKey("tv_remux", "tv")
+		case bluray:
 			return pickKey("tv_bluray", "tv")
 		case dvd:
 			return pickKey("tv_dvd", "tv")

@@ -76,7 +76,7 @@ func (h *Handler) ExecuteMigration(c *gin.Context) {
 		return
 	}
 
-	tableUpdates := map[string]int64{"traffic_stats": 0, "torrents": 0, "torrent_upload_stats": 0}
+	tableUpdates := map[string]int64{"traffic_stats": 0, "traffic_stats_hourly": 0, "traffic_stats_daily": 0, "torrents": 0, "torrent_upload_stats": 0}
 	for _, mapping := range mappings {
 		if err := h.torrents.UpsertDownloaderMigration(mapping.OldID, mapping.NewID, mapping.Host, mapping.Name); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存迁移映射失败: " + err.Error()})

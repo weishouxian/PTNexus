@@ -102,6 +102,12 @@ const (
 	rousiImageFetchConcurrency = 4
 	rousiImageDownloadTimeout  = 180 * time.Second
 	rousiImageDownloadMaxBytes = 32 * 1024 * 1024
+	// 站点只要求「至少一张截图」，但慢图床（pixhost 整站 ~50 KB/s、单张 2-3 MB）会把整站转种
+	// 拖到几分钟。除封面外只抓 3 张候选：够一张就能过审，多抓的也用不上。
+	rousiScreenshotCandidateLimit = 3
+	// 截图整段预算：到点且手里已有可用图片就不再等剩下的慢图床（已拿到的照常压缩上传）。
+	// 留下的时间给压缩与提交，避免一侧图床卡死把整站发布顶到超时。
+	rousiImageStageBudget = 200 * time.Second
 	// 部分图床（如阿里云 ESA 加速的 img.seedvault.cn、境外的 pixhost.to）整段传输到几十 KB
 	// 就被对端断流（Go 侧表现为 stream error INTERNAL_ERROR，curl 侧是 transfer closed），
 	// 但对带 Range 的分片请求能正常返回 ⇒ 整段下载失败时改用 1 MiB 分片续传。
@@ -1340,10 +1346,24 @@ func rousiNewUUID() string {
 // 返回：图片列表、清理函数、过程摘要、错误（无可用图片时返回空列表而非错误）。
 func collectRousiScreenshots(baseURL string, cookie string, userAgent string, torrentPath string, uploadData map[string]any) ([]rousiScreenshot, func(), string, error) {
 	grouped := collectRousiImageSources(uploadData)
-	sources := flattenRousiImageSources(grouped)
-	if len(sources) == 0 {
+	allSources := flattenRousiImageSources(grouped)
+	if len(allSources) == 0 {
 		return nil, nil, "截图处理: 未找到可用图片来源", nil
 	}
+	coverCount := 0
+	if len(grouped.Cover) > 0 {
+		coverCount = 1
+	}
+	// 封面 + 前 3 张截图：站点只要一张就够，候选多抓的只会把等待时间拉长。
+	sources := limitRousiImageCandidates(allSources, coverCount)
+	candidateNote := ""
+	if len(sources) < len(allSources) {
+		candidateNote = fmt.Sprintf("；候选 %d/%d 张（除封面外最多 %d 张）",
+			len(sources), len(allSources), rousiScreenshotCandidateLimit)
+	}
+	// 图床按来源防盗链时，Referer 要像「从真实页面点开」：优先用简介里的包裹页，
+	// 其次是源站详情页（由种子文件名反推），最后才退回图片自身域名。见 rousiRefererCandidates。
+	sourceReferer := rousiSourceRefererForTorrent(torrentPath)
 
 	paths := config.ResolveRuntimePaths()
 	imagesRoot := filepath.Join(paths.DataDir, "tmp", "torrents", "images")
@@ -1374,10 +1394,13 @@ func collectRousiScreenshots(baseURL string, cookie string, userAgent string, to
 	firstFromCover := false
 	failures := make([]string, 0, 4)
 
-	// 先把所有来源并发落到本地，再按原顺序压缩：
+	// 先把候选并发落到本地，再按原顺序压缩：
 	// 截图常是几 MB 的外链大图（pixhost 的 4K PNG 就有 7MB+），串行下载会逐个超时，
 	// 最终表现成「只上传了封面，截图全被跳过」。
-	fetched := fetchRousiImagesConcurrently(baseURL, cookie, userAgent, workDir, sources)
+	fetched, budgetNote := fetchRousiImagesConcurrently(context.Background(), baseURL, cookie, userAgent, workDir, sources, sourceReferer)
+	if budgetNote != "" {
+		candidateNote += "；" + budgetNote
+	}
 
 	for index, item := range sources {
 		if len(shots) >= rousiScreenshotMaxCount {
@@ -1434,6 +1457,7 @@ func collectRousiScreenshots(baseURL string, cookie string, userAgent string, to
 	}
 	summary := fmt.Sprintf("截图处理: cover=%d screenshots=%d uploaded=%d first=%s skipped=%d total_bytes=%d",
 		len(grouped.Cover), len(grouped.Screenshots), len(shots), firstLabel, skipped, totalUsed)
+	summary += candidateNote
 	if len(failures) > 0 {
 		shown := failures
 		suffix := ""
@@ -1455,13 +1479,41 @@ type rousiFetchedImage struct {
 	err  error
 }
 
-// fetchRousiImagesConcurrently 把所有图片来源并发落到 workDir。
-// 参数/返回：baseURL/cookie/userAgent 用于外链下载鉴权，workDir 为本次发布的工作目录，
-// sources 为待处理图片（含 data URL 与外链）；返回与 sources 等长、下标一一对应的结果。
+// limitRousiImageCandidates 把候选裁到「封面 + 前 N 张截图」。
+// 参数/返回：sources 为按上传顺序（封面在前）排好的图片；coverCount 为其中封面的数量（0/1）；
+// 返回截断后的切片（不复制原切片元素，仅调整长度）。
+// 说明：站点只要求至少一张截图，候选多抓的只会让最慢那台图床把整站发布拖到超时。
+// 副作用：无。
+func limitRousiImageCandidates(sources []rousiImageSource, coverCount int) []rousiImageSource {
+	if coverCount < 0 {
+		coverCount = 0
+	}
+	if coverCount > len(sources) {
+		coverCount = len(sources)
+	}
+	limit := coverCount + rousiScreenshotCandidateLimit
+	if len(sources) <= limit {
+		return sources
+	}
+	return sources[:limit]
+}
+
+// fetchRousiImagesConcurrently 把候选图片来源并发落到 workDir，并在整段预算用尽时停止等待。
+// 参数/返回：ctx 为上游取消信号（可为 context.Background()），baseURL/cookie/userAgent 用于外链下载鉴权，
+// workDir 为本次发布的工作目录，sources 为待处理图片（含 data URL 与外链），
+// sourceReferer 为源站详情页地址（图床防盗链时作 Referer 候选）；
+// 返回与 sources 等长、下标一一对应的结果，以及一句「预算用尽」的说明（未触发时为空串）。
 // 失败场景：单张失败只影响该下标（err 非空），不影响其它图片。
-// 副作用：写本地临时文件并发起网络请求。
-func fetchRousiImagesConcurrently(baseURL string, cookie string, userAgent string, workDir string, sources []rousiImageSource) []rousiFetchedImage {
+// 副作用：写本地临时文件并发起网络请求；预算用尽会取消在飞请求（已下载完成的文件保留）。
+func fetchRousiImagesConcurrently(ctx context.Context, baseURL string, cookie string, userAgent string, workDir string, sources []rousiImageSource, sourceReferer string) ([]rousiFetchedImage, string) {
 	result := make([]rousiFetchedImage, len(sources))
+	if len(sources) == 0 {
+		return result, ""
+	}
+
+	stageCtx, stageCancel := context.WithTimeout(ctx, rousiImageStageBudget)
+	defer stageCancel()
+
 	sem := make(chan struct{}, rousiImageFetchConcurrency)
 	var wg sync.WaitGroup
 
@@ -1495,10 +1547,15 @@ func fetchRousiImagesConcurrently(baseURL string, cookie string, userAgent strin
 		wg.Add(1)
 		go func(idx int, url string, referer string) {
 			defer wg.Done()
-			sem <- struct{}{}
+			select {
+			case sem <- struct{}{}:
+			case <-stageCtx.Done():
+				result[idx] = rousiFetchedImage{err: stageCtx.Err()}
+				return
+			}
 			defer func() { <-sem }()
 
-			raw, err := downloadRousiImageToBytes(baseURL, cookie, userAgent, url, referer)
+			raw, err := downloadRousiImageWithReferers(stageCtx, baseURL, cookie, userAgent, url, referer, sourceReferer)
 			if err != nil {
 				result[idx] = rousiFetchedImage{err: err}
 				return
@@ -1516,8 +1573,22 @@ func fetchRousiImagesConcurrently(baseURL string, cookie string, userAgent strin
 		}(index, sourceURL, strings.TrimSpace(item.Referer))
 	}
 
-	wg.Wait()
-	return result
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return result, ""
+	case <-stageCtx.Done():
+		// 预算到点：取消在飞请求后收工，手里已下载完的照常参与压缩上传。
+		stageCancel()
+		<-done
+		return result, fmt.Sprintf("预取达到 %d 秒预算，未完成的请求已放弃（已拿到的照常上传）",
+			int(rousiImageStageBudget.Seconds()))
+	}
 }
 
 // describeRousiImageFailure 生成「#序号(域名): 原因」形式的失败摘要，供发布日志排查。
@@ -1532,6 +1603,9 @@ func describeRousiImageFailure(index int, sourceURL string, err error) string {
 	reason := "未知原因"
 	if err != nil {
 		reason = strings.TrimSpace(err.Error())
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		reason = "截图预取预算用尽，已放弃"
 	}
 	if reason == "" {
 		reason = "未知原因"
@@ -1661,12 +1735,153 @@ func rousiImageHTTPClient() *http.Client {
 }
 
 // downloadRousiImageToBytes 下载截图（同域请求自动带会话 Cookie）。
-// 说明：整段下载先试一次；部分图床会把长响应在几十 KB 处直接断流（对端 RST / h2 INTERNAL_ERROR），
-// 这时回退到带 Range 的分片续传，按 1 MiB 一片拼完，单片失败最多重试 3 次。
-// 4xx 视为鉴权/防盗链问题，直接返回不重试。
+// 说明：Referer 依次尝试「简介包裹页 → 源站详情页 → 图片自身域名 → 不发」，见 rousiRefererCandidates；
+// 每次都先整段下载，被对端断流时回退 Range 分片续传。
+// 副作用：发起 HTTP GET。
 func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, targetURL string, referer string) ([]byte, error) {
+	return downloadRousiImageWithReferers(context.Background(), baseURL, cookie, userAgent, targetURL, referer, "")
+}
+
+// downloadRousiImageWithReferers 按 Referer 候选逐个尝试下载图片。
+// 参数/返回：ctx 为整段截图预算的取消信号；referer 为简介里的包裹页地址（可空）；
+// sourceReferer 为源站详情页地址（可空）；返回完整图片字节。
+// 失败场景：候选全部失败时返回最后一次错误。只有 401/403/451 这类「来源被拒」才换下一个候选，
+// 404/5xx/超时说明换 Referer 也没用，直接返回。
+// 副作用：最多发起 len(候选) 轮请求。
+func downloadRousiImageWithReferers(ctx context.Context, baseURL string, cookie string, userAgent string, targetURL string, referer string, sourceReferer string) ([]byte, error) {
+	candidates := rousiRefererCandidates(targetURL, referer, sourceReferer)
+	var lastErr error
+	for _, chosen := range candidates {
+		data, err := downloadRousiImageOnce(ctx, baseURL, cookie, userAgent, targetURL, chosen)
+		if err == nil {
+			return data, nil
+		}
+		lastErr = err
+		if !isRousiRefererRejected(err) {
+			return nil, err
+		}
+	}
+	if lastErr == nil {
+		lastErr = errors.New("图片下载失败")
+	}
+	return nil, lastErr
+}
+
+// rousiRefererCandidates 生成 Referer 尝试顺序（去重；空串表示「不发 Referer」）。
+// 参数/返回：targetURL 为图片地址；wrapper 为简介里 [url=X][img]Y[/img][/url] 的包裹页；
+// sourceReferer 为源站详情页地址；返回按优先级排好的候选。
+// 说明：图床按来源防盗链时，最像「真从页面点开」的是包裹页；源站详情页只在该图确实挂在源站域名下才有意义；
+// 图片自身域名根是实测能过的兜底；最后留一档不发 Referer（部分 CDN 反而只放行空来源）。
+// 副作用：无。
+func rousiRefererCandidates(targetURL string, wrapper string, sourceReferer string) []string {
+	candidates := make([]string, 0, 4)
+	appendURL := func(value string) {
+		trimmed := strings.TrimSpace(value)
+		if !(strings.HasPrefix(trimmed, "http://") || strings.HasPrefix(trimmed, "https://")) {
+			return
+		}
+		for _, existing := range candidates {
+			if existing == trimmed {
+				return
+			}
+		}
+		candidates = append(candidates, trimmed)
+	}
+
+	appendURL(wrapper)
+	if rousiSameHost(sourceReferer, targetURL) {
+		appendURL(sourceReferer)
+	}
+	appendURL(defaultRousiRefererForURL(targetURL))
+	// 最后一档不发 Referer：部分 CDN 只放行空来源，只有前面都被 401/403 拒绝才会走到这里。
+	candidates = append(candidates, "")
+	return candidates
+}
+
+// rousiSameHost 判断页面地址与图片地址是否同域（允许一方是另一方的子域）。
+// 参数/返回：pageURL 为页面地址，targetURL 为图片地址；任一解析失败返回 false。
+// 副作用：无。
+func rousiSameHost(pageURL string, targetURL string) bool {
+	pageHost := rousiURLHost(pageURL)
+	targetHost := rousiURLHost(targetURL)
+	if pageHost == "" || targetHost == "" {
+		return false
+	}
+	return pageHost == targetHost ||
+		strings.HasSuffix(pageHost, "."+targetHost) || strings.HasSuffix(targetHost, "."+pageHost)
+}
+
+// rousiURLHost 取 URL 的小写主机名（含端口），解析失败返回空串。
+// 副作用：无。
+func rousiURLHost(value string) string {
+	parsed, err := neturl.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	return strings.ToLower(parsed.Host)
+}
+
+// rousiImageStatusError 是图床返回明确 HTTP 状态码的错误。
+// 单列类型是为了区分「该换 Referer 重试」（401/403/451）与其它失败（404/超时/断流）。
+type rousiImageStatusError struct {
+	Code    int
+	Preview string
+}
+
+func (e *rousiImageStatusError) Error() string {
+	if e.Preview == "" {
+		return fmt.Sprintf("HTTP %d", e.Code)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.Code, e.Preview)
+}
+
+// isRousiRefererRejected 判断失败是否可能由 Referer 引起（401/403/451），可换下一个候选重试。
+// 副作用：无。
+func isRousiRefererRejected(err error) bool {
+	var statusErr *rousiImageStatusError
+	if errors.As(err, &statusErr) {
+		switch statusErr.Code {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusUnavailableForLegalReasons:
+			return true
+		}
+	}
+	return false
+}
+
+// rousiSourceRefererForTorrent 由种子文件名反推源站详情页地址，作为图床防盗链时的 Referer 候选。
+// 参数/返回：torrentPath 形如 <site>-<torrentID>-<timestamp>.torrent（上传时按此约定命名）；
+// 站点域名取自 sites_data.json 的 base_url；解析不出站点或域名时返回空串。
+// 说明：发布 payload 里不带源站详情页链接，只能按文件名约定反推；
+// 路径按 NexusPHP 惯例给 /details.php?id=，图床只校验 Referer 的 host，路径不参与判定。
+// 副作用：读一次 sites_data.json。
+func rousiSourceRefererForTorrent(torrentPath string) string {
+	base := strings.TrimSpace(filepath.Base(strings.TrimSpace(torrentPath)))
+	match := reRousiTorrentFilename.FindStringSubmatch(base)
+	if len(match) < 3 {
+		return ""
+	}
+	siteCode := strings.TrimSpace(match[1])
+	torrentID := strings.TrimSpace(match[2])
+	if siteCode == "" || torrentID == "" {
+		return ""
+	}
+	host := strings.TrimSpace(config.SiteBaseURL(siteCode))
+	host = strings.TrimPrefix(host, "https://")
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimRight(host, "/")
+	if host == "" {
+		return ""
+	}
+	return "https://" + host + "/details.php?id=" + torrentID
+}
+
+// downloadRousiImageOnce 用指定 Referer 下载一次图片：整段优先，被断流时回退 Range 分片续传。
+// 参数/返回：referer 为空表示不发 Referer 头；返回完整图片字节。
+// 失败场景：4xx 返回 *rousiImageStatusError（供上层判断是否换 Referer），其它返回原始错误。
+// 副作用：发起 HTTP 请求；ctx 取消时立即中止。
+func downloadRousiImageOnce(ctx context.Context, baseURL string, cookie string, userAgent string, targetURL string, referer string) ([]byte, error) {
 	buildRequest := func() (*http.Request, error) {
-		req, err := http.NewRequest(http.MethodGet, targetURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, targetURL, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1681,9 +1896,6 @@ func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, 
 		chosenReferer := strings.TrimSpace(referer)
 		if !(strings.HasPrefix(chosenReferer, "http://") || strings.HasPrefix(chosenReferer, "https://")) {
 			chosenReferer = ""
-		}
-		if chosenReferer == "" {
-			chosenReferer = defaultRousiRefererForURL(targetURL)
 		}
 		if chosenReferer != "" {
 			req.Header.Set("Referer", chosenReferer)
@@ -1701,7 +1913,7 @@ func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, 
 	if err != nil {
 		return nil, err
 	}
-	fastCtx, fastCancel := context.WithTimeout(context.Background(), rousiImageDownloadTimeout)
+	fastCtx, fastCancel := context.WithTimeout(ctx, rousiImageDownloadTimeout)
 	resp, err := rousiImageHTTPClient().Do(req.WithContext(fastCtx))
 	if err == nil {
 		body, readErr := io.ReadAll(io.LimitReader(resp.Body, rousiImageDownloadMaxBytes))
@@ -1713,7 +1925,7 @@ func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, 
 			if len(preview) > 1024 {
 				preview = preview[:1024]
 			}
-			return nil, fmt.Errorf("HTTP %d: %s", statusCode, strings.TrimSpace(string(preview)))
+			return nil, &rousiImageStatusError{Code: statusCode, Preview: strings.TrimSpace(string(preview))}
 		}
 		if statusCode >= 200 && statusCode < 300 && readErr == nil && len(body) > 0 {
 			return body, nil
@@ -1725,6 +1937,10 @@ func downloadRousiImageToBytes(baseURL string, cookie string, userAgent string, 
 		}
 	} else {
 		fastCancel()
+		// 预取预算到点（上游取消）就别再走分片续传，直接把取消原因抛回去。
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 	}
 
 	// 慢路径：分片续传。整段被提前断流时，Range 单片仍可正常返回。
@@ -1772,10 +1988,14 @@ func downloadRousiImageByRange(buildRequest func() (*http.Request, error), targe
 			if err != nil {
 				return nil, err
 			}
+			// 预取预算到点就立刻收手，别在取消之后再空转重试。
+			if reqErr := req.Context().Err(); reqErr != nil {
+				return nil, reqErr
+			}
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", offset, end))
 
 			client := rousiImageHTTPClient()
-			chunkCtx, chunkCancel := context.WithTimeout(context.Background(), rousiImageChunkTimeout)
+			chunkCtx, chunkCancel := context.WithTimeout(req.Context(), rousiImageChunkTimeout)
 			resp, err := client.Do(req.WithContext(chunkCtx))
 			if err != nil {
 				chunkCancel()
