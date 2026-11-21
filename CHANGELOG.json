@@ -19,6 +19,19 @@
   ],
   "history": [
     {
+      "version": "v4.0.18",
+      "date": "2026.11.21",
+      "changes": [
+        "新增：好学（hxpt）发种适配站点改版后的 JSON API——站点已从 NexusPHP 换成 Next.js + REST，原 upload.php/takeupload.php 表单流程全部失效，现走 POST /api/v1/torrents（multipart），鉴权需在 Cookie 之外补请求头 x-csrf-token（值取 Cookie 里的 flux_csrf），缺这个头站点固定返回 403 无权限，极易被误判成 Cookie 失效",
+        "优化：好学 yaml 里的媒介/编码/来源/制作组/标签改为填站点字典「名称」而非 id，发布时按名称实时解析，站点以后增删字典项不用改配置；同时放开原先「只能发纪录片」的限制，按资源类型映射电影/电视剧/综艺/纪录片/动漫/体育/音乐七个分区，未识别类型直接拒绝而不猜分类",
+        "修复：好学「检测 Cookie」误报已失效——站点改版后 /index.php 会 301 到 /login 的 SPA 壳，旧判定（抓首页找登录态）必然失败；现改为调 /api/v1/me，并区分「Cookie 里缺 flux_token」与「flux_token 已过期」两种失效原因",
+        "修复：好学发布成功后无法自动加入下载器，报「从详情页下载种子失败: 详情页中未找到可用下载链接」——详情页 /torrent/{id} 是前端渲染，HTML 里没有下载链接；现发布结果直接给出直链 /api/v1/torrents/{id}/download，并让下载链路把好学识别为 SPA 站点，历史记录重试也能换算",
+        "修复：发到好学/肉丝的种子加入下载器被静默忽略——这两站原样保存上传的 .torrent、只替换 announce、不改 info，导致站点种子与源站种子 infohash 完全相同，下载器里已有同 hash 任务就会拒收；现发种前写入 info.source 做 hash 隔离（可配置 info_source_tag），并补上 qBittorrent 返回 Fails. 时的明确报错（原来 HTTP 200 被当成成功）",
+        "优化：多站发布的执行顺序统一按「站点管理」里的排序序号（sort_order）执行，与勾选先后无关；sort_order=0 视为未排序排末尾，站点选择页与站点状态列表同步修正排序，并加了一行说明提示",
+        "优化：站点管理页工具栏重排为两行——排序/批量打标签/导入/导出/检测间隔/一键检测 Cookie 固定在首行，站点搜索与标签筛选合并到次行"
+      ]
+    },
+    {
       "version": "v4.0.17",
       "date": "2026.11.19",
       "changes": [

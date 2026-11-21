@@ -34,3 +34,28 @@ export function saveSelectedTargetSites(sites: string[]): void {
     // localStorage 不可用（隐私模式/超限）时静默降级，不影响发种主流程。
   }
 }
+
+/**
+ * 按站点列表顺序（即「站点管理」里的排序序号）重排已选站点。
+ *
+ * 多站发布的实际顺序由后端按 sites.sort_order 决定，这里只是让面板里的选择顺序、
+ * localStorage 记忆顺序和后端保持一致，避免用户看着勾选顺序猜发布顺序。
+ * 不在 siteNames 里的站点保持原有相对顺序，排在最后。
+ */
+export function orderTargetSitesBySiteList(names: string[], siteNames: string[]): string[] {
+  if (!Array.isArray(names) || names.length <= 1 || !Array.isArray(siteNames) || siteNames.length === 0) {
+    return Array.isArray(names) ? names.slice() : []
+  }
+  const rank = new Map<string, number>()
+  siteNames.forEach((name, index) => {
+    if (!rank.has(name)) rank.set(name, index)
+  })
+  const known: string[] = []
+  const unknown: string[] = []
+  names.forEach((name) => {
+    if (rank.has(name)) known.push(name)
+    else unknown.push(name)
+  })
+  known.sort((a, b) => (rank.get(a) ?? 0) - (rank.get(b) ?? 0))
+  return [...known, ...unknown]
+}

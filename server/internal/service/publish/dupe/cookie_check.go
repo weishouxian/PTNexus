@@ -62,6 +62,12 @@ func CheckCookie(baseURL, siteCode, credential, passkey string) (valid bool, rea
 		return checkRousiPeerGoCookie(baseURL, credential, passkey)
 	}
 
+	// 好学（hxpt）改版为 Next.js + 自研 JSON API：/index.php 现在 301 到 /login（SPA 壳），
+	// 网页入口拿不到 NexusPHP 的登录态特征，改走 /api/v1/me 取当前用户信息。
+	if isHxptSite(siteCode, baseURL) {
+		return checkHxptCookie(baseURL, credential)
+	}
+
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if trimmedBase == "" {
 		return false, "", CookieUser{}, fmt.Errorf("站点缺少域名（base_url），无法校验 Cookie")
@@ -282,6 +288,113 @@ func checkRousiPeerGoCookie(baseURL, credential, passkey string) (bool, string, 
 		return false, "肉丝 Cookie 已失效或未登录（未能获取到用户信息）", CookieUser{}, nil
 	}
 	return true, "Cookie 有效（已获取到用户信息）", CookieUser{UserID: strings.TrimSpace(parsed.User.ID), Username: username}, nil
+}
+
+// hxptMeResponse 为好学 /api/v1/me 的响应结构（只声明校验所需字段）。
+// 站点统一响应对：{code, message, data, request_id}，未认证时 HTTP 401 + code=2001。
+type hxptMeResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Data    struct {
+		ID       int    `json:"id"`
+		Username string `json:"username"`
+	} `json:"data"`
+}
+
+// isHxptSite 判断站点是否为好学（hxpt，Next.js + 自研 JSON API）。
+// 与 publisher/sites/hxpt.go 同口径：siteCode/baseURL 含 "hxpt" 即命中。
+func isHxptSite(siteCode, baseURL string) bool {
+	for _, raw := range []string{siteCode, baseURL} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(raw)), "hxpt") {
+			return true
+		}
+	}
+	return false
+}
+
+// checkHxptCookie 校验好学 Cookie：调 /api/v1/me 拿当前用户信息。
+//
+// 判据：HTTP 200 且 code=0、data.id / data.username 至少一个非空即视为有效；
+// 401（code=2001 未认证）视为 Cookie 失效。
+// 说明：好学改版后网页入口（/index.php）会 301 到 /login 的 SPA 壳，页面里没有
+// NexusPHP 的 userdetails 链接，旧的「抓首页 + 解析登录态」判定必然误报失效，故单独走接口。
+// 另外新版登录态在 flux_token（JWT）里，只粘 c_secure_pass 会被判未认证，
+// 失效文案里会点明是否缺 flux_token，避免误判成「Cookie 整串都废了」。
+// 副作用：向目标站点发起一次 GET 请求。
+func checkHxptCookie(baseURL, cookie string) (bool, string, CookieUser, error) {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmedBase == "" {
+		return false, "", CookieUser{}, fmt.Errorf("好学缺少域名（base_url），无法校验 Cookie")
+	}
+	cookie = strings.TrimSpace(cookie)
+	if cookie == "" {
+		return false, "", CookieUser{}, fmt.Errorf("好学 Cookie 为空，无法校验")
+	}
+
+	normalized := normalizeSiteBaseURLForCheck(trimmedBase)
+	checkURL := normalized + "/api/v1/me"
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, checkURL, nil)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("创建好学 Cookie 校验请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", defaultDupeUserAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("好学 Cookie 校验请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sharedBodyLimit))
+	if readErr != nil {
+		return false, "", CookieUser{}, fmt.Errorf("读取好学 Cookie 校验响应失败: %w", readErr)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, hxptCookieInvalidReason(cookie), CookieUser{}, nil
+	}
+	if resp.StatusCode >= 400 {
+		if looksLikeCloudflareChallenge(string(body)) {
+			return false, CookieCheckCloudflareReason, CookieUser{}, nil
+		}
+		return false, fmt.Sprintf("好学 Cookie 校验响应状态异常: %d", resp.StatusCode), CookieUser{}, nil
+	}
+
+	var parsed hxptMeResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("好学用户接口响应解析失败: %w", err)
+	}
+	// 未登录时若站点改回 200 包错误码，同样按失效处理。
+	if parsed.Code == 2001 || parsed.Code == 2003 {
+		return false, hxptCookieInvalidReason(cookie), CookieUser{}, nil
+	}
+	if parsed.Code != 0 {
+		return false, fmt.Sprintf("好学 Cookie 校验失败：接口返回 code=%d %s", parsed.Code, strings.TrimSpace(parsed.Message)), CookieUser{}, nil
+	}
+
+	username := strings.TrimSpace(parsed.Data.Username)
+	if parsed.Data.ID == 0 && username == "" {
+		return false, "好学 Cookie 已失效或未登录（未能获取到用户信息）", CookieUser{}, nil
+	}
+	userID := ""
+	if parsed.Data.ID > 0 {
+		userID = strconv.Itoa(parsed.Data.ID)
+	}
+	return true, "Cookie 有效（已通过 /api/v1/me 校验）", CookieUser{UserID: userID, Username: username}, nil
+}
+
+// hxptCookieInvalidReason 生成好学 Cookie 失效文案。
+// 缺少 flux_token 时给出更精确的指引：好学会话靠 flux_token（JWT）维持，
+// 只复制 c_secure_pass 等旧 NexusPHP 字段会稳定返回 401。
+func hxptCookieInvalidReason(cookie string) string {
+	if !strings.Contains(strings.ToLower(cookie), "flux_token") {
+		return "好学 Cookie 已失效或未登录：缺少 flux_token（好学新版登录态在 flux_token 里，请在浏览器登录后复制整串 Cookie，只粘 c_secure_pass 不够）"
+	}
+	return "好学 Cookie 已失效或未登录（/api/v1/me 返回未认证，flux_token 可能已过期，请重新登录后再复制 Cookie）"
 }
 
 // checkYemaPTCookie 校验 YemaPT Cookie：调 /api/user/profile 拿当前用户信息。

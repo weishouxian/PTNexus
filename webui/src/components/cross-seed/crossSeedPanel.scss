@@ -1179,7 +1179,14 @@
 
   .selection-subtitle {
     color: #909399;
-    margin: 8px 0 24px 0;
+    margin: 8px 0 6px 0;
+  }
+
+  /* 发布顺序说明：多站按站点管理的排序序号发种，不按勾选顺序 */
+  .selection-order-hint {
+    color: #b1b3b8;
+    font-size: 12px;
+    margin: 0 0 20px 0;
   }
 
   /* 本次发布种子的关键参数（选择发布站点步骤顶部，便于不回编辑页核对） */

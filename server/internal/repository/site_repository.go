@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"gorm.io/gorm"
@@ -366,7 +367,10 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY sort_order, nickname")
+	// 排序与「站点管理」页保持一致：sort_order=0 视为未排序，排在所有已排序站点之后。
+	// 站点选择按钮的渲染顺序取自这里，必须和批量发布的目标站顺序（SortSiteNicknamesByPublishOrder）同源，
+	// 否则用户看到的按钮顺序与真实发布顺序对不上。
+	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY CASE WHEN sort_order = 0 THEN 1 ELSE 0 END, sort_order, nickname")
 	if err != nil {
 		return nil, err
 	}
@@ -399,6 +403,84 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 		})
 	}
 	return result, nil
+}
+
+// sitePublishOrderEntry 记录单个站点在「站点管理」里的排序信息。
+type sitePublishOrderEntry struct {
+	nickname string
+	order    int
+}
+
+// SortSiteNicknamesByPublishOrder 按「站点管理」的排序顺序重排站点昵称列表。
+// 参数/返回：db 为数据库句柄；names 为待排序的站点昵称（如批量发布的目标站）；返回重排后的新切片，不修改入参。
+// 排序规则（与站点管理页一致）：sort_order 升序；sort_order=0 视为未排序，排在所有已排序站点之后；
+// 同序号按昵称；库里查不到的昵称保持原有相对顺序，排在最后。
+// 失败场景：db 为空或查询失败时原样返回入参 —— 顺序只影响体验，不应该阻断发布。
+// 副作用：只读查询 sites 表。
+func SortSiteNicknamesByPublishOrder(db *gorm.DB, names []string) []string {
+	if db == nil || len(names) <= 1 {
+		return names
+	}
+
+	type siteOrderRow struct {
+		Nickname  string
+		Site      string
+		SortOrder sql.NullInt64
+	}
+	rows := make([]siteOrderRow, 0, len(names)*2)
+	if err := db.Table("sites").Select("nickname, site, sort_order").Scan(&rows).Error; err != nil {
+		return names
+	}
+
+	// 昵称与站点代码都建索引：入参既可能来自 UI 的昵称（馒头），也可能来自 API 的站点代码（m-team）。
+	lookup := make(map[string]sitePublishOrderEntry, len(rows)*2)
+	for _, row := range rows {
+		entry := sitePublishOrderEntry{nickname: strings.TrimSpace(row.Nickname)}
+		if row.SortOrder.Valid {
+			entry.order = int(row.SortOrder.Int64)
+		}
+		if key := strings.ToLower(strings.TrimSpace(row.Nickname)); key != "" {
+			lookup[key] = entry
+		}
+		key := strings.ToLower(strings.TrimSpace(row.Site))
+		if key == "" {
+			continue
+		}
+		if _, exists := lookup[key]; !exists {
+			lookup[key] = entry
+		}
+	}
+
+	// 分组：0=已排序站点，1=未排序（sort_order=0），2=库里查不到。
+	keyOf := func(name string) (group int, order int, label string) {
+		trimmed := strings.TrimSpace(name)
+		entry, ok := lookup[strings.ToLower(trimmed)]
+		if !ok {
+			return 2, 0, trimmed
+		}
+		if entry.order <= 0 {
+			return 1, 0, entry.nickname
+		}
+		return 0, entry.order, entry.nickname
+	}
+
+	result := append([]string(nil), names...)
+	sort.SliceStable(result, func(i, j int) bool {
+		groupI, orderI, labelI := keyOf(result[i])
+		groupJ, orderJ, labelJ := keyOf(result[j])
+		if groupI != groupJ {
+			return groupI < groupJ
+		}
+		if groupI == 2 {
+			// 库里查不到的站点：保持调用方给的相对顺序，避免无意义的字母重排。
+			return false
+		}
+		if orderI != orderJ {
+			return orderI < orderJ
+		}
+		return strings.ToLower(labelI) < strings.ToLower(labelJ)
+	})
+	return result
 }
 
 func (r *SiteRepository) SetTorrentSiteNotExist(torrentName, siteName string) (bool, error) {

@@ -108,6 +108,14 @@ func NewScheduledSeedRepository(store *Store) *ScheduledSeedRepository {
 	return &ScheduledSeedRepository{store: store}
 }
 
+// DB 暴露底层数据库句柄，供需要只读参考其它表（如 sites 的排序序号）的调用方使用。
+func (r *ScheduledSeedRepository) DB() *gorm.DB {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	return r.store.DB
+}
+
 // Create 插入新任务并自动生成 trigger_tag。
 func (r *ScheduledSeedRepository) Create(task *ScheduledSeedTask) error {
 	if r == nil || r.store == nil || r.store.DB == nil {

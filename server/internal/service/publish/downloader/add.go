@@ -350,6 +350,9 @@ func looksLikeDirectDownloadURL(raw string) bool {
 		strings.Contains(lower, ".torrent") ||
 		strings.Contains(lower, "/api/torrent/") && strings.Contains(lower, "/download/") ||
 		strings.Contains(lower, "/api/torrent/download/") ||
+		// 自研 API 站（肉丝 PeerGo / 好学 hxpt）：/api/v1/torrents/{id}/download 就是直链本身，
+		// 别再拿去按详情页解析（SPA 详情页里没有下载链接）。
+		strings.Contains(lower, "/api/v1/torrents/") && strings.Contains(lower, "/download") ||
 		matchesTTGDownloadPattern(lower)
 }
 

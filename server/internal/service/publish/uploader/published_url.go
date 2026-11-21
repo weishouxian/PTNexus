@@ -14,8 +14,10 @@ var (
 	reDetailTorrentID = regexp.MustCompile(`(?is)details\.php\?[^\s"']*torrent_id=(\d+)`)
 	reRousiUUIDs      = regexp.MustCompile(`(?is)/torrent/([0-9a-fA-F\-]{36})`)
 	// PeerGo 平台详情页改为 /torrents/{数字 id}（旧版是 /torrent/{uuid}）。
-	reRousiPeerGoID    = regexp.MustCompile(`(?is)/torrents/(\d+)`)
-	reZhuqueID         = regexp.MustCompile(`(?is)/torrent/info/(\d+)`)
+	reRousiPeerGoID = regexp.MustCompile(`(?is)/torrents/(\d+)`)
+	reZhuqueID      = regexp.MustCompile(`(?is)/torrent/info/(\d+)`)
+	// 好学详情页是单数 /torrent/{id}（注意别和朱雀的 /torrent/info/{id} 混用）。
+	reHxptDetailID     = regexp.MustCompile(`(?is)/torrents?/(\d+)`)
 	reTTGDownload      = regexp.MustCompile(`(?is)/dl/(\d+)/([a-zA-Z0-9]+)`)
 	reDownhashAbsolute = regexp.MustCompile(`(?is)https?://[^"'\s<>]+/download\.php\?[^"'\s<>]*downhash=[^"'\s<>]+`)
 	reDownhashRelative = regexp.MustCompile(`(?is)(?:^|["'\s(>])(/?download\.php\?[^"'\s<>]*downhash=[^"'\s<>]+)`)
@@ -99,6 +101,13 @@ func BuildDirectDownloadURLForPublished(baseURL string, passkey string, siteCode
 		}
 		if match := reRousiUUIDs.FindStringSubmatch(url); len(match) >= 2 {
 			return fmt.Sprintf("%s/api/torrent/%s/download/%s", strings.TrimRight(normalizedBase, "/"), match[1], neturl.PathEscape(trimmedPasskey))
+		}
+	}
+
+	if strings.Contains(trimmedSiteCode, "hxpt") {
+		// 好学：详情页 /torrent/{id}，下载走 /api/v1/torrents/{id}/download（会话 Cookie 鉴权，无 CSRF 头）。
+		if match := reHxptDetailID.FindStringSubmatch(url); len(match) >= 2 {
+			return fmt.Sprintf("%s/api/v1/torrents/%s/download", strings.TrimRight(normalizedBase, "/"), match[1])
 		}
 	}
 

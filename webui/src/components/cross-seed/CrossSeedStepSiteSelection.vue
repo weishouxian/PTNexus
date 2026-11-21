@@ -8,6 +8,8 @@
           : '已存在的站点已被自动禁用。红色站点表示配置不完整。'
       }}
     </p>
+    <!-- 顺序口径：用户按“先点谁”理解成本高，这里显式说明按站点管理的排序序号执行 -->
+    <p class="selection-order-hint">发种顺序按「站点管理」里的排序序号执行，与勾选先后无关。</p>
 
     <!-- 本次发布的种子关键参数：避免为了核对而反复退回编辑页 -->
     <div class="seed-summary-bar">
@@ -167,7 +169,7 @@ import axios from 'axios'
 import { InfoFilled } from '@element-plus/icons-vue'
 import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
-import { saveSelectedTargetSites } from '@/utils/targetSites'
+import { orderTargetSitesBySiteList, saveSelectedTargetSites } from '@/utils/targetSites'
 
 const {
   autoUpdateExistingTorrent,
@@ -224,11 +226,15 @@ const tagSiteItems = computed(() =>
 )
 
 // 点击标签：把该标签下的站点追加到已选集合（不清掉已有选择）。
+// 合并后按站点列表顺序（= 站点管理的 sort_order）重排，使面板里的选择顺序与真实发布顺序一致。
 const applyTagSites = (names: string[]) => {
   if (!names.length) return
   const merged = new Set(selectedTargetSites.value)
   names.forEach((name) => merged.add(name))
-  selectedTargetSites.value = Array.from(merged)
+  selectedTargetSites.value = orderTargetSitesBySiteList(
+    Array.from(merged),
+    allSitesStatus.value.filter((s) => s.is_target).map((s) => s.name),
+  )
   saveSelectedTargetSites(selectedTargetSites.value)
 }
 

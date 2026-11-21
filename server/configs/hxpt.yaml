@@ -1,132 +1,159 @@
 site_name: "好学"
 
-# 好学 (HXPT / hxpt / www.hxpt.org) 发种映射配置
-# 抓取来源: https://www.hxpt.org/upload.php (登录态实测)
-# 表单: action=takeupload.php method=post enctype=multipart/form-data
-# 文件字段: file
-# 关键差异:
-#   1) 字段名【有】[4] 后缀: medium_sel[4] / codec_sel[4] / audiocodec_sel[4] /
-#      standard_sel[4] / source_sel[4] / team_sel[4] / processing_sel[4]
-#   2) ⚠️ 这是一个教育类站点，多数字段被二次定义为「教育」语义，与 PTNexus 标准语义错位：
-#      - audiocodec_sel[4] = 「年级」(幼儿园~高三) —— 不是音频编码，不配
-#      - codec_sel[4]     = 「格式」(RMVB/MP4/PDF/TXT/MKV…) —— 文件格式非视频编码，不配
-#      - source_sel[4]    = 「发布年份」(2010年前~2026) —— 不是产地/地区，不配
-#      - processing_sel[4]= 「版本」(人教版/苏教版等教材版本) —— 不是处理方式，不配
-#      上述四个字段在 yaml 里不配置，运行时自动跳过(站点非必填)
-#   3) type 分类: 401 学前教育 402 小学部 403 初中部 404 高职部 405 高中部 406 教育 410 纪录片
-#      ⚠️ 用户限定「只能发布纪录片」——非纪录片由 sites/hxpt.go:resolveHXPTRestriction 在入口
-#      用 *PreCheckError 确定性拒绝，本 yaml 的 mappings.type 只需覆盖纪录片(其余到不了映射)
-#   4) medium_sel[4] 媒介语义: 1=视频 2=音频 3=书籍 4=文档 5=笔记 6=课件 7=软件 8=会议 9=图片 10=其他
-#      纪录片一律填「视频」=1，其余(音频/书籍/课件等)与纪录片无关，全部兜底到 1
-#   5) standard_sel[4] 分辨率: 2=720p/720i 3=1080p/1080i 4=4K/2160p/2160i 5=8K/4320p/4320i 6=Other
-#      (注意: 无 1 值，从 2 开始)
-#   6) team_sel[4] 制作组: 8=HXWEB 9=HXPT 11=HX 10=Other
-#   7) 标签 tags[4][]: 常规标签(禁转/首发/DIY/国语/中字/HDR/完结/分集) + 学科标签(语文/数学/外语/
-#      历史/地理/物理/化学/生物/道法/音乐/美术/体育/自然科学/信息技术/兴趣爱好/古籍)
-#      —— 只映射常规标签，学科标签无 PTNexus 对应数据源，不映射
-#   8) 外链: url=IMDb 链接、pt_gen=PT-Gen（无 dburl / picture）
-#   9) 有 technical_info(MediaInfo) 独立 textarea —— MediaInfo 走独立字段，无需内联进简介
-#  10) 必填字段: 种子文件、简介(descr)、类型(type)；质量行、标签、IMDb 链接、PT-Gen 均非必填
-#  11) 匿名: NexusPHP 标准 uplver(anonymous.go 默认兜底，无需配置)
+# info hash 隔离：非空时发种前会在种子 info 字典内写入 source=<该值>，
+# 让好学种子与源站种子拥有不同的 infohash —— 下载器里是两个独立任务，
+# 站点标签/分类/上传量统计互不覆盖。文件列表与 piece 数据保持原样，
+# 好学任务指向同一份文件即可直接校验做种，不会重新下载。
+#
+# ⚠️ 本站会把上传的 .torrent 原样保存、只把 announce 换成
+#    https://tracker.hxpt.org/announce/<passkey>，不改 info。
+#    因此留空（或删除该项）时，好学种子与源站种子 infohash 完全相同，
+#    下载器里已经有源站任务时加种会失败（「任务已存在」），
+#    手动删掉源站任务才加得上。
+info_source_tag: "HXPT"
 
-upload_file_field: "file"
+# ============================================================================
+# 好学（HXPT，www.hxpt.org）发种配置 —— 依据 2026-11-21 登录态实测
+#
+# ⚠️ 站点已从 NexusPHP 迁到 Next.js + JSON API，发种不再走 upload.php / takeupload.php：
+#   POST {base}/api/v1/torrents        multipart/form-data
+#   鉴权：Cookie（必须含 flux_csrf）+ 请求头 x-csrf-token: <flux_csrf 的值>
+#        缺这个头站点直接返回 403 {"code":2003,"message":"无权限"}
+#   字段：file / name / small_descr / descr / category_id / imdb / douban / tmdb /
+#        poster / mediainfo / sections(JSON) / tags(JSON) / anonymous / price
+#   sections 的键是站点字典 kind（media/codec/source/team），值是「字典 id」。
+#   本文件 mappings 一律填「站点字典名称」，发布时先拉 section-dict 把名称解析成 id，
+#   因此站点字典增删（id 漂移）不需要改这里。
+#
+# 分类真源：GET /api/v1/site-profile → data.categories
+#   1 电影 2 电视剧 3 短剧 4 音乐 5 游戏 6 软件 7 动漫 8 纪录片
+#   9 电子书 10 有声书 11 体育 12 综艺 13 教育资源（101-107 学段/学期）
+# ============================================================================
 
+api:
+  base: "https://www.hxpt.org"
+  upload_path: "/api/v1/torrents"
+  profile_path: "/api/v1/site-profile"
+  section_dict_path: "/api/v1/section-dict"
+  tags_dict_path: "/api/v1/tags-dict"
+  detail_path: "/torrent/{id}"
+  download_path: "/api/v1/torrents/{id}/download"
+  csrf_cookie: "flux_csrf"
+  csrf_header: "x-csrf-token"
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+# 发布参数预览用的字段名（站点 API 字段，不是表单控件名）
 form_fields:
-  category: "type"
-  medium: "medium_sel[4]"
-  resolution: "standard_sel[4]"
-  team: "team_sel[4]"
+  category: "category_id"
   name: "name"
   small_descr: "small_descr"
   description: "descr"
-  technical_info: "technical_info"
-  imdb_url: "url"                 # IMDb 链接文本框
-  pt_gen: "pt_gen"                # PT-Gen 链接文本框
-
-source_parsers:
-  source_params:
-    type:
-      source_key: "类型"
-    medium:
-      source_key: "媒介"
-    resolution:
-      source_key: "分辨率"
-    team:
-      source_key: "制作组"
-
-  standard_keys:
-    type:
-      "Documentaries": "category.documentaries"
-      "Documentary": "category.documentaries"
-      "documentary": "category.documentaries"
-      "纪录片": "category.documentaries"
-
-    medium:
-      "视频": "medium.video"
-      "Other": "medium.other"
-      "其他": "medium.other"
-
-    resolution:
-      "720p/720i": "resolution.r720p"
-      "1080p/1080i": "resolution.r1080p"
-      "4K/2160p/2160i": "resolution.r2160p"
-      "8K/4320p/4320i": "resolution.r4320p"
-      "Other": "resolution.other"
-
-    team:
-      "HXWEB": "team.hxweb"
-      "HXPT": "team.hxpt"
-      "HX": "team.hx"
-      "Other": "team.other"
+  imdb_url: "imdb"
+  douban_url: "douban"
+  tmdb_url: "tmdb"
+  technical_info: "mediainfo"
 
 mappings:
-  # type 分类: 410=纪录片 (401-406 为教育分类，非纪录片在入口被拒绝)
+  # 分类 ← 标准化 type（值必须是 site-profile.categories 里的名称）
+  # default 留空 = 未识别的类型直接拒绝，不放行到任何分类（避免误发）。
   type:
-    "category.documentaries": "410"
-    "default": "410"
+    "category.movie": "电影"
+    "category.tv_series": "电视剧"
+    "category.tv_shows": "综艺"
+    "category.documentaries": "纪录片"
+    "category.animation": "动漫"
+    "category.cartoon": "动漫"
+    "category.sports": "体育"
+    "category.music": "音乐"
+    "category.mv": "音乐"
+    "default": ""
 
-  # medium_sel[4] 媒介: 1=视频 2=音频 3=书籍 4=文档 5=笔记 6=课件 7=软件 8=会议 9=图片 10=其他
-  # 纪录片一律「视频」=1；其余语义(音频/书籍/课件等)与纪录片无关，全部兜底到 1
-  medium:
-    "medium.video": "1"
-    "medium.uhd_bluray": "1"
-    "medium.uhd_diy": "1"
-    "medium.bluray": "1"
-    "medium.bluray_diy": "1"
-    "medium.remux": "1"
-    "medium.encode": "1"
-    "medium.encode_2160p": "1"
-    "medium.encode_1080p": "1"
-    "medium.encode_720p": "1"
-    "medium.webdl": "1"
-    "medium.webrip": "1"
-    "medium.hdtv": "1"
-    "medium.dvd": "1"
-    "medium.dvdr": "1"
-    "medium.cd": "1"
-    "medium.track": "1"
-    "medium.minibd": "1"
-    "medium.other": "1"
-    "default": "1"
+  # 站点「媒介」大类 ← 按资源类型派生。
+  # 站点这个字段是内容大类（视频/音频/书籍/文档/图片/软件/游戏/其他），不是 WEB-DL/BluRay。
+  media_by_type:
+    "category.music": "音频"
+    "category.mv": "音频"
+    "default": "视频"
 
-  # standard_sel[4] 分辨率: 2=720p/720i 3=1080p/1080i 4=4K/2160p/2160i 5=8K/4320p/4320i 6=Other
-  resolution:
-    "resolution.r2160p": "4"
-    "resolution.r4320p": "5"
-    "resolution.r1080p": "3"
-    "resolution.r1080i": "3"
-    "resolution.r720p": "2"
-    "resolution.sd": "6"
-    "resolution.other": "6"
-    "default": "6"
+  # 站点「来源」← 标准化 medium（片源形态）
+  source:
+    "medium.webdl": "WEB-DL"
+    "medium.webrip": "WEBRip"
+    "medium.bluray": "BluRay"
+    "medium.uhd_bluray": "BluRay"
+    "medium.uhd_diy": "BluRay"
+    "medium.remux": "BluRay"
+    "medium.encode": "BluRay"
+    "medium.minibd": "BluRay"
+    "medium.bdrip": "BluRay"
+    "medium.hddvd": "BluRay"
+    "medium.hdtv": "HDTV"
+    "medium.uhdtv": "HDTV"
+    "medium.tv": "HDTV"
+    "medium.feed": "HDTV"
+    "medium.dvd": "DVDRip"
+    "medium.dvdr": "DVDRip"
+    "medium.tvrip": "DVDRip"
+    "medium.cd": "CD"
+    "medium.cd_dvd": "CD"
+    "medium.cd_vcd": "CD"
+    "medium.vcd": "CD"
+    "medium.vinyl": "CD"
+    "medium.sacd": "SACD"
+    "medium.other": "其他"
+    "medium.track": "其他"
+    "medium.minisd": "其他"
+    "default": "其他"
 
-  # team_sel[4] 制作组: 8=HXWEB 9=HXPT 11=HX 10=Other
+  # 站点「编码」← 标准化 video_codec
+  video_codec:
+    "video.h264": "H.264"
+    "video.x264": "H.264"
+    "video.h265": "H.265"
+    "video.x265": "H.265"
+    "video.av1": "AV1"
+    "video.xvid": "XviD"
+    "video.vp9": "其他"
+    "video.vc1": "其他"
+    "video.mpeg2": "其他"
+    "video.mpeg4": "其他"
+    "video.other": "其他"
+    "default": "其他"
+
+  # 站点「制作组」← 标准化 team（站点字典 70 项，这里只覆盖全局映射表里存在的组）
   team:
-    "team.hxweb": "8"
-    "team.hxpt": "9"
-    "team.hx": "11"
-    "team.other": "10"
-    "team.tlf": "10"
-    "team.bmdru": "10"
-    "team.original": "10"
-    "default": "10"
+    "team.hds": "HDS"
+    "team.hdsky": "HDSky"
+    "team.chdbits": "CHDBits"
+    "team.chd": "CHD"
+    "team.ttg": "TTG"
+    "team.ourbits": "OurBits"
+    "team.hdhome": "HDHome"
+    "team.hdtime": "HDTime"
+    "team.hdfans": "HDFans"
+    "team.hdc": "HDC"
+    "team.cmct": "CMCT"
+    "team.frds": "FRDS"
+    "team.wiki": "WiKi"
+    "team.tlf": "TLF"
+    "team.mysilu": "MySiLU"
+    "team.cspt": "CSPT"
+    "team.csweb": "CSWEB"
+    "team.zmweb": "ZmWeb"
+    "team.qhstudio": "QHstudIo"
+    "team.bmdru": "BMDru"
+    "team.vcb-studio": "VCB-Studio"
+    "team.moozzi2": "Moozzi2"
+    "team.ank-raws": "ANK-Raws"
+    "default": "其他"
+
+  # 站点标签 ← 标准化 tag（站点一共只有 9 个标签：首发/禁转/国语/中字/DIY/官种/合集/完结/独家）
+  # 站点的「首发」「官种」在标准键里没有对应项，由站点侧自行判定，这里不映射。
+  tag:
+    "tag.禁转": "禁转"
+    "tag.国语": "国语"
+    "tag.中字": "中字"
+    "tag.DIY": "DIY"
+    "tag.合集": "合集"
+    "tag.完结": "完结"
+    "tag.独家": "独家"

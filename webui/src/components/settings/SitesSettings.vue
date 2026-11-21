@@ -79,20 +79,13 @@
           </el-button>
           <el-button :icon="Upload" :loading="isImporting" @click="triggerImport">导入</el-button>
           <el-button :icon="Download" :loading="isExporting" @click="handleExport">导出</el-button>
-          <el-input
-            v-model="searchQuery"
-            placeholder="搜索站点昵称/标识/官组"
-            clearable
-            :prefix-icon="Search"
-            class="search-input"
-          />
           <el-tooltip
             content="每隔多少小时自动检测一次站点 Cookie/Passkey 有效性；支持小数，0 或留空表示关闭定时检测。"
             placement="top"
           >
             <el-input
               v-model="siteHealthInterval"
-              placeholder="检测间隔(小时)"
+              placeholder="检测间隔"
               clearable
               class="health-interval-input"
               @change="handleSaveHealthInterval"
@@ -119,8 +112,15 @@
       />
     </div>
 
-    <!-- 标签筛选条件：位于表头上方，可多选；命中任一标签（或未设置标签）的站点即显示（与搜索、站点范围筛选为 AND） -->
+    <!-- 搜索 + 标签筛选同处一行：搜索按昵称/标识/官组过滤，标签多选命中任一即显示（两者为 AND） -->
     <div v-if="!isSortMode" class="tag-filter-row glass-pagination">
+      <el-input
+        v-model="searchQuery"
+        placeholder="搜索站点昵称/标识/官组"
+        clearable
+        :prefix-icon="Search"
+        class="search-input"
+      />
       <span class="tag-filter-row-label">标签筛选</span>
       <el-select
         v-model="activeTagFilters"
@@ -2411,8 +2411,10 @@ const handleDelete = (site: SiteConfig) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: nowrap;
-  gap: 16px;
+  /* 正常宽度下 CookieCloud 表单与右侧操作组各占一行内的一侧；
+     宽度不够时让操作组整体换到下一行，避免六颗按钮被挤成多行。 */
+  flex-wrap: wrap;
+  gap: 12px 16px;
 }
 
 .settings-view {
@@ -2446,10 +2448,14 @@ const handleDelete = (site: SiteConfig) => {
   white-space: nowrap;
 }
 
+/* 排序 / 批量打标签 / 导入 / 导出 / 检测间隔 / 一键检测Cookie：固定在同一行，不折行 */
 .right-action-group {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 8px;
   margin-left: auto;
 }
 
@@ -2517,10 +2523,10 @@ const handleDelete = (site: SiteConfig) => {
   gap: 4px;
 }
 
-/* 表头上方的标签筛选条件行 */
+/* 表头上方的搜索 + 标签筛选行：两者同处一行，提示文案超长时省略而不再换行 */
 .tag-filter-row {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
@@ -2530,6 +2536,7 @@ const handleDelete = (site: SiteConfig) => {
 
 .tag-filter-row-label {
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
 }
 
 .tag-filter-select {
@@ -2537,7 +2544,12 @@ const handleDelete = (site: SiteConfig) => {
 }
 
 .tag-filter-row-hint {
+  flex: 1 1 auto;
+  min-width: 0;
   color: var(--el-text-color-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 「未设置标签」是筛选项而非真实标签：灰色虚线胶囊，与按标签名推导的彩色胶囊区分开 */
@@ -2693,12 +2705,6 @@ const handleDelete = (site: SiteConfig) => {
   cursor: grab;
 }
 
-.right-action-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
 /* 站点配置导入用的隐藏文件选择框（由「导入」按钮触发 click） */
 .hidden-file-input {
   display: none;
@@ -2748,6 +2754,9 @@ const handleDelete = (site: SiteConfig) => {
 
   .right-action-group {
     width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-left: 0;
   }
 
   .search-input {
@@ -2755,6 +2764,7 @@ const handleDelete = (site: SiteConfig) => {
   }
 
   .tag-filter-row {
+    flex-wrap: wrap;
     align-items: stretch;
   }
 

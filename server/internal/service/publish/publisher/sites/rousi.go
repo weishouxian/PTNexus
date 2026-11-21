@@ -823,20 +823,7 @@ func rousiIsolateInfoHash(torrentFile []byte, siteCfg *publishmapping.SitePublis
 	if siteCfg != nil {
 		tag = strings.TrimSpace(siteCfg.InfoSourceTag)
 	}
-	if tag == "" {
-		return torrentFile, "info hash 隔离: 未配置 info_source_tag，保持与源站相同的 infohash（下载器里会与源站共用同一个任务）"
-	}
-
-	before, _ := acquirefetch.TorrentInfoHash(torrentFile)
-	rewritten, err := acquirefetch.RewriteTorrentInfoSource(torrentFile, tag)
-	if err != nil {
-		return torrentFile, fmt.Sprintf("info hash 隔离失败（继续用源站种子，infohash 不变）: %v", err)
-	}
-	after, _ := acquirefetch.TorrentInfoHash(rewritten)
-	if before != "" && before == after {
-		return rewritten, fmt.Sprintf("info hash 隔离异常: 写入 source=%s 后 infohash 未变化（%s）", tag, after)
-	}
-	return rewritten, fmt.Sprintf("info hash 隔离: info.source=%s，infohash %s → %s（与源站不同，下载器里是独立任务）", tag, before, after)
+	return isolateInfoHashByTag(torrentFile, tag)
 }
 
 // resolveRousiCategoryID 把标准化类型换算成站点分类 id（movies/tv/anime/...）。

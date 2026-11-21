@@ -180,6 +180,10 @@ func (s *Scheduler) processTask(task *repository.ScheduledSeedTask, now time.Tim
 		return
 	}
 
+	// 一个种子向多个目标站依次入队，入队顺序就是队列里的发布顺序。
+	// 统一按「站点管理」的排序序号重排，保证定时发种与手动多站发布顺序一致。
+	targetSites = repository.SortSiteNicknamesByPublishOrder(s.repo.DB(), targetSites)
+
 	processedSeeds := make(map[int]bool)
 
 	for {

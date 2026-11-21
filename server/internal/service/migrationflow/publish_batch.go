@@ -6,11 +6,40 @@ import (
 	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/repository"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	processingshared "github.com/pt-nexus/server/internal/service/processing/shared"
 	publishworkflow "github.com/pt-nexus/server/internal/service/publish/workflow"
 	settingspkg "github.com/pt-nexus/server/internal/service/settings"
 )
+
+// sortPublishTargetsBySiteOrder 把多站发布的目标站顺序对齐「站点管理」里的排序序号。
+// 参数/返回：targets 为原始目标站昵称列表；返回按站点排序序号重排后的列表（查询失败时原样返回）。
+// 说明：站点选择面板是按点击顺序累积目标站的，「立即发布」与「加入队列」都走这里，
+// 保证实际发种顺序等于用户在站点管理里设定的顺序，而不是勾选顺序。
+// 失败场景：仓储/数据库不可用时返回入参顺序，不阻断发布。
+// 副作用：只读查询 sites 表；顺序发生变化时写一条日志。
+func (s *MigrateService) sortPublishTargetsBySiteOrder(targets []string) []string {
+	if s == nil || s.repo == nil || len(targets) <= 1 {
+		return targets
+	}
+	sorted := repository.SortSiteNicknamesByPublishOrder(s.repo.DB(), targets)
+	if len(sorted) != len(targets) {
+		return targets
+	}
+	changed := false
+	for index := range sorted {
+		if sorted[index] != targets[index] {
+			changed = true
+			break
+		}
+	}
+	if changed {
+		logx.Infof(publishQueueLogModule, "目标站按站点管理排序重排: %s -> %s",
+			strings.Join(targets, ","), strings.Join(sorted, ","))
+	}
+	return sorted
+}
 
 func (s *MigrateService) Publish(payload map[string]any) (map[string]any, int) {
 	startedAt := time.Now()
@@ -91,6 +120,9 @@ func (s *MigrateService) StartPublishBatch(payload map[string]any) (map[string]a
 	if len(targets) == 0 {
 		return map[string]any{"success": false, "message": "缺少 targetSites 参数"}, 400
 	}
+
+	// 发种顺序 = 站点管理里的排序序号（不是面板上的勾选顺序）。
+	targets = s.sortPublishTargetsBySiteOrder(targets)
 
 	// 计算批量发布并发（对齐 Python 规则：payload.concurrency 优先，否则走 cross_seed 配置）。
 	rootConfig := map[string]any{}

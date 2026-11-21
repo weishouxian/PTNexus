@@ -2,7 +2,7 @@ import { computed, nextTick, ref, type ComputedRef, type Ref } from 'vue'
 import axios from 'axios'
 import { ElNotification } from '@/utils/uiNotify'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
-import { loadSelectedTargetSites, saveSelectedTargetSites } from '@/utils/targetSites'
+import { loadSelectedTargetSites, orderTargetSitesBySiteList, saveSelectedTargetSites } from '@/utils/targetSites'
 
 import type {
   AudioTitlePreview,
@@ -1344,19 +1344,27 @@ export function createSeedFlow(deps: SeedFlowDeps): SeedFlowApi {
             .filter((s) => s.is_target && s.can_publish !== false && isTargetSiteSelectable(s.name))
             .map((s) => s.name),
         )
-        selectedTargetSites.value = remembered.filter((name) => selectable.has(name))
+        selectedTargetSites.value = orderSelectedSites(remembered.filter((name) => selectable.has(name)))
       }
     }
 
     activeStep.value = 2
   }
 
+  // 目标站顺序统一按站点列表（= 站点管理里的 sort_order）排，勾选顺序不参与，
+  // 与后端批量发布时的排序口径（sites.sort_order，0 排末尾）保持一致。
+  const orderSelectedSites = (names: string[]): string[] =>
+    orderTargetSitesBySiteList(
+      names,
+      allSitesStatus.value.filter((site) => site.is_target).map((site) => site.name),
+    )
+
   const toggleSiteSelection = (siteName: string) => {
     const index = selectedTargetSites.value.indexOf(siteName)
     if (index > -1) {
       selectedTargetSites.value.splice(index, 1)
     } else {
-      selectedTargetSites.value.push(siteName)
+      selectedTargetSites.value = orderSelectedSites([...selectedTargetSites.value, siteName])
     }
     saveSelectedTargetSites(selectedTargetSites.value)
   }

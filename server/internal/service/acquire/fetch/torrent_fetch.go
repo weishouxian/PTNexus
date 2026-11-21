@@ -33,6 +33,8 @@ var (
 	reYemaPTDetailID = regexp.MustCompile(`(?i)/torrent/detail/(\d+)`)
 	// 肉丝（PeerGo）详情页 /torrents/{id}、下载直链 /api/v1/torrents/{id}/download，ID 都是纯数字。
 	reRousiTorrentPathID = regexp.MustCompile(`(?i)/(?:api/v1/)?torrents/(\d+)`)
+	// 好学（hxpt）详情页是单数 /torrent/{id}，下载直链是复数 /api/v1/torrents/{id}/download，都要能认出来。
+	reHxptTorrentPathID = regexp.MustCompile(`(?i)/(?:api/v1/)?torrents?/(\d+)`)
 )
 
 const sourceDownloadLogModule = "迁移-种子下载"
@@ -140,7 +142,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 	// 肉丝（rousi.pro）升级 PeerGo 后详情页同样是 React Router SPA，HTML 里没有任何下载链接，
 	// 直链固定为 /api/v1/torrents/{id}/download，凭会话 Cookie 鉴权。
 	isRousi := isRousiSource(siteCode, baseURL, detailURL)
-	isSPADetail := isYemaPT || isMTeam || isRousi
+	// 好学（hxpt）改版成 Next.js + 自研 JSON API：详情页 /torrent/{id} 是前端渲染，
+	// 下载走 /api/v1/torrents/{id}/download（会话 Cookie 鉴权，不需要 CSRF 头）。
+	isHxpt := isHxptSource(siteCode, baseURL, detailURL)
+	isSPADetail := isYemaPT || isMTeam || isRousi || isHxpt
 
 	downloadCandidates := make([]string, 0)
 	if isYemaPT {
@@ -166,6 +171,9 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		}
 		if isRousi {
 			spaKind = "肉丝(PeerGo)"
+		}
+		if isHxpt {
+			spaKind = "好学(hxpt)"
 		}
 		logx.Infof(sourceDownloadLogModule, "%s 详情页为 SPA，跳过 HTML 解析 source_site=%s torrent_id=%s", spaKind, siteName, trimmedID)
 	} else {
@@ -201,6 +209,10 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 		if isRousi {
 			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s detail_url=%s 原因=肉丝未识别出数字种子 ID", siteName, trimmedID, detailURL)
 			return "", detailURL, nil, fmt.Errorf("肉丝未能识别出种子 ID（详情页应为 %s/torrents/{数字ID}）", strings.TrimRight(baseURL, "/"))
+		}
+		if isHxpt {
+			logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s detail_url=%s 原因=好学未识别出数字种子 ID", siteName, trimmedID, detailURL)
+			return "", detailURL, nil, fmt.Errorf("好学未能识别出种子 ID（详情页应为 %s/torrent/{数字ID}）", strings.TrimRight(baseURL, "/"))
 		}
 		logx.Warnf(sourceDownloadLogModule, "下载候选为空 source_site=%s torrent_id=%s 原因=详情页无有效链接", siteName, trimmedID)
 		return "", detailURL, nil, errors.New("详情页中未找到可用下载链接")
@@ -642,6 +654,15 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 			return fmt.Sprintf("%s/torrents/%s", strings.TrimRight(baseURL, "/"), id)
 		}
 	}
+	// 好学（hxpt）：详情页为单数 SPA 路由 /torrent/{id}，下载直链是复数 /api/v1/torrents/{id}/download
+	if isHxptSource(siteCode, baseURL, trimmed) {
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+		if id := extractHxptTorrentID(trimmed); id != "" {
+			return fmt.Sprintf("%s/torrent/%s", strings.TrimRight(baseURL, "/"), id)
+		}
+	}
 	if strings.Contains(trimmed, "details.php") || strings.Contains(trimmed, "torrent/") {
 		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
 			return trimmed
@@ -676,6 +697,18 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return ""
 	}
 	trimmedPasskey := strings.TrimSpace(passkey)
+	// 好学（hxpt）：直链是 API 形式 /api/v1/torrents/{id}/download，凭会话 Cookie 鉴权，不需要 passkey。
+	// 用户/发布结果给的就是直链时原样使用，避免再拼一次。
+	if isHxptSource(siteCode, baseURL, detailURL) {
+		if id := extractHxptTorrentID(detailURL, torrentID); id != "" {
+			if strings.Contains(strings.ToLower(detailURL), "/download") &&
+				strings.Contains(strings.ToLower(detailURL), "/torrents/") {
+				return strings.TrimSpace(detailURL)
+			}
+			return fmt.Sprintf("%s/api/v1/torrents/%s/download", strings.TrimRight(baseURL, "/"), id)
+		}
+		return ""
+	}
 	// 肉丝（PeerGo）：直链是 API 形式 /api/v1/torrents/{id}/download，凭会话 Cookie 鉴权，不再需要 passkey。
 	// 用户直接把下载直链粘进来时原样使用，避免再拼一次。
 	if isRousiSource(siteCode, baseURL, detailURL) {
@@ -730,6 +763,39 @@ func extractRousiTorrentID(values ...string) string {
 			continue
 		}
 		if match := reRousiTorrentPathID.FindStringSubmatch(trimmed); len(match) >= 2 {
+			return match[1]
+		}
+		if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// isHxptSource 判断源站是否为好学（hxpt，Next.js + 自研 JSON API）。
+// 参数/返回：siteCode 为站点代码，baseURL/detailURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isHxptSource(siteCode, baseURL, detailURL string) bool {
+	for _, raw := range []string{siteCode, baseURL, detailURL} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(raw)), "hxpt") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractHxptTorrentID 从详情页、下载直链或裸 ID 中提取好学的数字种子 ID。
+// 参数/返回：依次尝试各值，命中 /torrent/{id}、/torrents/{id}、/api/v1/torrents/{id}/download 或纯数字时返回 ID。
+// 失败场景：输入为空或无法识别 ID 时返回空串。
+// 副作用：无。
+func extractHxptTorrentID(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if match := reHxptTorrentPathID.FindStringSubmatch(trimmed); len(match) >= 2 {
 			return match[1]
 		}
 		if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {

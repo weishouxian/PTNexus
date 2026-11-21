@@ -219,6 +219,10 @@ func (s *MigrateService) EnqueuePublishQueue(payload map[string]any) (map[string
 		return map[string]any{"success": false, "message": "缺少 targetSites 参数"}, 400
 	}
 
+	// 入队顺序决定同一批目标站的计划发布时间先后（队尾只按 scheduled_at 排队），
+	// 因此这里必须按站点管理的排序序号重排，否则队列会按勾选顺序发种。
+	targetSites = s.sortPublishTargetsBySiteOrder(targetSites)
+
 	if cfg.MaxQueueSize > 0 {
 		active, err := s.queueRepo.CountActiveTasks()
 		if err != nil {

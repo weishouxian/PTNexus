@@ -541,8 +541,11 @@ func (d Downloader) AddTorrentURLWithOptions(torrentURL, savePath string, option
 		if limitBytes := normalizeUploadLimitBytes(options.UploadLimitMBps); limitBytes > 0 {
 			values.Set("upLimit", strconv.Itoa(limitBytes))
 		}
-		_, err = client.PostForm("torrents/add", values)
-		return err
+		respBody, err := client.PostForm("torrents/add", values)
+		if err != nil {
+			return err
+		}
+		return qbAddResultError(respBody)
 	case "transmission":
 		client := newTransmissionClient(d)
 		args := map[string]any{"filename": torrentURL}
@@ -616,8 +619,14 @@ func (d Downloader) AddTorrentDataWithOptions(content []byte, fileName, savePath
 		if err := writer.Close(); err != nil {
 			return err
 		}
-		_, err = client.PostMultipart("torrents/add", body, writer.FormDataContentType())
-		return err
+		respBody, err := client.PostMultipart("torrents/add", body, writer.FormDataContentType())
+		if err != nil {
+			return err
+		}
+		// qB 对「同 infohash 任务已存在」「种子非法」「保存路径无效」都回 HTTP 200 + 正文 "Fails."，
+		// 不看正文就会被当成添加成功（页面上看不到新任务，实际什么都没加）。
+		// 最常见的是源站种子已在下载器里：站点只替换 announce、不改 info，infohash 与源站完全相同。
+		return qbAddResultError(respBody)
 	case "transmission":
 		client := newTransmissionClient(d)
 		args := map[string]any{
@@ -661,6 +670,16 @@ func (d Downloader) AddTorrentFileWithOptions(filePath, savePath string, options
 		return err
 	}
 	return d.AddTorrentDataWithOptions(content, filepath.Base(trimmed), savePath, options)
+}
+
+// qbAddResultError 判定 qB「torrents/add」的返回正文。
+// qB 在 HTTP 200 下用正文表达业务结果："Ok." 表示已入队，"Fails." 表示拒绝
+// （同 infohash 任务已存在、种子非法、保存路径无效等）。不看正文就会把失败当成功。
+func qbAddResultError(body []byte) error {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(string(body))), "fails") {
+		return errors.New("下载器拒绝了该种子（qBittorrent 返回 Fails.）：通常是已存在相同 infohash 的任务（例如源站种子），也可能是种子内容或保存路径无效")
+	}
+	return nil
 }
 
 func normalizeUploadLimitBytes(uploadLimitMBps int) int {
