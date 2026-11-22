@@ -84,6 +84,8 @@ type Runtime struct {
 	ExtractTagsFromPage           func(pageHTML string) []string
 	MergeExplicitSourceTags       func(tags []string) []string
 	IsSSDSufficient               func(data SeedData) bool
+	// ExtractBasicInfoType 按站点配置（configs/<site>.yaml 的 source_parsers）解析详情页「类型」行，返回标准类型键。
+	ExtractBasicInfoType func(pageHTML string, siteCode string) string
 
 	ReHHClubMediaInfo   *regexp.Regexp
 	ReMediaInfoCodeMain *regexp.Regexp

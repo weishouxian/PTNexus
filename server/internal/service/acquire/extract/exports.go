@@ -47,6 +47,14 @@ func InferStandardizedValues(title, mediainfo, body string) map[string]string {
 	return inferStandardizedValues(title, mediainfo, body)
 }
 
+// ExtractBasicInfoType 按站点配置解析详情页「类型」行的标准类型键。
+// 参数/返回：pageHTML 为详情页 HTML，siteCode 为站点代码；返回如 category.movie 的标准键，取不到返回空串。
+// 失败场景：页面为空或站点未配置 source_parsers.standard_keys 时返回空串。
+// 副作用：会读取一次 configs/<site>.yaml（带缓存）。
+func ExtractBasicInfoType(pageHTML, siteCode string) string {
+	return strings.TrimSpace(extractMappedBasicInfoFromPage(pageHTML, siteCode).Standard["type"])
+}
+
 // ParseAudioTracksFromMediainfo 解析 MediaInfo/BDInfo 文本中的全部音轨（编码+码率+声道+默认标记）。
 func ParseAudioTracksFromMediainfo(mediainfo string) []AudioTrack {
 	return parseAudioTracksFromMediainfo(mediainfo)

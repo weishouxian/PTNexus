@@ -111,6 +111,13 @@ func NewMTeamSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory) E
 	return newDelegatedSiteExtractor("mteam_special", public, runtimeFactory, sites.ExtractMTeam)
 }
 
+// NewTTGSpecialExtractor 创建 TTG（ToTheGlory）提取器。
+// 说明：TTG 不是 NexusPHP 模板——标题是无 id 的 <h1>，简介整块在 div#kt_d，
+// 缩略图带 _thumb 后缀，公共提取器只能拿到标题/类型/IMDb，简介与截图必须站点自己解析。
+func NewTTGSpecialExtractor(public Extractor, runtimeFactory RuntimeFactory) Extractor {
+	return newDelegatedSiteExtractor("ttg_special", public, runtimeFactory, sites.ExtractTTG)
+}
+
 func toSiteInput(input Input) sites.Input {
 	return sites.Input{
 		SiteCode:      input.SiteCode,

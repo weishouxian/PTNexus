@@ -1135,7 +1135,7 @@ func (s *Service) findDownloaderHash(d downloaderclient.Downloader, title string
 
 // ensureItemDownloaderInfo 发布成功后确保下载器信息（hash）已回写 DB。
 // 推送下载器时可能未拿到 hash（findDownloaderHash 未匹配到），导致 DB 里 downloader_hash 为空，
-// 保种清理的 ListRetentionCandidates 查询条件 downloader_hash <> '' 会过滤掉这些记录。
+// 保种清理的 ListRetentionCandidates 查询条件 downloader_hash <> ” 会过滤掉这些记录。
 // 此方法在发布成功后补全：先从 seed_parameters 查 hash，再从下载器按 name 匹配查 hash，回写 DB。
 func (s *Service) ensureItemDownloaderInfo(item *repository.AutoSeedItem) {
 	if s == nil || s.repo == nil || item == nil {
@@ -2031,7 +2031,8 @@ func inferTorrentIDFromURL(value string) string {
 	if _, err := strconv.ParseInt(value, 10, 64); err == nil {
 		return value
 	}
-	for _, marker := range []string{"id=", "torrentid=", "torrent_id=", "/torrent/", "/dl/"} {
+	// 注意 "/t/" 专供 TTG：详情页规范地址是 https://totheglory.im/t/{id}/。
+	for _, marker := range []string{"id=", "torrentid=", "torrent_id=", "/torrent/", "/dl/", "/t/"} {
 		idx := strings.LastIndex(strings.ToLower(value), marker)
 		if idx < 0 {
 			continue

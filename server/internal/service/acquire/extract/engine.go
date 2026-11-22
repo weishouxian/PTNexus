@@ -60,25 +60,29 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 	colaptExtractor := NewColaptSpecialExtractor(publicExtractor, runtimeFactory)
 	// 馒头（M-Team）同为纯 SPA + JSON API 站，提取器用 x-api-key 读详情接口。
 	mteamExtractor := NewMTeamSpecialExtractor(publicExtractor, runtimeFactory)
+	// TTG（ToTheGlory）不是 NexusPHP 模板：标题是裸 <h1>、简介在 div#kt_d、截图带 _thumb 后缀。
+	ttgExtractor := NewTTGSpecialExtractor(publicExtractor, runtimeFactory)
 
 	return NewEngine(
 		publicExtractor,
 		map[string]Extractor{
-			"ssd":       ssdExtractor,
-			"audiences": audiencesExtractor,
-			"hhanclub":  hhclubExtractor,
-			"keepfrds":  keepfrdsExtractor,
-			"chdbits":   chdbitsExtractor,
-			"hdsky":     hdskyExtractor,
-			"pterclub":  pterclubExtractor,
-			"hddolby":   hddolbyExtractor,
-			"hdvideo":   hdvideoExtractor,
-			"ds":        dstudioExtractor,
-			"dstudio":   dstudioExtractor,
-			"colapt":    colaptExtractor,
-			"cola":      colaptExtractor,
-			"mteam":     mteamExtractor,
-			"m-team":    mteamExtractor,
+			"ssd":        ssdExtractor,
+			"audiences":  audiencesExtractor,
+			"hhanclub":   hhclubExtractor,
+			"keepfrds":   keepfrdsExtractor,
+			"chdbits":    chdbitsExtractor,
+			"hdsky":      hdskyExtractor,
+			"pterclub":   pterclubExtractor,
+			"hddolby":    hddolbyExtractor,
+			"hdvideo":    hdvideoExtractor,
+			"ds":         dstudioExtractor,
+			"dstudio":    dstudioExtractor,
+			"colapt":     colaptExtractor,
+			"cola":       colaptExtractor,
+			"mteam":      mteamExtractor,
+			"m-team":     mteamExtractor,
+			"ttg":        ttgExtractor,
+			"totheglory": ttgExtractor,
 		},
 		map[string]Extractor{
 			"不可说":          ssdExtractor,
@@ -98,6 +102,8 @@ func NewDefaultEngine(publicExtractor Extractor, runtimeFactory RuntimeFactory) 
 			"馒头":           mteamExtractor,
 			"M-Team":       mteamExtractor,
 			"MTeam":        mteamExtractor,
+			"TTG":          ttgExtractor,
+			"听听歌":          ttgExtractor,
 		},
 	)
 }

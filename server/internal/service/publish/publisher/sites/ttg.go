@@ -103,7 +103,9 @@ func resolveTTGType(category, medium, resolution string, isAnimation bool) strin
 			return "53" // 电影1080i/p
 		}
 
-	case "category.documentary":
+	// 标准类型键存在两种写法：全局映射产出 category.documentaries，
+	// 早期站点配置里写作 category.documentary，两种都要认，否则会落到默认 type。
+	case "category.documentary", "category.documentaries":
 		if isBluRay {
 			return "67" // 纪录片BluRay原盘
 		}

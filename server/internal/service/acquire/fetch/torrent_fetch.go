@@ -29,6 +29,8 @@ var (
 	reUUIDInURL    = regexp.MustCompile(`([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})`)
 	rePathUnsafe   = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
 	reTTGDetailURL = regexp.MustCompile(`(?is)/dl/(\d+)(?:/([a-zA-Z0-9]+))?`)
+	// TTG 详情页规范地址是 /t/{id}/（站内链接也写 details.php?id=N，两种都能用）。
+	reTTGPageURL = regexp.MustCompile(`(?i)/t/(\d+)`)
 	// YemaPT 详情页为 SPA hash 路由：https://www.yemapt.org/#/torrent/detail/{id}
 	reYemaPTDetailID = regexp.MustCompile(`(?i)/torrent/detail/(\d+)`)
 	// 肉丝（PeerGo）详情页 /torrents/{id}、下载直链 /api/v1/torrents/{id}/download，ID 都是纯数字。
@@ -669,6 +671,15 @@ func buildDetailURL(baseURL, siteCode, torrentID string) string {
 		}
 		return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(trimmed, "/")
 	}
+	// TTG: 详情页规范地址是 /t/{id}/，/dl/{id}/{passkey} 下载链接与裸 ID 都按详情页规则还原。
+	if isTTGSource(siteCode, baseURL, trimmed) {
+		if id := extractTTGTorrentID(trimmed); id != "" {
+			return fmt.Sprintf("%s/t/%s/", strings.TrimRight(baseURL, "/"), id)
+		}
+		if strings.HasPrefix(strings.ToLower(trimmed), "http://") || strings.HasPrefix(strings.ToLower(trimmed), "https://") {
+			return trimmed
+		}
+	}
 	// TTG: 将 /dl/{id}/{passkey} 下载 URL 转换为详情页 URL
 	if match := reTTGDetailURL.FindStringSubmatch(trimmed); len(match) >= 2 {
 		return fmt.Sprintf("%s/details.php?id=%s", strings.TrimRight(baseURL, "/"), match[1])
@@ -720,11 +731,28 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		}
 		return ""
 	}
-	// TTG: 使用 /dl/{id}/{passkey} 格式而非标准 download.php
-	if strings.Contains(strings.ToLower(siteCode), "ttg") && trimmedPasskey != "" {
-		if id := extractDownloadID(siteCode, detailURL, torrentID); id != "" {
+	// TTG: 直链是 /dl/{id}/{passkey}，不是 NexusPHP 的 download.php。
+	// 用户直接把 /dl/ 链接粘进来时原样使用（链接里已含 passkey）；
+	// 站点配置没有 passkey 时也不能拼 download.php（TTG 没有这个入口），
+	// 返回空交给详情页解析出的 /dl/{id}/{token} 链接（凭会话 Cookie 也能下）。
+	if isTTGSource(siteCode, baseURL, detailURL) {
+		for _, raw := range []string{torrentID, detailURL} {
+			trimmedRaw := strings.TrimSpace(raw)
+			if !reTTGDetailURL.MatchString(trimmedRaw) {
+				continue
+			}
+			if strings.HasPrefix(strings.ToLower(trimmedRaw), "http://") || strings.HasPrefix(strings.ToLower(trimmedRaw), "https://") {
+				return trimmedRaw
+			}
+			return strings.TrimRight(baseURL, "/") + "/" + strings.TrimLeft(trimmedRaw, "/")
+		}
+		if trimmedPasskey == "" {
+			return ""
+		}
+		if id := extractTTGTorrentID(detailURL, torrentID); id != "" {
 			return fmt.Sprintf("%s/dl/%s/%s", strings.TrimRight(baseURL, "/"), id, trimmedPasskey)
 		}
+		return ""
 	}
 	id := extractDownloadID(siteCode, detailURL, torrentID)
 	if id == "" {
@@ -734,6 +762,48 @@ func buildDirectDownloadURL(baseURL, siteCode, detailURL, torrentID, passkey str
 		return fmt.Sprintf("%s/download.php?id=%s&passkey=%s", strings.TrimRight(baseURL, "/"), id, neturl.QueryEscape(trimmedPasskey))
 	}
 	return fmt.Sprintf("%s/download.php?id=%s", strings.TrimRight(baseURL, "/"), id)
+}
+
+// isTTGSource 判断源站是否为 TTG（ToTheGlory）。
+// 参数/返回：siteCode 为站点代码，baseURL/detailURL 为站点地址；命中返回 true。
+// 失败场景：不适用。
+// 副作用：无。
+func isTTGSource(siteCode, baseURL, detailURL string) bool {
+	if strings.Contains(strings.ToLower(strings.TrimSpace(siteCode)), "ttg") {
+		return true
+	}
+	for _, raw := range []string{baseURL, detailURL} {
+		if strings.Contains(strings.ToLower(strings.TrimSpace(raw)), "totheglory.im") {
+			return true
+		}
+	}
+	return false
+}
+
+// extractTTGTorrentID 从详情页 /t/{id}/、下载链接 /dl/{id}/{passkey}、details.php?id= 或裸 ID 中取 TTG 数字种子 ID。
+// 参数/返回：依次尝试各值，识别到 ID 时返回，否则返回空串。
+// 失败场景：输入为空或无法识别 ID。
+// 副作用：无。
+func extractTTGTorrentID(values ...string) string {
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			continue
+		}
+		if match := reTTGPageURL.FindStringSubmatch(trimmed); len(match) >= 2 {
+			return strings.TrimSpace(match[1])
+		}
+		if match := reTTGDetailURL.FindStringSubmatch(trimmed); len(match) >= 2 {
+			return strings.TrimSpace(match[1])
+		}
+		if match := reIDInURL.FindStringSubmatch(trimmed); len(match) >= 2 {
+			return strings.TrimSpace(match[1])
+		}
+		if _, err := strconv.ParseInt(trimmed, 10, 64); err == nil {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 // isRousiSource 判断源站是否为肉丝（PeerGo 平台）。
@@ -1006,6 +1076,12 @@ func extractDownloadCandidatesFromDetail(html, baseURL, siteCode, detailURL stri
 
 func extractDownloadID(siteCode, detailURL, torrentID string) string {
 	trimmedSiteCode := strings.ToLower(strings.TrimSpace(siteCode))
+	// TTG 的详情页是 /t/{id}/，路径里没有 id= 参数，通用正则取不到，先走专用提取。
+	if strings.Contains(trimmedSiteCode, "ttg") {
+		if id := extractTTGTorrentID(detailURL, torrentID); id != "" {
+			return id
+		}
+	}
 	if strings.Contains(trimmedSiteCode, "haidan") {
 		if id := extractTorrentIDParam(detailURL); id != "" {
 			return id

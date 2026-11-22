@@ -118,7 +118,7 @@
     "special_tracker_domain": null,
     "group": "-WiKi,-TTG,-NGB",
     "description": "TTG",
-    "migration": 2,
+    "migration": 3,
     "speed_limit": 95
   },
   {
@@ -477,7 +477,7 @@
     "special_tracker_domain": null,
     "group": "-SakuraWEB,-WScode",
     "description": "WinterSakura",
-    "migration": 0,
+    "migration": 2,
     "speed_limit": 50
   },
   {
@@ -1443,7 +1443,7 @@
     "special_tracker_domain": null,
     "group": "-COLAWEB",
     "description": "ColaPT",
-    "migration": 0,
+    "migration": 1,
     "speed_limit": 50
   }
 ]

@@ -27,15 +27,17 @@ var (
 	reSubtitleToolID       = regexp.MustCompile(`(?i)\s*\|\s*(?:atu|dtu|pter)\s*$`)
 	reQuoteBlock           = regexp.MustCompile(`(?is)\[quote\](.*?)\[/quote\]`)
 	rePreBlock             = regexp.MustCompile(`(?is)<pre[^>]*>(.*?)</pre>`)
-	reTagsFieldRow         = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:标签|標籤|tags?|类别与标签|類別與標籤).*?</td>\s*<td[^>]*>(.*?)</td>`)
-	reTeamFieldRow         = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:制作组|製作組|团队|團隊|team).*?</td>\s*<td[^>]*>(.*?)</td>`)
-	reTeamInline           = regexp.MustCompile(`(?is)(?:制作组|製作組|团队|團隊|team)\s*[:：]\s*([^\n<]{1,80})`)
-	reCellSpan             = regexp.MustCompile(`(?is)<span[^>]*>(.*?)</span>`)
-	reCellAnchor           = regexp.MustCompile(`(?is)<a[^>]*>(.*?)</a>`)
-	reBBCodeTag            = regexp.MustCompile(`(?is)\[(?:/?(?:img|url|quote|b|i|u|color|size)[^\]]*)\]`)
-	reManyNewlines         = regexp.MustCompile(`\n{3,}`)
-	reLeadingBullets       = regexp.MustCompile(`(?m)^\s*[-*]\s+`)
-	reTitleBadgeHTML       = regexp.MustCompile(`(?is)(?:\s*<(?:b|span|font)[^>]*>.*?</(?:b|span|font)>\s*|\s*<img[^>]*>\s*)+$`)
+	// 注意：latin 分支必须用 \btags?\b，否则 TTG 这类把 release info 写进 <td>（TAGLiNE...）的页面
+	// 会被 "TAG" 子串命中，随后把下一个 <td>（如「类型」值）当成标签。
+	reTagsFieldRow   = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:标签|標籤|\btags?\b|类别与标签|類別與標籤).*?</td>\s*<td[^>]*>(.*?)</td>`)
+	reTeamFieldRow   = regexp.MustCompile(`(?is)<td[^>]*>.*?(?:制作组|製作組|团队|團隊|team).*?</td>\s*<td[^>]*>(.*?)</td>`)
+	reTeamInline     = regexp.MustCompile(`(?is)(?:制作组|製作組|团队|團隊|team)\s*[:：]\s*([^\n<]{1,80})`)
+	reCellSpan       = regexp.MustCompile(`(?is)<span[^>]*>(.*?)</span>`)
+	reCellAnchor     = regexp.MustCompile(`(?is)<a[^>]*>(.*?)</a>`)
+	reBBCodeTag      = regexp.MustCompile(`(?is)\[(?:/?(?:img|url|quote|b|i|u|color|size)[^\]]*)\]`)
+	reManyNewlines   = regexp.MustCompile(`\n{3,}`)
+	reLeadingBullets = regexp.MustCompile(`(?m)^\s*[-*]\s+`)
+	reTitleBadgeHTML = regexp.MustCompile(`(?is)(?:\s*<(?:b|span|font)[^>]*>.*?</(?:b|span|font)>\s*|\s*<img[^>]*>\s*)+$`)
 	// 标题尾部状态徽标（[免费]/[优惠]/[Free]…）：站点常见多个连续挂载，
 	// 且渲染时偶尔会丢右括号（如「... Atmos-HDS [免费][优惠」），故右括号设为可选，
 	// 由 cleanTopTitleText 循环逐个剥离。

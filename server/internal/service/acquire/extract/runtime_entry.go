@@ -152,6 +152,9 @@ func buildSiteRuntimeForExtractors(public Extractor) sites.Runtime {
 		IsSSDSufficient: func(data sites.SeedData) bool {
 			return IsSSDSufficient(fromSiteData(data))
 		},
+		ExtractBasicInfoType: func(pageHTML string, siteCode string) string {
+			return ExtractBasicInfoType(pageHTML, siteCode)
+		},
 
 		ReHHClubMediaInfo:   ReHHClubMediaInfo(),
 		ReMediaInfoCodeMain: ReMediaInfoCodeMain(),

@@ -31,13 +31,22 @@ const extractNumericQueryParam = (value: string, key: 'id' | 'torrent_id'): stri
   return matched?.[1] || null
 }
 
+// 数字型详情页路径：NexusPHP 是 details.php?id=（走 query 参数），
+// 自研/SPA 站点把 ID 放在路径里 —— 好学 hxpt 是单数 /torrent/{id}，
+// 肉丝 PeerGo 与可乐 colapt 是复数 /torrents/{id}（可乐的 .torrent comment 就是
+// https://www.colapt.com/torrents/28914），TTG 是 /t/{id}/，四种都要认。
+const NUMERIC_DETAIL_PATH_RE = /\/(?:detail|details|torrent|torrents|t)\/(\d+)(?:\/|$)/i
+// UUID 型详情页路径：肉丝老平台 /torrent/{uuid}、PeerGo 下也有 /torrents/{uuid} 形态。
+const UUID_DETAIL_PATH_RE =
+  /\/torrents?\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i
+
 const extractNumericFromDetailPath = (value: string): string | null => {
   const trimmed = normalizeText(value)
   if (!trimmed) return null
 
   try {
     const parsed = new URL(trimmed, RELATIVE_URL_BASE)
-    const matchedPath = parsed.pathname.match(/\/(?:detail|details)\/(\d+)(?:\/|$)/i)
+    const matchedPath = parsed.pathname.match(NUMERIC_DETAIL_PATH_RE)
     if (matchedPath?.[1]) {
       return matchedPath[1]
     }
@@ -45,7 +54,7 @@ const extractNumericFromDetailPath = (value: string): string | null => {
     // Ignore URL parse errors and fall back to regex-based extraction.
   }
 
-  const matched = trimmed.match(/\/(?:detail|details)\/(\d+)(?:\/|$)/i)
+  const matched = trimmed.match(NUMERIC_DETAIL_PATH_RE)
   return matched?.[1] || null
 }
 
@@ -59,9 +68,7 @@ const extractUuidFromPath = (value: string): string | null => {
 
   try {
     const parsed = new URL(trimmed, RELATIVE_URL_BASE)
-    const matchedPath = parsed.pathname.match(
-      /\/torrent\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i,
-    )
+    const matchedPath = parsed.pathname.match(UUID_DETAIL_PATH_RE)
     if (matchedPath?.[1]) {
       return matchedPath[1]
     }
@@ -69,9 +76,7 @@ const extractUuidFromPath = (value: string): string | null => {
     // Ignore URL parse errors and fall back to regex-based extraction.
   }
 
-  const matched = trimmed.match(
-    /\/torrent\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i,
-  )
+  const matched = trimmed.match(UUID_DETAIL_PATH_RE)
   return matched?.[1] || null
 }
 
