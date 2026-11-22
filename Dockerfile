@@ -176,9 +176,9 @@ RUN set -eux; \
     FF_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FF_TARBALL}"; \
     mkdir -p /opt/ffmpeg-static; \
     cd /opt/ffmpeg-static; \
-    if ! curl -fsSL --retry 3 -o "${FF_TARBALL}" "${FF_URL}"; then \
+    if ! curl -fsSL --connect-timeout 8 --max-time 300 --retry 1 -o "${FF_TARBALL}" "${FF_URL}"; then \
       echo "GitHub 直连失败，尝试 gh-proxy.com 镜像"; \
-      curl -fsSL --retry 3 -o "${FF_TARBALL}" "https://gh-proxy.com/${FF_URL}"; \
+      curl -fsSL --connect-timeout 10 --max-time 900 --retry 3 -o "${FF_TARBALL}" "https://gh-proxy.com/${FF_URL}"; \
     fi; \
     tar -xJf "${FF_TARBALL}"; \
     ln -sf "/opt/ffmpeg-static/${FF_DIR}/bin/ffmpeg" /usr/local/bin/ffmpeg; \
