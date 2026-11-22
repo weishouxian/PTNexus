@@ -224,3 +224,80 @@ func TestCheckHxptCookieEmpty(t *testing.T) {
 		t.Errorf("err = %q, want contains Cookie 为空", err)
 	}
 }
+
+// colaptTestServer 模拟可乐站的 GET /api/v1/me。
+// wantCookie 非空时校验请求头带上了该片段（用于确认 Cookie 原样透传）。
+func colaptTestServer(t *testing.T, status int, body string, wantCookie string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/me" {
+			t.Errorf("path = %q, want /api/v1/me", r.URL.Path)
+		}
+		if got := r.Header.Get("Cookie"); wantCookie != "" && !strings.Contains(got, wantCookie) {
+			t.Errorf("Cookie 头 = %q, want 含 %q", got, wantCookie)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body))
+	}))
+}
+
+// TestCheckColaptCookieValid 覆盖可乐站正常会话：200 + id/username。
+func TestCheckColaptCookieValid(t *testing.T) {
+	server := colaptTestServer(t, http.StatusOK,
+		`{"id":101,"username":"fenglaile","status":"active","session":{"csrf_token":"t"}}`, "reelcore_session=")
+	defer server.Close()
+
+	valid, reason, user, err := CheckCookie(server.URL, "colapt", "reelcore_session=abc; reelcore_session_marker=1", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !valid {
+		t.Fatalf("valid = false, want true (reason=%q)", reason)
+	}
+	if user.UserID != "101" || user.Username != "fenglaile" {
+		t.Errorf("user = %+v, want id=101 name=fenglaile", user)
+	}
+}
+
+// TestCheckColaptCookieUnauthorized 覆盖会话过期：401 应提示缺少/更新 reelcore_session。
+func TestCheckColaptCookieUnauthorized(t *testing.T) {
+	server := colaptTestServer(t, http.StatusUnauthorized, `{"error":{"code":"unauthenticated","message":"未认证"}}`, "")
+	defer server.Close()
+
+	valid, reason, _, err := CheckCookie(server.URL, "colapt", "reelcore_session=expired", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if valid {
+		t.Fatal("valid = true, want false")
+	}
+	if !strings.Contains(reason, "reelcore_session") {
+		t.Errorf("reason = %q, want contains reelcore_session", reason)
+	}
+}
+
+// TestCheckColaptCookieMissingSession 覆盖粘了旧 NexusPHP 字段的 Cookie：文案要点明缺 reelcore_session。
+func TestCheckColaptCookieMissingSession(t *testing.T) {
+	server := colaptTestServer(t, http.StatusUnauthorized, `{"error":{"code":"unauthenticated"}}`, "")
+	defer server.Close()
+
+	_, reason, _, err := CheckCookie(server.URL, "colapt", "c_secure_uid=1; c_secure_pass=2", "")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !strings.Contains(reason, "缺少 reelcore_session") {
+		t.Errorf("reason = %q, want contains 缺少 reelcore_session", reason)
+	}
+}
+
+// TestCheckColaptCookieEmpty 覆盖空 Cookie：直接报错，不发起请求。
+func TestCheckColaptCookieEmpty(t *testing.T) {
+	_, _, _, err := CheckCookie("www.colapt.com", "colapt", "  ", "")
+	if err == nil {
+		t.Fatal("expected err for empty cookie")
+	}
+	if !strings.Contains(err.Error(), "Cookie 为空") {
+		t.Errorf("err = %q, want contains Cookie 为空", err)
+	}
+}

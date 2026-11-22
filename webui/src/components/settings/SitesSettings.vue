@@ -424,10 +424,14 @@
         >
           <template #default="scope">
             <el-tag
-              v-if="['hddolby', 'm-team', 'hdtime', 'colapt'].includes(scope.row.site)"
+              v-if="['hddolby', 'm-team', 'hdtime'].includes(scope.row.site)"
               :type="scope.row.has_passkey ? 'success' : 'danger'"
             >
               {{ scope.row.has_passkey ? '已配置' : '未配置' }}
+            </el-tag>
+            <!-- 可乐站：读源数据只认 Cookie，API 密钥仅在发种时才需要，故缺密钥不算错误 -->
+            <el-tag v-else-if="scope.row.site === 'colapt'" :type="scope.row.has_passkey ? 'success' : 'info'">
+              {{ scope.row.has_passkey ? '已配置' : '可选' }}
             </el-tag>
             <el-tag v-else type="success"> 自动获取 </el-tag>
           </template>
@@ -1461,6 +1465,8 @@ const isSiteConfigComplete = (site: SiteConfig) => {
   const needsPasskey = ['hddolby', 'm-team', 'hdtime', 'colapt'].includes(site?.site)
   // 肉丝（PeerGo）已取消 API Key，只认会话 Cookie；M-Team 反而只认存取令牌。
   const needsCookie = site?.site !== 'm-team'
+  // 可乐站（colapt）读源数据只认会话 Cookie，API 密钥仅发种时才需要，缺密钥不判为配置不完整。
+  if (site?.site === 'colapt') return hasCookie
   return (!needsCookie || hasCookie) && (!needsPasskey || hasPasskey)
 }
 

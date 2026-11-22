@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pt-nexus/server/internal/service/colaptapi"
 	"github.com/pt-nexus/server/internal/service/mteamapi"
 )
 
@@ -66,6 +67,12 @@ func CheckCookie(baseURL, siteCode, credential, passkey string) (valid bool, rea
 	// 网页入口拿不到 NexusPHP 的登录态特征，改走 /api/v1/me 取当前用户信息。
 	if isHxptSite(siteCode, baseURL) {
 		return checkHxptCookie(baseURL, credential)
+	}
+
+	// 可乐（colapt）是 Vite 纯 SPA + 自研 JSON API：站内没有 /index.php，
+	// 会话信息只能从 /api/v1/me 拿（{id, username}），Cookie 必须是浏览器里的 reelcore_session。
+	if colaptapi.IsSite(siteCode, baseURL, "") {
+		return checkColaptCookie(baseURL, credential)
 	}
 
 	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
@@ -395,6 +402,82 @@ func hxptCookieInvalidReason(cookie string) string {
 		return "好学 Cookie 已失效或未登录：缺少 flux_token（好学新版登录态在 flux_token 里，请在浏览器登录后复制整串 Cookie，只粘 c_secure_pass 不够）"
 	}
 	return "好学 Cookie 已失效或未登录（/api/v1/me 返回未认证，flux_token 可能已过期，请重新登录后再复制 Cookie）"
+}
+
+// colaptMeResponse 是可乐站 GET /api/v1/me 的响应（只取校验需要的字段）。
+type colaptMeResponse struct {
+	ID       int64  `json:"id"`
+	Username string `json:"username"`
+	Status   string `json:"status"`
+}
+
+// checkColaptCookie 校验可乐（colapt）Cookie：调 /api/v1/me 拿当前用户信息。
+// 判据：200 且 id/username 至少一个非空即视为有效（站点是 SPA，没有 NexusPHP 的 index.php 可解析）。
+func checkColaptCookie(baseURL, cookie string) (bool, string, CookieUser, error) {
+	trimmedBase := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if trimmedBase == "" {
+		return false, "", CookieUser{}, fmt.Errorf("可乐站缺少域名（base_url），无法校验 Cookie")
+	}
+	cookie = strings.TrimSpace(cookie)
+	if cookie == "" {
+		return false, "", CookieUser{}, fmt.Errorf("可乐站 Cookie 为空，无法校验")
+	}
+
+	normalized := normalizeSiteBaseURLForCheck(trimmedBase)
+	checkURL := normalized + "/api/v1/me"
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, checkURL, nil)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("创建可乐站 Cookie 校验请求失败: %w", err)
+	}
+	req.Header.Set("User-Agent", defaultDupeUserAgent)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Cookie", cookie)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("可乐站 Cookie 校验请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, sharedBodyLimit))
+	if readErr != nil {
+		return false, "", CookieUser{}, fmt.Errorf("读取可乐站 Cookie 校验响应失败: %w", readErr)
+	}
+
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return false, colaptCookieInvalidReason(cookie), CookieUser{}, nil
+	}
+	if resp.StatusCode >= 400 {
+		if looksLikeCloudflareChallenge(string(body)) {
+			return false, CookieCheckCloudflareReason, CookieUser{}, nil
+		}
+		return false, fmt.Sprintf("可乐站 Cookie 校验响应状态异常: %d", resp.StatusCode), CookieUser{}, nil
+	}
+
+	var parsed colaptMeResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return false, "", CookieUser{}, fmt.Errorf("可乐站用户接口响应解析失败: %w", err)
+	}
+	username := strings.TrimSpace(parsed.Username)
+	if parsed.ID <= 0 && username == "" {
+		return false, colaptCookieInvalidReason(cookie), CookieUser{}, nil
+	}
+	userID := ""
+	if parsed.ID > 0 {
+		userID = strconv.FormatInt(parsed.ID, 10)
+	}
+	return true, "Cookie 有效（已通过 /api/v1/me 校验）", CookieUser{UserID: userID, Username: username}, nil
+}
+
+// colaptCookieInvalidReason 生成可乐站 Cookie 失效文案。
+// 可乐站的登录态只存在 reelcore_session 里（旧 NexusPHP 的 c_secure_* 字段对它无效）。
+func colaptCookieInvalidReason(cookie string) string {
+	if !strings.Contains(strings.ToLower(cookie), "reelcore_session") {
+		return "可乐站 Cookie 已失效或未登录：缺少 reelcore_session（请在浏览器登录后，从任意 /api/v1 请求的请求头里复制整串 Cookie）"
+	}
+	return "可乐站 Cookie 已失效或未登录（/api/v1/me 返回未认证，reelcore_session 可能已过期，请重新登录后再复制 Cookie）"
 }
 
 // checkYemaPTCookie 校验 YemaPT Cookie：调 /api/user/profile 拿当前用户信息。
