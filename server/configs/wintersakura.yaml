@@ -1,0 +1,335 @@
+site_name: "WinterSakura 冬樱"
+
+# WinterSakura (wintersakura.net) 发种映射配置
+# 抓取来源: https://wintersakura.net/upload.php （登录态实测）
+# 表单: action=takeupload.php method=post enctype=multipart/form-data，种子文件字段 file
+# 页面必填项(带 *): 种子文件、简介(descr)、类型(type)
+#
+# 关键差异:
+#   1) 两个同名 name=type 的 select，靠前端 data-mode 二选一（jQuery 显示 tr[relation=mode_<data-mode>]）:
+#        id=browsecat  data-mode=4 → 影视区 401-423
+#             配套字段 medium_sel[4] / codec_sel[4] / audiocodec_sel[4] / standard_sel[4] / team_sel[4] / tags[4][]
+#        id=specialcat data-mode=5 → 非影视区 424-428
+#             配套字段 custom_fields[5][1][]（图形标签）/ custom_fields[5][2]（课程分类）/ tags[5][]
+#      本配置只发影视区 mode_4 那一套；两者互斥，绝不能同时提交。
+#   2) 无 source_sel / processing_sel（站内没有地区字段），故不配 source —— 运行时自动跳过。
+#   3) 标签是 tags[4][] 数组（21 项），不是独立 checkbox。
+#   4) 外链: url = IMDb 链接；pt_gen = PT-Gen 外链（豆瓣链接填这里）；无 dburl。
+#   5) MediaInfo/BDInfo 有独立字段 technical_info（不并入简介），保持 Public 默认行为即可。
+#   6) 无 uplver/匿名字段 —— 站点不支持匿名发种；不配 anonymous，引擎默认兜底提交的 uplver 会被站点忽略（同 pthome/ptfans）。
+
+upload_file_field: "file"
+
+# dupe 校验（发布前查重）。仅当站点设置里开启「dupe 校验」时生效。
+# 实测 https://wintersakura.net/torrents.php：
+#  - search_area 只有 0=标题 / 1=简介 / 3=发布者 / 4=IMDB链接，**没有豆瓣范围**（同猫站）。
+#  - 搜索页只有 cat{N} / search / search_area / incldead / spstate 五类筛选，
+#    没有 medium/source/codec/standard/team 筛选参数，故 param_templates 只声明 type（cat401=1 实测形态）。
+dupe_check:
+  enabled: true
+  search_path: "torrents.php"
+  search_area_param: "search_area"
+  search_areas:
+    imdb: "4"
+    title: "0"
+  param_templates:
+    type: "cat{value}"
+
+form_fields:
+  category: "type"
+  medium: "medium_sel[4]"
+  video_codec: "codec_sel[4]"
+  audio_codec: "audiocodec_sel[4]"
+  resolution: "standard_sel[4]"
+  team: "team_sel[4]"
+  name: "name"
+  small_descr: "small_descr"
+  description: "descr"
+  imdb_url: "url"                  # IMDb 链接文本框
+  pt_gen: "pt_gen"                 # PT-Gen 外链（豆瓣链接会填这里）
+  technical_info: "technical_info" # MediaInfo/BDInfo 独立字段
+  "tags[4][]": "tags[4][]"
+
+source_parsers:
+  source_params:
+    type:
+      source_key: "类型"
+    medium:
+      source_key: "媒介"
+    video_codec:
+      source_key: "编码"
+    audio_codec:
+      source_key: "音频编码"
+    resolution:
+      source_key: "分辨率"
+    team:
+      source_key: "制作组"
+
+  standard_keys:
+    type:
+      "Movies": "category.movie"
+      "Movie": "category.movie"
+      "电影": "category.movie"
+      "TV Series": "category.tv_series"
+      "TV-Series": "category.tv_series"
+      "TVSeries": "category.tv_series"
+      "电视剧": "category.tv_series"
+      "剧集": "category.tv_series"
+      "TV Shows": "category.tv_shows"
+      "TV-Shows": "category.tv_shows"
+      "综艺": "category.tv_shows"
+      "Animation": "category.animation"
+      "Animations": "category.animation"
+      "Anime": "category.animation"
+      "动漫": "category.animation"
+      "动画": "category.animation"
+      "Documentaries": "category.documentaries"
+      "Documentary": "category.documentaries"
+      "纪录片": "category.documentaries"
+      "Sports": "category.sports"
+      "体育": "category.sports"
+      "Music Videos": "category.mv"
+      "音乐MV": "category.mv"
+      "HQ Audio": "category.music"
+      "无损音乐": "category.music"
+      "音乐": "category.music"
+      "Software": "category.software"
+      "软件": "category.software"
+      "Ebook": "category.ebook"
+      "电子书": "category.ebook"
+      "Game": "category.game"
+      "游戏": "category.game"
+      "Misc": "category.other"
+      "其他": "category.other"
+
+    medium:
+      "UHD Blu-ray": "medium.uhd_bluray"
+      "UHD Blu-ray/DIY": "medium.uhd_diy"
+      "UHD原盘": "medium.uhd_bluray"
+      "Blu-ray": "medium.bluray"
+      "Blu-ray/DIY": "medium.bluray_diy"
+      "BD原盘": "medium.bluray"
+      "Remux": "medium.remux"
+      "Encode": "medium.encode"
+      "WEB-DL": "medium.webdl"
+      "Web-DL": "medium.webdl"
+      "Webrip": "medium.webrip"
+      "WEBRip": "medium.webrip"
+      "HDTV": "medium.hdtv"
+      "DVDR": "medium.dvd"
+      "DVD": "medium.dvd"
+      "CD": "medium.cd"
+      "SACD": "medium.sacd"
+      "HD DVD": "medium.hddvd"
+      "3D Blu-ray": "medium.bluray"
+      "Other": "medium.other"
+
+    video_codec:
+      "H264/AVC": "video.h264"
+      "H.264": "video.h264"
+      "AVC": "video.h264"
+      "x264": "video.x264"
+      "H265/HEVC": "video.h265"
+      "H.265": "video.h265"
+      "HEVC": "video.h265"
+      "x265": "video.x265"
+      "AV1": "video.av1"
+      "VC-1": "video.vc1"
+      "MPEG-2": "video.mpeg2"
+      "ProRes": "video.other"
+      "Other": "video.other"
+
+    audio_codec:
+      "TrueHD Atmos": "audio.truehd_atmos"
+      "TrueHD": "audio.truehd"
+      "DTS-HDMA:X 7.1": "audio.dtsx"
+      "DTS-X": "audio.dtsx"
+      "DTS-HDMA": "audio.dts_hd_ma"
+      "DTS-HD MA": "audio.dts_hd_ma"
+      "DTS-HD HR": "audio.dts_hd_hr"
+      "DTS": "audio.dts"
+      "PCM": "audio.lpcm"
+      "LPCM": "audio.lpcm"
+      "FLAC": "audio.flac"
+      "APE": "audio.ape"
+      "AAC": "audio.aac"
+      "AC3/DD": "audio.ac3"
+      "AC3": "audio.ac3"
+      "Dolby Digital Plus Dolby Atmos": "audio.ddp_atmos"
+      "Dolby Digital Plus": "audio.ddp"
+      "MP3": "audio.mp3"
+      "OGG": "audio.ogg"
+      "Opus": "audio.opus"
+      "WAV": "audio.wav"
+      "DSD": "audio.other"
+      "Other": "audio.other"
+
+    resolution:
+      "8K/4320p": "resolution.r4320p"
+      "4320p": "resolution.r4320p"
+      "8K": "resolution.r4320p"
+      "4K/2160p": "resolution.r2160p"
+      "2160p": "resolution.r2160p"
+      "4K": "resolution.r2160p"
+      "2K/1080p": "resolution.r1080p"
+      "1080p": "resolution.r1080p"
+      "1080i": "resolution.r1080i"
+      "720p": "resolution.r720p"
+      "SD": "resolution.sd"
+
+    team:
+      "HDS": "team.hds"
+      "CHD": "team.chd"
+      "CMCT": "team.cmct"
+      "FRDS": "team.frds"
+      "PTer": "team.pter"
+      "BHD": "team.beyondhd"
+      "ttg": "team.ttg"
+      "Mteam": "team.mteam"
+      "HDC": "team.hdc"
+      "tjupt": "team.tjupt"
+      "Other": "team.other"
+
+mappings:
+  # type（影视区 browsecat / mode_4）:
+  #   401=Movies/电影 402=TV Series/剧集(分集) 414=TV Series/剧集(合集)
+  #   413=Animation series/动漫剧集(分集) 423=Animation series/动漫剧集(合集) 422=Animation flims/动漫电影
+  #   403=TV Shows/综艺(合集) 418=TV Shows/综艺(分集) 410=Documentaries/纪录片
+  #   406=Music Videos/音乐MV 408=HQ Audio/无损音乐 407=Sports/体育 409=Misc/其他
+  #   非影视区 specialcat(mode_5): 424=课程 425=数据/数据库 426=期刊/论文 427=软件/程序/代码 428=图书
+  #
+  # 剧集/综艺/动漫默认走「合集」分类（414/403/423）：本站在 sites_data.json 里
+  # allow_episode_publish=false，带「分集」标签的资源在发布前就被拦截，
+  # 能发出去的基本都是合集；若以后放开分集，需要改回 402/418/413。
+  # 标准值无法区分「动漫剧集」与「动漫电影」，统一归 423；动漫电影(422) 需人工调整。
+  type:
+    "category.movie": "401"
+    "category.tv_series": "414"
+    "category.tv_pack": "414"
+    "category.animation": "423"
+    "category.cartoon": "423"
+    "category.tv_shows": "403"
+    "category.documentaries": "410"
+    "category.sports": "407"
+    "category.mv": "406"
+    "category.music": "408"
+    "category.stage": "409"
+    "category.other": "409"
+    "category.ebook": "428"
+    "category.software": "427"
+    "category.study": "424"
+    "category.game": "409"
+    "default": "401"
+
+  # medium_sel[4] 媒介: 10=UHD Blu-ray 11=UHD Blu-ray/DIY 12=Blu-ray 13=Blu-ray/DIY 14=Remux
+  #   15=Encode 16=HDTV 17=DVDR 18=CD 21=WEB-DL 22=SACD 23=HD DVD 24=3D Blu-ray 25=Webrip
+  # 站内没有 Other 选项，兜底用最常见的 WEB-DL(21)。
+  medium:
+    "medium.uhd_bluray": "10"
+    "medium.uhd_diy": "11"
+    "medium.bluray": "12"
+    "medium.bluray_diy": "13"
+    "medium.minibd": "13"
+    "medium.remux": "14"
+    "medium.encode": "15"
+    "medium.encode_2160p": "15"
+    "medium.encode_1080p": "15"
+    "medium.encode_720p": "15"
+    "medium.hdtv": "16"
+    "medium.dvd": "17"
+    "medium.dvdr": "17"
+    "medium.cd": "18"
+    "medium.webdl": "21"
+    "medium.sacd": "22"
+    "medium.hddvd": "23"
+    "medium.webrip": "25"
+    "medium.other": "21"
+    "default": "21"
+
+  # codec_sel[4] 视频编码: 6=H264/AVC 7=x265 8=x264 9=H265/HEVC 10=VC-1 11=MPEG-2 15=ProRes 16=AV1 13=Other
+  # 本站把 x264 与 H264/AVC、x265 与 H265/HEVC 分开列出，按标准值精确落位。
+  video_codec:
+    "video.h264": "6"
+    "video.x264": "8"
+    "video.h265": "9"
+    "video.x265": "7"
+    "video.hevc": "9"
+    "video.av1": "16"
+    "video.vc1": "10"
+    "video.mpeg2": "11"
+    "video.other": "13"
+    "default": "13"
+
+  # audiocodec_sel[4] 音频编码: 8=DTS-HDMA 9=DTS-HDMA:X 7.1 10=TrueHD Atmos 11=PCM 12=TrueHD 13=DTS
+  #   14=LPCM 15=FLAC 16=APE 17=MP3 18=OGG 19=AAC 20=AC3/DD 21=Other 22=DTS-HD HR
+  #   23=WAV 24=DSD 25=Dolby Digital Plus 26=DDP Dolby Atmos 27=Opus
+  audio_codec:
+    "audio.truehd": "12"
+    "audio.truehd_atmos": "10"
+    "audio.dts_hd_ma": "8"
+    "audio.dts_hd": "8"
+    "audio.dts_hd_hr": "22"
+    "audio.dtsx": "9"
+    "audio.dts": "13"
+    "audio.ac3": "20"
+    "audio.ddp": "25"
+    "audio.ddp_atmos": "26"
+    "audio.aac": "19"
+    "audio.flac": "15"
+    "audio.ape": "16"
+    "audio.lpcm": "14"
+    "audio.mp3": "17"
+    "audio.ogg": "18"
+    "audio.opus": "27"
+    "audio.wav": "23"
+    "audio.other": "21"
+    "default": "21"
+
+  # standard_sel[4] 分辨率: 1=2K/1080p 2=1080i 3=720p 4=SD 5=4K/2160p 6=8K/4320p
+  # 站内没有 Other，兜底用最常见的 1080p(1)。
+  resolution:
+    "resolution.r1080p": "1"
+    "resolution.r1080i": "2"
+    "resolution.r720p": "3"
+    "resolution.sd": "4"
+    "resolution.r2160p": "5"
+    "resolution.r4320p": "6"
+    "resolution.other": "1"
+    "default": "1"
+
+  # team_sel[4] 制作组: 5=Other 6=CMCT 7=FRDS 8=PTer 9=BHD 13=Mteam 14=HDC 15=ttg 17=tjupt
+  #   1=HDS 2=CHD 18=Sakura WEB 16=WScode 11=WS 12=Sakura SUB 19=Sakura Academic
+  team:
+    "team.hds": "1"
+    "team.chd": "2"
+    "team.cmct": "6"
+    "team.frds": "7"
+    "team.pter": "8"
+    "team.beyondhd": "9"
+    "team.mteam": "13"
+    "team.hdc": "14"
+    "team.ttg": "15"
+    "team.tjupt": "17"
+    "team.other": "5"
+    "default": "5"
+
+  # tags[4][] 标签: 2=首发 16=独占 1=禁转 4=DIY 5=国语 12=粤语 6=中字
+  #   8=原创字幕 9=特效字幕 7=HDR10 10=HDR10+ 11=HDR+杜比视界 22=原生原盘 21=子供向
+  #   17=豆瓣电影Top250 18=IMDb Top250 19=标准收藏版
+  # 本站只有「HDR+杜比视界」这一组合标签表达 Dolby Vision，故 tag.杜比 落这里。
+  tag:
+    "tag.首发": "2"
+    "tag.禁转": "1"
+    "tag.DIY": "4"
+    "tag.国语": "5"
+    "tag.粤语": "12"
+    "tag.中字": "6"
+    "tag.简繁中字": "6"
+    "tag.特效": "9"
+    "tag.特效字幕": "9"
+    "tag.HDR10": "7"
+    "tag.HDR10+": "10"
+    "tag.杜比": "11"
+    "tag.杜比视界": "11"
+    "tag.原生": "22"
+    "default": null
