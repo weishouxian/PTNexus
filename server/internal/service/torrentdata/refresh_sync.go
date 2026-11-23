@@ -167,6 +167,8 @@ func (s *TorrentDataService) refreshFromDownloaders(targetDownloaderID string, t
 		updatedTorrents += syncStats.Updated
 		deletedTorrents += syncStats.Deleted
 		upsertedUploadStats += syncStats.UpsertedUpload
+		// 刚拉到的才是最新列表，顺手让「找路径用的短期缓存」失效，避免截图/媒体链路读到旧快照。
+		downloaderclient.InvalidateTorrentSnapshotCache()
 		logx.Infof(
 			refreshLogModule,
 			"下载器同步完成 downloader_id=%s name=%s inserted=%d updated=%d deleted=%d uploads=%d fetched=%d",

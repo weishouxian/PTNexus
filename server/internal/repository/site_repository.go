@@ -79,7 +79,7 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 		s.id, s.nickname, s.site, s.base_url, s.special_tracker_domain, s.%s, s.speed_limit,
 		s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.forbidden_transfer_sites,
 		s.dupe_check_enabled, s.dupe_size_tolerance_bytes, s.dupe_rules, s.audio_track_policy, s.tags, s.sort_order,
-		s.check_cookie_enabled,
+		s.check_cookie_enabled, s.publish_mode,
 		CASE WHEN s.cookie IS NOT NULL AND s.cookie != '' THEN 1 ELSE 0 END as has_cookie,
 		CASE WHEN s.passkey IS NOT NULL AND s.passkey != '' THEN 1 ELSE 0 END as has_passkey,
 		s.cookie, s.passkey
@@ -134,6 +134,8 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 	for _, s := range sites {
 		s["can_publish"] = toIntWithDefault(s["can_publish"], 1) != 0
 		s["check_cookie_enabled"] = toIntWithDefault(s["check_cookie_enabled"], 1) != 0
+		// 发种方式：0=正式发种 / 1=候选申请；非法值一律按正式发种处理。
+		s["publish_mode"] = normalizeSitePublishMode(s["publish_mode"])
 		s["forbidden_transfer_sites"] = siteStringListFromAny(s["forbidden_transfer_sites"])
 		s["dupe_check_enabled"] = toIntWithDefault(s["dupe_check_enabled"], 0) != 0
 		s["dupe_size_tolerance_bytes"] = toInt64WithDefault(s["dupe_size_tolerance_bytes"], DefaultDupeSizeToleranceBytes)
@@ -182,6 +184,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	if toIntWithDefault(data["check_cookie_enabled"], 1) == 0 {
 		checkCookieEnabled = 0
 	}
+	// 发种方式：0=正式发种（默认）/ 1=候选申请；只认 1，其余一律落回 0。
+	publishMode := normalizeSitePublishMode(data["publish_mode"])
 	// 站点自定义标签：统一编码成 JSON 数组入库；未配置时写 "[]"。
 	siteTags := encodeSiteStringList(data["tags"])
 
@@ -206,7 +210,8 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 			audio_track_policy = ?,
 			tags = ?,
 			sort_order = ?,
-			check_cookie_enabled = ?
+			check_cookie_enabled = ?,
+			publish_mode = ?
 		WHERE id = ?
 	`, groupColumn)
 
@@ -231,6 +236,7 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 		siteTags,
 		sortOrder,
 		checkCookieEnabled,
+		publishMode,
 		siteID,
 	)
 	if result.Error != nil {
@@ -370,7 +376,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	// 排序与「站点管理」页保持一致：sort_order=0 视为未排序，排在所有已排序站点之后。
 	// 站点选择按钮的渲染顺序取自这里，必须和批量发布的目标站顺序（SortSiteNicknamesByPublishOrder）同源，
 	// 否则用户看到的按钮顺序与真实发布顺序对不上。
-	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY CASE WHEN sort_order = 0 THEN 1 ELSE 0 END, sort_order, nickname")
+	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, publish_mode, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY CASE WHEN sort_order = 0 THEN 1 ELSE 0 END, sort_order, nickname")
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +399,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 			"is_source":                migration == 1 || migration == 3,
 			"is_target":                migration == 2 || migration == 3,
 			"can_publish":              toIntWithDefault(row["can_publish"], 1) != 0,
+			"publish_mode":             normalizeSitePublishMode(row["publish_mode"]),
 			"forbidden_transfer_sites": siteStringListFromAny(row["forbidden_transfer_sites"]),
 			"dupe_check_enabled":       toIntWithDefault(row["dupe_check_enabled"], 0) != 0,
 			"tags":                     siteStringListFromAny(row["tags"]),

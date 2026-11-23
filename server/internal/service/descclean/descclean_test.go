@@ -112,3 +112,154 @@ func TestTrimDescriptionAtMovieParamsAlias(t *testing.T) {
 		t.Errorf("TrimDescriptionAtMovieParams(%q) = %q, want %q", in, got, want)
 	}
 }
+
+// 源站只给纯文本声明时（TTG 常见「XX官组作品，感谢原制作者发布。」），统一补 [quote] 包裹；
+// 已包裹的必须原样返回，保证抓取归一与发种组装两侧重复调用安全（幂等）。
+func TestEnsureStatementQuote(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "纯文本声明补包裹",
+			in:   "Audiences官组作品，感谢原制作者发布。",
+			want: "[quote]Audiences官组作品，感谢原制作者发布。[/quote]",
+		},
+		{
+			name: "带 BBCode 但无 quote 也要包",
+			in:   "[b][color=blue]本资源禁转[/color][/b]",
+			want: "[quote][b][color=blue]本资源禁转[/color][/b][/quote]",
+		},
+		{
+			name: "已包裹原样返回",
+			in:   "[quote][b][color=blue][size=5]ADWeb官组作品，感谢原制作者发布。[/size][/color][/b][/quote]",
+			want: "[quote][b][color=blue][size=5]ADWeb官组作品，感谢原制作者发布。[/size][/color][/b][/quote]",
+		},
+		{
+			name: "多个 quote 块并列不重复包裹",
+			in:   "[quote]A[/quote]\n\n[quote]B[/quote]",
+			want: "[quote]A[/quote]\n\n[quote]B[/quote]",
+		},
+		{
+			name: "带作者的 quote 参数也算已包裹",
+			in:   "[quote=某发布组]本资源禁转[/quote]",
+			want: "[quote=某发布组]本资源禁转[/quote]",
+		},
+		{
+			name: "大小写不敏感",
+			in:   "[QUOTE]本资源禁转[/QUOTE]",
+			want: "[QUOTE]本资源禁转[/QUOTE]",
+		},
+		{
+			name: "首尾空白清除后再判定",
+			in:   "  \n [quote]A[/quote] \n ",
+			want: "[quote]A[/quote]",
+		},
+		{
+			name: "空声明保持空",
+			in:   "   ",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		if got := EnsureStatementQuote(tc.in); got != tc.want {
+			t.Fatalf("%s: want %q, got %q", tc.name, tc.want, got)
+		}
+	}
+}
+
+// release info 段「Quote:★★★★★ General Information ★★★★★」及其后的 RELEASE.NAME/VIDEO.CODEC/UPLOADER
+// 都是发布参数冗余，从标记起整段删掉；正文里没有星号装饰的普通提及不能误伤。
+func TestTrimDescriptionGeneralInformation(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "TTG 纯文本形态（真实样本）",
+			in: "◎片　　名　仙逆剧场版 弑仙之战\n◎简　　介\n王林于雷之仙界遭遇宿敌绝命追杀，在生死绝境中展开一场惊天逆袭，以弱胜强，终成弑仙壮举。\n" +
+				"Quote:★★★★★ General Information ★★★★★\nRELEASE.NAME...: 仙逆剧场版.弑仙之战.2026.2160p.TX.WEB-DL.H265.DDP2.0-ADWeb\n" +
+				"VIDEO.CODEC....: Tencent-V265-1.6.9.6. Main@L5@Main @ 7 838 kb/s\nUPLOADER.......: ADWeb",
+			want: "◎片　　名　仙逆剧场版 弑仙之战\n◎简　　介\n王林于雷之仙界遭遇宿敌绝命追杀，在生死绝境中展开一场惊天逆袭，以弱胜强，终成弑仙壮举。",
+		},
+		{
+			name: "BBCode 包裹：从开启标签起截断，不留悬空标签",
+			in:   "前面介绍\n[b]Quote:[/b][b]★★★★★ General Information ★★★★★[/b]\nRELEASE.NAME...: x",
+			want: "前面介绍",
+		},
+		{
+			name: "quote 块包裹",
+			in:   "前面介绍\n[quote][size=3][b]★★★★★ General Information ★★★★★[/b][/size][/quote]\nRELEASE.SIZE...: 5.21 GiB",
+			want: "前面介绍",
+		},
+		{
+			name: "星号紧贴文字无空格的变体",
+			in:   "介绍文字\nQuote:★★★★★General Information★★★★★\nRELEASE.TIME...: x",
+			want: "介绍文字",
+		},
+		{
+			name: "正文普通提及不截断",
+			in:   "介绍文字里提到 General Information 这个词，但没有星号装饰。\n后面还有正文。",
+			want: "介绍文字里提到 General Information 这个词，但没有星号装饰。\n后面还有正文。",
+		},
+	}
+	for _, tc := range cases {
+		if got := TrimDescription(tc.in); got != tc.want {
+			t.Fatalf("%s: want %q, got %q", tc.name, tc.want, got)
+		}
+	}
+}
+
+// 正文里只要出现「Quote:」，该标记及其后全部内容都要删掉（后面通常是 RELEASE.NAME 等发布参数）。
+// 口径要点：只认带冒号的 quote:，BBCode 引用块 [quote] 与英文单词 Quoted 都不能误伤。
+func TestTrimDescriptionQuoteSection(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "TTG 纯文本 Quote: 起头（真实形态）",
+			in: "◎片　　名　仙逆剧场版 弑仙之战\n◎简　　介\n王林于雷之仙界遭遇宿敌绝命追杀，终成弑仙壮举。\n" +
+				"Quote: 以下为发布组参数，与影片无关\nRELEASE.NAME...: x\nVIDEO.CODEC....: y\nUPLOADER.......: ADWeb",
+			want: "◎片　　名　仙逆剧场版 弑仙之战\n◎简　　介\n王林于雷之仙界遭遇宿敌绝命追杀，终成弑仙壮举。",
+		},
+		{
+			name: "BBCode 包裹：从行首开启标签起截断，不留悬空标签",
+			in:   "前面介绍\n[b]Quote:[/b]\nRELEASE.NAME...: x",
+			want: "前面介绍",
+		},
+		{
+			name: "全角冒号与空格变体",
+			in:   "前面介绍\nQuote ：后面的内容\nRELEASE.SIZE...: 5.21 GiB",
+			want: "前面介绍",
+		},
+		{
+			name: "小写 quote: 同样截断",
+			in:   "前面介绍\nquote: xxx",
+			want: "前面介绍",
+		},
+		{
+			name: "BBCode 引用块 [quote] 不是标记",
+			in:   "前面介绍\n[quote]这是引用的一段影评，没有冒号[/quote]\n后面还有正文。",
+			want: "前面介绍\n[quote]这是引用的一段影评，没有冒号[/quote]\n后面还有正文。",
+		},
+		{
+			name: "带作者的引用块 [quote=某人] 不是标记",
+			in:   "前面介绍\n[quote=某组]说明文字[/quote]\n后面还有正文。",
+			want: "前面介绍\n[quote=某组]说明文字[/quote]\n后面还有正文。",
+		},
+		{
+			name: "英文单词 Quoted 不截断",
+			in:   "前面介绍\nQuoted from somewhere: 这不是标记\n后面还有正文。",
+			want: "前面介绍\nQuoted from somewhere: 这不是标记\n后面还有正文。",
+		},
+	}
+	for _, tc := range cases {
+		if got := TrimDescription(tc.in); got != tc.want {
+			t.Fatalf("%s:/n want %q\n got  %q", tc.name, tc.want, got)
+		}
+	}
+}

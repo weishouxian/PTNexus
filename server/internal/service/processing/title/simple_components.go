@@ -71,6 +71,14 @@ func BuildSimpleTitleComponentsWithMediaInfo(title string, releaseGroup string, 
 	if trimmed == "" {
 		return []map[string]any{}
 	}
+	// 解析前统一标题写法：点分隔转空格（保留 H.264/5.1 这类编码与声道点），
+	// 并在「中文片名 + 英文片名」并存时丢弃中文前缀。
+	// 2026-11-22：`都市古仙医.The.Immortal.Doctor.S01E231.2024.2160p.WEB-DL.H265.AAC-ADWeb`
+	// 这类标题原来会把 `DL.H265.AAC-ADWeb` 整段当成制作组，媒介/视频编码/音频编码全部为空。
+	trimmed = normalizeTitleForParsing(trimmed)
+	if trimmed == "" {
+		return []map[string]any{}
+	}
 	sanitizedMediaInfo := parser.SanitizeMediaTextForAnalysis(mediaInfo)
 
 	// 与 Python 的 upload_data_title 行为对齐：优先按 title 中的 "-" / "@" 做制作组切分，
@@ -168,6 +176,142 @@ func BuildSimpleTitleComponentsWithMediaInfo(title string, releaseGroup string, 
 	}
 
 	return buildOrderedTitleComponents(values)
+}
+
+var reLeadingEpisodeToken = regexp.MustCompile(`(?i)^E\d{1,3}$`)
+
+// normalizeTitleForParsing 在标题解析前统一写法，减少点分隔与中英混排带来的误判。
+// 参数/返回：title 为原始标题；返回规整后的标题（点分隔转空格、中文片名前缀被剥离）。
+// 失败场景：标题为空时返回空串。
+// 副作用：无。
+func normalizeTitleForParsing(title string) string {
+	// 点转空格，但保留 `H.264` 这类编码点与 `5.1` 这类声道点，
+	// 避免 `H.265` 变成 `H 265`、`DDP5.1` 变成 `DDP5 1`（虽然现有纠偏能救回，但没必要多绕一层）。
+	normalized := normalizeDotsForParsing(title)
+	if normalized == "" {
+		return ""
+	}
+	return stripLeadingCJKTitle(normalized)
+}
+
+// normalizeDotsForParsing 把标题里的点分隔转成空格，仅保留编码点（H.264）与声道点（5.1 / 7.1.4）。
+// 参数/返回：title 为原始标题；返回点归一后的标题。
+// 失败场景：标题为空时返回空串。
+// 副作用：无。
+// 说明：不同于展示用的 normalizeTitleForDisplayLocal，这里不保留 `2020.1080p` 这种多位数字之间的点，
+// 因为解析阶段按分隔符处理更贴近空格分隔标题的行为。
+func normalizeDotsForParsing(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	for idx, r := range runes {
+		if r != '.' {
+			continue
+		}
+		if isVideoCodecDot(runes, idx) || isChannelNumberDot(runes, idx) {
+			continue
+		}
+		runes[idx] = ' '
+	}
+	return strings.Join(strings.Fields(string(runes)), " ")
+}
+
+// isChannelNumberDot 判断点是否属于声道号（5.1 / 2.0 / 7.1.4），即点两侧都是 1~2 位数字。
+func isChannelNumberDot(runes []rune, dotIndex int) bool {
+	leftStart := dotIndex
+	for leftStart > 0 && unicode.IsDigit(runes[leftStart-1]) {
+		leftStart--
+	}
+	rightEnd := dotIndex + 1
+	for rightEnd < len(runes) && unicode.IsDigit(runes[rightEnd]) {
+		rightEnd++
+	}
+	leftLen := dotIndex - leftStart
+	rightLen := rightEnd - dotIndex - 1
+	return leftLen >= 1 && leftLen <= 2 && rightLen >= 1 && rightLen <= 2
+}
+
+// stripLeadingCJKTitle 去掉「中文片名 + 英文片名」里的中文前缀，只保留英文片名段。
+// 参数/返回：title 为已做点归一后的标题；返回可能被剥掉中文前缀的标题。
+// 失败场景：无可剥离的英文片名时原样返回。
+// 副作用：无。
+// 说明：
+//   - 按「词」而不是「字符」定位英文片名起点（`三体 2023 2160p` 里的 `p` 是数字尾巴，不能当片名开头）；
+//   - 仅当前缀含中日韩字符、且首个拉丁字母词不是技术标签时才剥离；
+//   - 技术标签包括季集/年份/分辨率/编码/音频/媒介/HDR/平台/剧集状态等，
+//     避免「三体.S01.2023.2160p...」这类纯中文剧名被清空。
+func stripLeadingCJKTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return ""
+	}
+	words := strings.Fields(trimmed)
+	if len(words) < 2 {
+		return trimmed
+	}
+	latinStart := -1
+	for idx, word := range words {
+		if word == "" {
+			continue
+		}
+		r := []rune(word)[0]
+		if r < utf8.RuneSelf && unicode.IsLetter(r) {
+			latinStart = idx
+			break
+		}
+	}
+	if latinStart <= 0 {
+		return trimmed
+	}
+	prefix := strings.Join(words[:latinStart], " ")
+	if !containsCJK(prefix) {
+		return trimmed
+	}
+	if isTechnicalLeadingWord(words[latinStart]) {
+		return trimmed
+	}
+	return strings.Join(words[latinStart:], " ")
+}
+
+// containsCJK 判断字符串是否包含中日韩字符。
+func containsCJK(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) || unicode.Is(unicode.Hiragana, r) ||
+			unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r) {
+			return true
+		}
+	}
+	return false
+}
+
+// isTechnicalLeadingWord 判断单词是否属于技术标签（季集/年份/分辨率/编码/音频/媒介/HDR/平台/状态）。
+// 参数/返回：word 为标题中的一个词；属于技术标签返回 true。
+// 失败场景：空字符串视为技术标签（不应作为片名开头）。
+// 副作用：无。
+func isTechnicalLeadingWord(word string) bool {
+	trimmed := strings.TrimSpace(word)
+	if trimmed == "" {
+		return true
+	}
+	if reSeasonEpisode.MatchString(trimmed) || reLeadingEpisodeToken.MatchString(trimmed) {
+		return true
+	}
+	if reYearToken.MatchString(" " + trimmed + " ") {
+		return true
+	}
+	if extractResolutionFromTitle(trimmed) != "" ||
+		extractVideoCodecFromTitle(trimmed) != "" ||
+		extractAudioFromTitle(trimmed) != "" ||
+		extractMediumPythonish(trimmed) != "" ||
+		extractHDRFormatFromTitle(trimmed) != "" ||
+		extractSourcePlatformFromTitle(trimmed, "") != "" ||
+		extractCompletionStatusFromTitle(trimmed) != "" ||
+		extractReleaseVersionFromTitle(trimmed) != "" {
+		return true
+	}
+	return false
 }
 
 func splitTitleAndTeamPythonish(title string, releaseGroup string) (string, string) {

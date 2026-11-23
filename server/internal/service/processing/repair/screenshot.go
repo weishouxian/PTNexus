@@ -560,11 +560,15 @@ func enrichScreenshotSourceFromDownloader(rootConfig map[string]any, payload map
 		logx.Warnf(screenshotValidateLogModule, "截图路径回填跳过：读取下载器失败 downloader_id=%s err=%v", downloaderID, err)
 		return savePath, torrentName, false
 	}
-	snapshots, err := downloader.FetchTorrents()
+	logx.Infof(screenshotValidateLogModule, "截图路径回填开始 downloader_id=%s hash=%s save_path=%s torrent_name=%s", downloaderID, seedHash, savePath, torrentName)
+	// 这里只为把一个种子对应的 save_path/content_path 找回来，不需要每次全量同步：
+	// 走短期缓存（默认 10 分钟内复用），代理模式下 1125 条种子一次要 110s+，一个种子会问两三次。
+	snapshots, err := downloader.FetchTorrentsCached()
 	if err != nil {
 		logx.Warnf(screenshotValidateLogModule, "截图路径回填跳过：拉取下载器任务失败 downloader_id=%s err=%v", downloaderID, err)
 		return savePath, torrentName, false
 	}
+	logx.Infof(screenshotValidateLogModule, "截图路径回填候选就绪 downloader_id=%s snapshots=%d", downloaderID, len(snapshots))
 	for _, snapshot := range snapshots {
 		bestPath := strings.TrimSpace(snapshot.ContentPath)
 		preferExactPath := bestPath != ""

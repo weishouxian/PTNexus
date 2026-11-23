@@ -257,6 +257,8 @@ func (s *TorrentDataService) deleteDownloaderTorrents(rows []repository.TorrentR
 			continue
 		}
 		deletedCount += int64(len(targets))
+		// 下载器任务已变，清掉找路径用的短期缓存，避免截图/媒体链路命中已删除的种子。
+		downloaderclient.InvalidateTorrentSnapshotCache()
 		logx.Infof(torrentDataLogModule, "下载器任务删除请求已完成 downloader_id=%s hashes=%d", downloaderID, len(targets))
 	}
 

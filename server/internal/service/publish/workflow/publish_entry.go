@@ -72,6 +72,9 @@ type PublishTorrentDetailsUpdateInput struct {
 func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map[string]any, int) {
 	targetSite := strings.TrimSpace(input.TargetSite)
 	targetInfo := input.TargetInfo
+	// 发种方式（站点设置页 sites.publish_mode）：候选模式只提交候选申请、不提交种子文件。
+	// 提前取值，供后面的发布前门禁与链接归一化共用（同一份目标站配置，避免两处判断口径不一致）。
+	isOfferPublish := publishpublisher.IsOfferPublishMode(targetInfo)
 	uploadData := input.UploadData
 	payload := input.Payload
 	if uploadData == nil {
@@ -106,7 +109,8 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 			}
 		}
 	}
-	if officialSite != "" && deps.IsTransferForbiddenByOfficialSite != nil {
+	// 禁转限制约束的是「把种子转到该站」，候选申请不提交种子文件，因此对候选模式不适用。
+	if officialSite != "" && !isOfferPublish && deps.IsTransferForbiddenByOfficialSite != nil {
 		forbidden, matchedTarget, checkErr := deps.IsTransferForbiddenByOfficialSite(officialSite, targetNickname)
 		if checkErr != nil {
 			logx.Warnf("发布-禁转站点", "检查禁转站点失败 official_site=%s target=%s err=%v", officialSite, targetNickname, checkErr)
@@ -142,7 +146,9 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 	skipDupeCheck := payloadBoolFlag(input.Payload, "skip_dupe_check") ||
 		payloadBoolFlag(uploadData, "skip_dupe_check")
 
-	if restricted := publishuploader.DetectRestrictedTags(uploadData); len(restricted) > 0 {
+	// 禁转/限转/分集标签同样只约束正式发种：候选只是「申请上传」，由站点管理员裁决，不做前置拦截。
+	if restricted := publishuploader.DetectRestrictedTags(uploadData); len(restricted) > 0 && !isOfferPublish {
+		logx.Infof("发布-候选模式", "候选申请忽略受限标签检查 target=%s tags=%v", targetNickname, restricted)
 		// 分集单独裁决：目标站点 YAML 写了 allow_episode_publish 才允许发布，默认拦截。
 		episodeTags := make([]string, 0, 1)
 		otherTags := make([]string, 0, len(restricted))
@@ -274,9 +280,16 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		}, 500
 	}
 	normalizedBaseURL := acquirefetch.NormalizeSiteBaseURL(toStringAny(targetInfo["base_url"], ""))
-	publishURL = publishuploader.NormalizePublishURLWithOfferSupport(normalizedBaseURL, publishURL)
+	// 候选（offer）模式的发布结果是「候选链接」，不是种子详情页：
+	// 候选 id 与种子 id 不共享序列，既不能把 offers.php?id=N 改写成 details.php?id=N，
+	// 也不能拿它拼 download/dl 直链，否则会指向别人的种子。
+	if isOfferPublish {
+		publishURL = publishuploader.NormalizePublishURL(normalizedBaseURL, publishURL)
+	} else {
+		publishURL = publishuploader.NormalizePublishURLWithOfferSupport(normalizedBaseURL, publishURL)
+	}
 	directDownloadURL = strings.TrimSpace(directDownloadURL)
-	if directDownloadURL == "" {
+	if directDownloadURL == "" && !isOfferPublish {
 		directDownloadURL = publishuploader.BuildDirectDownloadURLForPublished(
 			toStringAny(targetInfo["base_url"], ""),
 			toStringAny(targetInfo["passkey"], ""),
@@ -289,7 +302,11 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		trimmedLogs = fmt.Sprintf("发布到 %s 成功", targetNickname)
 	}
 	if publishURL != "" && !strings.Contains(trimmedLogs, publishURL) {
-		trimmedLogs += "\n" + fmt.Sprintf("详情页链接: %s", publishURL)
+		linkLabel := "详情页链接"
+		if isOfferPublish {
+			linkLabel = "候选链接（等待站点审核）"
+		}
+		trimmedLogs += "\n" + fmt.Sprintf("%s: %s", linkLabel, publishURL)
 	}
 	if directDownloadURL != "" && !strings.Contains(trimmedLogs, directDownloadURL) {
 		trimmedLogs += "\n" + fmt.Sprintf("直链下载: %s", directDownloadURL)
@@ -410,7 +427,17 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 	// 注意：不要默认把源站 hash 塞进来——否则下面的 torrents.details 回写会按源站 hash
 	// 命中源站那一行，把它的详情链接覆盖成目标站地址（即“源站种子地址变了”的根因）。
 	publishedHashCandidates := []string{}
-	if autoAdd {
+	if isOfferPublish {
+		// 候选申请不产生种子文件，没有可加进下载器的东西，直接跳过这一次自动添加。
+		// success 必须为 true：否则前端会把「发布成功但添加失败」当失败提示出来，
+		// 而实际候选已提交成功（站点返回 302），用户看到的只会是误导性的红字。
+		autoAddResult = map[string]any{
+			"success":    true,
+			"skipped":    true,
+			"offer_mode": true,
+			"message":    "候选申请已提交（等待站点审核），候选不产生种子文件，已跳过自动添加下载器",
+		}
+	} else if autoAdd {
 		if isExistingTorrent && !autoAddExistingToDownloader {
 			autoAddResult = map[string]any{"success": false, "message": "检测到目标站点种子已存在，按设置跳过自动添加"}
 		} else if resolvedDownloaderID == "" && !useDefaultDownloader {
@@ -475,6 +502,9 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 		"auto_edit_executed":  autoEditExecuted,
 		"auto_edit_result":    autoEditResult,
 		"is_existing_torrent": isExistingTorrent,
+		// offer_mode=true 表示本次是「候选申请」而不是正式发种，前端据此换文案与状态，
+		// 不再把它当作「发布成功但加下载器失败」。
+		"offer_mode": isOfferPublish,
 	}, 200
 }
 

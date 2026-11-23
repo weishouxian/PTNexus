@@ -104,12 +104,20 @@ func TestExtractTTG(t *testing.T) {
 		t.Fatalf("提取失败: %v", err)
 	}
 
-	wantTitle := "The Shadow Boxing 1979 1080p BluRay x265 10bit LPCM-WiKi [茅山僵尸拳 / 茅山殭屍拳]  *国粤双语 内封简繁中字"
+	wantTitle := "The Shadow Boxing 1979 1080p BluRay x265 10bit LPCM-WiKi *国粤双语 内封简繁中字"
 	if data.Title != wantTitle {
 		t.Fatalf("标题提取异常：want %q, got %q", wantTitle, data.Title)
 	}
+	// 标题里剥掉的方括号中文别名要落到副标题，供豆瓣/PTGen 检索与前端展示。
+	if wantSub := "茅山僵尸拳 / 茅山殭屍拳"; data.Subtitle != wantSub {
+		t.Fatalf("副标题提取异常：want %q, got %q", wantSub, data.Subtitle)
+	}
 	if !strings.Contains(data.Intro.Statement, "DIY原盘") {
 		t.Fatalf("声明提取异常: %q", data.Intro.Statement)
+	}
+	// TTG 的简述声明是纯文本，归一化后必须补上目标站需要的 [quote] 包裹。
+	if !strings.HasPrefix(data.Intro.Statement, "[quote]") || !strings.HasSuffix(data.Intro.Statement, "[/quote]") {
+		t.Fatalf("声明未补 quote 包裹: %q", data.Intro.Statement)
 	}
 	if strings.Contains(data.Intro.Statement, "Plot") {
 		t.Fatalf("声明误吞了剧情块: %q", data.Intro.Statement)
@@ -174,5 +182,68 @@ Format : AVC<br />
 	}
 	if !strings.Contains(data.MediaInfo, "Unique ID") {
 		t.Fatalf("MediaInfo 提取异常: %q", data.MediaInfo)
+	}
+}
+
+// TTG 的 h1 会把「[中文片名 / 港译名 | 类型: ...]」塞在发布名后面，需要剥掉；
+// 纯英文方括号（版本信息）保留，避免误删；剥下来的中文别名要作为副标题保留。
+func TestSplitTTGTitleBracketAlias(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		want     string
+		wantSub  string
+	}{
+		{
+			name:    "末尾中文别名+类型",
+			input:   "Toy Story 5 2026 1080p MA WEB-DL DDP 5.1 Atmos H.264-BYNDR [玩具总动员5 / 反斗奇兵5(港) | 类型: 剧情 / 喜剧 / 动画 / 奇幻 / 冒险]",
+			want:    "Toy Story 5 2026 1080p MA WEB-DL DDP 5.1 Atmos H.264-BYNDR",
+			wantSub: "玩具总动员5 / 反斗奇兵5(港)",
+		},
+		{
+			name:    "中间中文别名+星号后缀保留",
+			input:   "The Shadow Boxing 1979 1080p BluRay x265 10bit LPCM-WiKi [茅山僵尸拳 / 茅山殭屍拳]  *国粤双语 内封简繁中字",
+			want:    "The Shadow Boxing 1979 1080p BluRay x265 10bit LPCM-WiKi *国粤双语 内封简繁中字",
+			wantSub: "茅山僵尸拳 / 茅山殭屍拳",
+		},
+		{
+			name:    "纯中文后缀块去掉且属性标签不进副标题",
+			input:   "Some Movie 2024 1080p BluRay x264-GRP [国语中字]",
+			want:    "Some Movie 2024 1080p BluRay x264-GRP",
+			wantSub: "",
+		},
+		{
+			name:    "单片名别名",
+			input:   "Some Movie 2024 1080p BluRay x264-GRP [某部电影]",
+			want:    "Some Movie 2024 1080p BluRay x264-GRP",
+			wantSub: "某部电影",
+		},
+		{
+			name:    "纯英文方括号保留",
+			input:   "Some Movie 2024 1080p BluRay x264-GRP [Extended Cut]",
+			want:    "Some Movie 2024 1080p BluRay x264-GRP [Extended Cut]",
+			wantSub: "",
+		},
+		{
+			name:    "无方括号原样返回",
+			input:   "Some Movie 2024 1080p BluRay x264-GRP",
+			want:    "Some Movie 2024 1080p BluRay x264-GRP",
+			wantSub: "",
+		},
+		{
+			name:    "空标题",
+			input:   "   ",
+			want:    "",
+			wantSub: "",
+		},
+	}
+	for _, tc := range cases {
+		got, sub := splitTTGTitleBracketAlias(tc.input)
+		if got != tc.want || sub != tc.wantSub {
+			t.Fatalf("%s: want (%q, %q), got (%q, %q)", tc.name, tc.want, tc.wantSub, got, sub)
+		}
+		if stripTTGTitleBracketAlias(tc.input) != tc.want {
+			t.Fatalf("%s: stripTTGTitleBracketAlias 与 split 主标题不一致", tc.name)
+		}
 	}
 }

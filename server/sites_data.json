@@ -684,7 +684,7 @@
   },
   {
     "site": "ilolicon",
-    "allow_episode_publish": false,
+    "allow_episode_publish": true,
     "nickname": "爱萝莉",
     "base_url": "mua.xloli.cc",
     "special_tracker_domain": null,

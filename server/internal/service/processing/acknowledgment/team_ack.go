@@ -57,11 +57,13 @@ var ackRuntimeCache sync.Map
 var reverseTeamCache sync.Map
 
 // ApplyTeamAcknowledgmentIfNeeded 根据 team_acknowledgment 配置尝试补充官组致谢声明。
-// 参数/返回：statement 为现有声明 BBCode；teamKey 为标准化 team.*；sites 为 sites 表的 group/description 列表；
-// 返回新声明、是否插入、原因字符串（便于日志与前端回显）。
+// 参数/返回：statement 为现有声明 BBCode；teamKey 为标准化 team.*；rawReleaseGroup 为标题/页面解析出的原始制作组名；
+// sites 为 sites 表的 group/description 列表；返回新声明、是否插入、原因字符串（便于日志与前端回显）。
 // 失败场景：配置缺失、team 被排除、无法找到显示名、或已存在声明时不会插入。
+// 说明：制作组没进映射表（归一出 team.other）时不再放弃，直接用 rawReleaseGroup 兜底，
+// 保证「未匹配到官组」的种子也能带上「XX作品，感谢原制作者发布。」声明。
 // 副作用：读取 `configs/global_mappings.yaml` 并缓存解析结果。
-func ApplyTeamAcknowledgmentIfNeeded(statement string, teamKey string, sites []SiteRow) (string, bool, string) {
+func ApplyTeamAcknowledgmentIfNeeded(statement string, teamKey string, rawReleaseGroup string, sites []SiteRow) (string, bool, string) {
 	rt, ok := loadTeamAckRuntime()
 	if !ok || !rt.Cfg.Enabled {
 		return statement, false, "未启用"
@@ -69,10 +71,14 @@ func ApplyTeamAcknowledgmentIfNeeded(statement string, teamKey string, sites []S
 	cfg := rt.Cfg
 
 	standard := strings.TrimSpace(teamKey)
-	if standard == "" {
-		return statement, false, "制作组为空"
-	}
-	if isExcludedTeam(standard, cfg.ExcludeTeams) {
+	rawGroup := cleanReleaseGroupName(rawReleaseGroup)
+	// team.other 只是「没匹配上」的占位，不算真实排除对象；此时改用原始制作组名兜底。
+	usingRawFallback := standard == "" || strings.EqualFold(standard, "team.other")
+	if usingRawFallback {
+		if rawGroup == "" {
+			return statement, false, "制作组为空"
+		}
+	} else if isExcludedTeam(standard, cfg.ExcludeTeams) {
 		return statement, false, "命中排除列表"
 	}
 
@@ -83,14 +89,20 @@ func ApplyTeamAcknowledgmentIfNeeded(statement string, teamKey string, sites []S
 		return statement, false, "声明已包含官组信息"
 	}
 
-	teamName := pickTeamDisplayName(standard, sites)
+	teamName := ""
+	if !usingRawFallback {
+		teamName = pickTeamDisplayName(standard, sites)
+	}
+	if strings.TrimSpace(teamName) == "" {
+		teamName = rawGroup
+	}
 	if strings.TrimSpace(teamName) == "" {
 		return statement, false, "未找到制作组显示名"
 	}
 
 	template := strings.TrimSpace(cfg.Template)
 	if template == "" {
-		template = "[quote][b][color=blue][size=5]{team_name}官组作品，感谢原制作者发布。[/size][/color][/b][/quote]"
+		template = "[quote][b][color=blue][size=5]{team_name}作品，感谢原制作者发布。[/size][/color][/b][/quote]"
 	}
 	ack := strings.ReplaceAll(template, "{team_name}", teamName)
 	ack = strings.TrimSpace(ack)
@@ -116,6 +128,36 @@ func isExcludedTeam(team string, excludes []string) bool {
 		}
 	}
 	return false
+}
+
+// 明确的占位/无效制作组名，不能写进「XX作品，感谢原制作者发布。」这类声明。
+var invalidReleaseGroupNames = map[string]struct{}{
+	"NOGROUP": {},
+	"OTHER":   {},
+	"UNKNOWN": {},
+	"N/A":     {},
+	"NONE":    {},
+}
+
+// cleanReleaseGroupName 把原始制作组文本规整成可展示的名字：
+// 去掉方括号、前导 -/@ 与误带的 team. 前缀；明显是占位符或标题误解析的垃圾值返回空串，
+// 避免生成「NOGROUP作品，感谢原制作者发布。」这类声明。
+func cleanReleaseGroupName(raw string) string {
+	cleaned := cleanGroupToken(strings.TrimSpace(raw))
+	if cleaned == "" {
+		return ""
+	}
+	if _, blocked := invalidReleaseGroupNames[strings.ToUpper(cleaned)]; blocked {
+		return ""
+	}
+	// 制作组名不含空白；含空白基本是把标题片段误当制作组（如 `DDP 5.1`），不采用。
+	if strings.ContainsAny(cleaned, " \t\r\n") {
+		return ""
+	}
+	if utf8.RuneCountInString(cleaned) > 40 {
+		return ""
+	}
+	return cleaned
 }
 
 func loadTeamAckRuntime() (teamAckRuntime, bool) {

@@ -37,6 +37,11 @@ var reHTMLAttr = regexp.MustCompile(`(?is)\s([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*(
 var reUploadNoticeHeading = regexp.MustCompile(`(?is)<h[1-4][^>]*>(.*?)</h[1-4]>`)
 var reUploadNoticeParagraph = regexp.MustCompile(`(?is)<p[^>]*>(.*?)</p>`)
 
+// reUploadNoticeTextCell 匹配 NexusPHP 变体（如 CHDBits）的提示原因单元格：
+// <h2>错误！</h2><table><tr><td class="text">你必须输入标题！</td></tr></table>。
+// 这类站不用 <p> 包原因，只看 <p> 会拿到空正文，进而把「站点明确拒绝」当成提交成功。
+var reUploadNoticeTextCell = regexp.MustCompile(`(?is)<td[^>]*class\s*=\s*["']?[^"'>]*\btext\b[^"'>]*["']?[^>]*>(.*?)</td>`)
+
 // reUploadNoticeStdMsgOpen 匹配 NexusPHP 标准提示块的起始标签（如 <td class="text" id='stdmsg'>）。
 // 站点在 h1/p 之外的拒绝场景（如资质不足、无发布权限）统一把提示正文写进 id='stdmsg' 的单元格。
 var reUploadNoticeStdMsgOpen = regexp.MustCompile(`(?is)<\s*(td|th|p|div|span|font|dd|li)\b[^>]*\bid\s*=\s*['"]?stdmsg['"]?[^>]*>`)
@@ -538,8 +543,19 @@ func extractUploadHeadingNotice(trimmed string) string {
 	}
 
 	body := ""
-	if match := reUploadNoticeParagraph.FindStringSubmatch(trimmed[headingEnd:]); len(match) >= 2 {
+	window := trimmed[headingEnd:]
+	if match := reUploadNoticeParagraph.FindStringSubmatch(window); len(match) >= 2 {
 		body = cleanUploadNoticeText(match[1])
+	}
+	if body == "" {
+		// 提示原因写在紧随其后的 td.text 里（CHDBits 形态）。限制窗口长度，
+		// 避免页面下方的无关单元格被当成失败原因。
+		if len(window) > 2048 {
+			window = window[:2048]
+		}
+		if match := reUploadNoticeTextCell.FindStringSubmatch(window); len(match) >= 2 {
+			body = cleanUploadNoticeText(match[1])
+		}
 	}
 	if body == "" {
 		return truncateLogText(heading, 300)

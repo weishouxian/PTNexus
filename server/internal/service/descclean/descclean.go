@@ -19,6 +19,21 @@ var reScreenshotsSectionStart = regexp.MustCompile(`(?s)(?:\[[a-zA-Z][^\]]{0,64}
 // reBBCodeTag 用于判断某段文本是否只由 BBCode 标签构成（配合 fallback 行首回退使用）。
 var reBBCodeTag = regexp.MustCompile(`\[[^\]]*\]`)
 
+// reGeneralInfoSectionStart 匹配源站简介里的 release info 段标题「Quote:★★★★★ General Information ★★★★★」。
+// TTG 等站把它接在◎简　　介之后，后面跟 RELEASE.NAME / VIDEO.CODEC / UPLOADER 等发布参数，属于冗余；
+// 允许前后吞掉紧邻的 BBCode 开启标签（[b]/[quote]/[size] 等），并对 `Quote:` 之后紧跟的闭合标签
+// （典型形态 [b]Quote:[/b][b]★★★★★…）一并吞掉，避免从标签内部切开留下悬空 [b]。
+// 判定必须前后都有星号标题装饰：正文里普通提到的「General Information」不会命中，避免误截断。
+var reGeneralInfoSectionStart = regexp.MustCompile(`(?is)(?:\[[a-zA-Z][^\]]{0,64}\]\s*)*(?:quote\s*[:：]\s*(?:\[\/[a-zA-Z][^\]]{0,64}\]\s*)*)?(?:\[[a-zA-Z][^\]]{0,64}\]\s*)*[★☆]+\s*general\s+information\s*[★☆]+`)
+
+// reQuoteSectionStart 匹配正文里的「Quote:」段落标记（常见于 TTG 等站的 release info 段起头）。
+// 需求口径：正文一旦出现 Quote:（含全角冒号），该标记及其后的全部内容都删掉——
+// 后面通常跟着 RELEASE.NAME / VIDEO.CODEC / UPLOADER 之类发布参数，属于冗余。
+// 向前吞掉紧邻的 BBCode 开启标签（[b]/[quote]/[size] 等），向后吞掉 Quote: 紧跟的闭合标签
+// （典型形态 [b]Quote:[/b][b]★★★★★…），避免截断后残留悬空标签。
+// 注意：只认带冒号的 `quote:`，BBCode 引用块 [quote]/[quote=作者] 不会命中（正文里的引用不能误删）。
+var reQuoteSectionStart = regexp.MustCompile(`(?is)(?:\[[a-zA-Z][^\]]{0,64}\]\s*)*\bquote\s*[:：]\s*(?:\[\/[a-zA-Z][^\]]{0,64}\]\s*)*`)
+
 // descCutMarker 描述一处需在简介中「从标记处截断到结尾」的冗余段落起始标记。
 // re 负责带 BBCode 的精确起始定位；fallback 为纯文本回退关键词（空串表示不做纯文本回退）。
 type descCutMarker struct {
@@ -31,6 +46,11 @@ type descCutMarker struct {
 var descCutMarkers = []descCutMarker{
 	{re: reMovieParamsSectionStart, fallback: "【影片参数】"},
 	{re: reScreenshotsSectionStart, fallback: "更多视频截图"},
+	// 「Quote:」起头的 release info 段：命中即截到结尾。
+	{re: reQuoteSectionStart},
+	// release info 段的无 Quote 变体（[quote][size=3][b]★★★★★ General Information ★★★★★）：
+	// 星号是它区别于正文叙述的关键特征，丢了星号宁可不动，避免把正文后半段误删。
+	{re: reGeneralInfoSectionStart},
 }
 
 // TrimDescription 截断简介中的冗余段落：命中 descCutMarkers 中任一标记时，
@@ -66,6 +86,25 @@ func TrimDescription(desc string) string {
 // 说明：包内标记表已扩展（新增「更多视频截图」段落），因此本函数同时承担新旧两类截断。
 func TrimDescriptionAtMovieParams(desc string) string {
 	return TrimDescription(desc)
+}
+
+// EnsureStatementQuote 保证声明被一对 [quote]…[/quote] 包裹。
+//
+// 背景：部分源站（TTG 等）的简述只给纯文本，如「Audiences官组作品，感谢原制作者发布。」，
+// 而各目标站的声明区块都按 [quote] 渲染；缺包裹时声明会掉格式，或被正文的段落判定吞并。
+// 判定口径：声明以 [quote] / [quote=…] 开头即视为已包裹（含多段 quote 并列的情形），原样返回；
+// 因此本函数幂等，可在抓取归一与发种组装两侧重复调用。
+// 参数/返回：statement 为声明文本；返回包裹后的声明，空串仍返回空串。
+// 副作用：无。
+func EnsureStatementQuote(statement string) string {
+	trimmed := strings.TrimSpace(statement)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.HasPrefix(strings.ToLower(trimmed), "[quote") {
+		return trimmed
+	}
+	return "[quote]" + trimmed + "[/quote]"
 }
 
 // startIndex 根据纯文本关键词命中位置推算真正的截断起点。

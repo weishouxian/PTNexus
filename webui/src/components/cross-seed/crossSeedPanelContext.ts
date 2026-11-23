@@ -160,6 +160,8 @@ export type PublishDisplayResult = {
   dupe_search_url?: string
   /** 命中的重复种子详情页地址，供「重复种子」跳转。 */
   dupe_torrent_url?: string
+  /** 本次发布是「候选申请」而非正式发种（站点只有候选权限时走这条路径） */
+  offer_mode?: boolean
   auto_add_result?: AutoAddResult | null
   auto_edit_result?: { success?: boolean } | null
   downloaderStatus?: { success: boolean; message?: string; downloaderName?: string } | null

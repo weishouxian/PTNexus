@@ -194,7 +194,9 @@ func (s *MigrateService) enrichMediaPayloadSavePath(payload map[string]any, root
 		logx.Warnf(mediainfoRefreshLogModule, "媒体路径回填跳过：读取下载器失败 downloader_id=%s err=%v", downloaderID, err)
 		return
 	}
-	snapshots, err := downloader.FetchTorrents()
+	// 只为解析这一个种子的媒体路径，走短期缓存：盒子代理下一次全量要 110s+，
+	// 同一次抓取流程里截图链路和媒体链路会重复问同一份列表。
+	snapshots, err := downloader.FetchTorrentsCached()
 	if err != nil {
 		logx.Warnf(mediainfoRefreshLogModule, "媒体路径回填跳过：拉取下载器任务失败 downloader_id=%s err=%v", downloaderID, err)
 		return

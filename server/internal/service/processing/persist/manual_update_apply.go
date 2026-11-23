@@ -7,6 +7,7 @@ import (
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 	processingack "github.com/pt-nexus/server/internal/service/processing/acknowledgment"
+	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 )
 
 // ManualUpdateRepo 定义手工参数回写所需仓储接口。
@@ -117,14 +118,39 @@ func applyManualUpdateTeamAcknowledgment(repo ManualUpdateRepo, record map[strin
 	}
 	teamKey := strings.TrimSpace(toStringAny(record["team"], ""))
 	statement := strings.TrimSpace(toStringAny(record["statement"], ""))
-	logx.Infof(teamAckLogModule, "官组致谢检查(手工回写) torrent_id=%s site=%s team_key=%s statement_len=%d",
+	statementGroup := resolveStatementReleaseGroup(record)
+	logx.Infof(teamAckLogModule, "官组致谢检查(手工回写) torrent_id=%s site=%s team_key=%s statement_group=%s statement_len=%d",
 		strings.TrimSpace(toStringAny(record["torrent_id"], "")),
 		strings.TrimSpace(toStringAny(record["site_name"], "")),
 		teamKey,
+		statementGroup,
 		len([]rune(statement)),
 	)
-	updated, applied, _ := processingack.ApplyTeamAcknowledgmentIfNeeded(statement, teamKey, sites)
+	updated, applied, _ := processingack.ApplyTeamAcknowledgmentIfNeeded(statement, teamKey, statementGroup, sites)
 	if applied {
 		record["statement"] = updated
 	}
+}
+
+// resolveStatementReleaseGroup 取用于声明的原始制作组名：
+// 优先 title_components 里的「制作组」组件；缺失时按标题重新拆一次组件。
+// 未匹配到标准组的种子靠它兜底生成「XX作品，感谢原制作者发布。」声明。
+func resolveStatementReleaseGroup(record map[string]any) string {
+	for _, component := range ParseAnyArray(record["title_components"]) {
+		item, ok := component.(map[string]any)
+		if !ok || item == nil {
+			continue
+		}
+		if strings.TrimSpace(toStringAny(item["key"], "")) != "制作组" {
+			continue
+		}
+		if value := strings.TrimSpace(toStringAny(item["value"], "")); value != "" {
+			return value
+		}
+	}
+	title := strings.TrimSpace(toStringAny(record["title"], ""))
+	if title == "" {
+		return ""
+	}
+	return extractRawReleaseGroupFromTitleComponents(processingtitle.BuildSimpleTitleComponents(title, ""))
 }

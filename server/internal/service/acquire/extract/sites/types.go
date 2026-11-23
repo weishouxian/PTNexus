@@ -110,7 +110,8 @@ func (d SeedData) Normalize(fallbackTitle string) SeedData {
 	d.IMDbLink = strings.TrimSpace(d.IMDbLink)
 	d.DoubanLink = strings.TrimSpace(d.DoubanLink)
 	d.TMDbLink = strings.TrimSpace(d.TMDbLink)
-	d.Intro.Statement = strings.TrimSpace(descclean.TrimDescriptionAtMovieParams(d.Intro.Statement))
+	// 声明统一补 [quote] 包裹：源站（TTG 等）只给纯文本时，靠这一步补齐目标站需要的引用块格式。
+	d.Intro.Statement = strings.TrimSpace(descclean.EnsureStatementQuote(descclean.TrimDescriptionAtMovieParams(d.Intro.Statement)))
 	d.Intro.Poster = strings.TrimSpace(d.Intro.Poster)
 	d.Intro.Body = strings.TrimSpace(descclean.TrimDescriptionAtMovieParams(d.Intro.Body))
 	d.Intro.Screenshots = strings.TrimSpace(d.Intro.Screenshots)

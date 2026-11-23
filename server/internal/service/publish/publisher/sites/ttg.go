@@ -20,6 +20,31 @@ func PublishTTG(input publisher.PublishInput) (publisher.PublishResult, error) {
 	return publishWithPublicSite(input, ttgPublisher{})
 }
 
+// PublishTTGOffer 执行 TTG 候选（申请上传）发布流程。
+// TTG 普通账号没有直发权限时只能提交候选：候选页 offer.php → takeoffer.php 只收
+// 名称/海报/简介/分类/做种条件，不含种子文件；管理员审核通过后才允许到 upload.php 正式发种。
+// 参数/返回：input 由 workflow 统一构建；返回候选链接（offers.php?id=N）与过程日志。
+// 失败场景：同 PublishOffer。
+// 副作用：向 TTG 发起候选表单提交请求。
+func PublishTTGOffer(input publisher.PublishInput) (publisher.PublishResult, error) {
+	return publisher.PublishOffer(input, adjustTTGOfferFields)
+}
+
+// adjustTTGOfferFields 按 TTG 候选页规则修正字段：分类仍是单一 type 下拉框，
+// 由 分类 + 媒介 + 分辨率 合并计算（与正式发种同一套规则）。
+func adjustTTGOfferFields(input publisher.PublishInput, formFields map[string]string) {
+	if formFields == nil {
+		return
+	}
+	standardized := extractTTGStandardizedParams(input.UploadData)
+	category := strings.TrimSpace(toStringAny(standardized["type"], ""))
+	medium := strings.TrimSpace(toStringAny(standardized["medium"], ""))
+	resolution := strings.TrimSpace(toStringAny(standardized["resolution"], ""))
+	if ttgType := resolveTTGType(category, medium, resolution, hasAnimationTag(input.UploadData)); ttgType != "" {
+		formFields["type"] = ttgType
+	}
+}
+
 func (ttgPublisher) LogModule() string {
 	return "发布-TTG"
 }
@@ -62,14 +87,18 @@ func (ttgPublisher) AdjustFormFields(input publisher.PublishInput, formFields ma
 
 	// 匿名发布（anonymity）由全局设置 upload_settings.anonymous_upload 控制，
 	// 交由公共发种器的 ApplyAnonymousFormFields 统一注入（详见 anonymous.go / public.go），此处不再硬编码。
-	if _, exists := formFields["nodistr"]; !exists {
+	//
+	// 禁转（nodistr）是 yes/no 下拉，跟随标准标签 tag.禁转；控件默认值即 no。
+	if hasTTGNoRedistributeTag(input.UploadData) {
+		formFields["nodistr"] = "yes"
+	} else if _, exists := formFields["nodistr"]; !exists {
 		formFields["nodistr"] = "no"
 	}
 	if _, exists := formFields["hr"]; !exists {
 		formFields["hr"] = "no"
 	}
 
-	// TTG 发种标题规范：主标题中的 "." 替换为 "{@}"，副标题以 "[]" 包裹并追加到主标题后
+	// TTG 发种标题规范：主标题原样、副标题独立成栏（详见 adjustTTGTitle）
 	adjustTTGTitle(formFields)
 }
 
@@ -178,38 +207,97 @@ func extractTTGDoubanID(value string) string {
 	return ""
 }
 
-// adjustTTGTitle 按 TTG 发种标题规范调整标题字段。
-// TTG 要求主标题中不得包含 "."，需用 "{@}" 替代（如 5.1 → 5{@}1）；
-// 副标题先剔除其中的 "[" / "]" 字符，再以 "[]" 包裹后以空格连接追加到主标题尾部，
-// 并清空独立副标题字段避免重复展示。
-// 例：主标题 "Red Planet 2000 ... DTS-HD MA 5.1-HDS" + 副标题 "红色星球 / ... [简繁英字幕]"
+// adjustTTGTitle 按 TTG 新版 upload.php 表单规范处理标题相关字段。
 //
-//	→ "Red Planet 2000 ... DTS-HD MA 5{@}1-HDS [红色星球 / ... 简繁英字幕]"
+// 新版表单已拆成三栏：
+//   - name：主标题，按 0day 命名原样填写（点号保留，站点现有种子形如
+//     "The Odyssey 2026 1080p USA Blu-ray AVC DTS-HD MA 5.1-DIY@TTG"）；
+//   - subtitle（maxlength=55）：副标题，页面明确「此处不再需要加 '[' 和 ']' 来换行」；
+//   - highlight：副标题右侧的加粗标签（如 "*内封简繁字幕"），非必填，本项目暂不生成。
+//
+// 因此这里只做两件事：
+//  1. 把副标题从 NexusPHP 默认的 small_descr 搬到 subtitle 字段，剥掉 [] 并按 55 字符截断；
+//  2. 主标题保持原样 —— 旧版的 "." → "{@}" 替换与「副标题以 [] 包裹后拼进主标题」均已废弃，
+//     那套规则会毁标题（"5.1" → "5{@}1"）、让副标题不再显示在独立位置，还超出 55 字限制。
 func adjustTTGTitle(formFields map[string]string) {
-	// 副标题可能落在 small_descr（NexusPHP 默认）或 subtitle（TTG 配置）字段，兼容读取
+	// 副标题可能落在 small_descr（NexusPHP 默认）或 subtitle（TTG 配置），兼容读取
 	subtitle := strings.TrimSpace(formFields["small_descr"])
 	if subtitle == "" {
 		subtitle = strings.TrimSpace(formFields["subtitle"])
 	}
-	// 剔除副标题内的 "[" / "]" 字符，避免与外层包裹的 "[]" 冲突
-	subtitle = strings.NewReplacer("[", "", "]", "").Replace(subtitle)
+	// small_descr 不是 TTG 表单字段，避免把无效字段提交给站点
+	delete(formFields, "small_descr")
 
-	// NexusPHP 表单同时设置 name 与 title，统一处理
-	for _, key := range []string{"name", "title"} {
-		title := strings.TrimSpace(formFields[key])
-		if title == "" {
-			continue
-		}
-		title = strings.ReplaceAll(title, ".", "{@}")
-		if subtitle != "" {
-			title = title + " [" + subtitle + "]"
-		}
-		formFields[key] = title
-	}
-
-	// 副标题已并入主标题，清空独立副标题字段避免重复展示
-	if subtitle != "" {
-		delete(formFields, "small_descr")
+	if subtitle == "" {
 		delete(formFields, "subtitle")
+		return
 	}
+
+	// 剥掉 [] 字符：新版表单自己会换行，再包一层会被站点当作正文
+	subtitle = strings.NewReplacer("[", "", "]", "").Replace(subtitle)
+	subtitle = strings.Join(strings.Fields(subtitle), " ")
+
+	// 站点 maxlength=55，按 rune 截断，避免把多字节汉字截成半个
+	if runes := []rune(subtitle); len(runes) > 55 {
+		subtitle = string(runes[:55])
+	}
+	formFields["subtitle"] = subtitle
+}
+
+// hasTTGNoRedistributeTag 判断发布数据里是否带「禁转」标准标签（tag.禁转 / 独占）。
+// 参数/返回：uploadData 为发布 payload；命中返回 true。
+// 失败场景：无标签或标签不是禁转时返回 false。
+// 副作用：无。
+func hasTTGNoRedistributeTag(uploadData map[string]any) bool {
+	for _, tag := range collectTTGTags(uploadData) {
+		normalized := strings.TrimSpace(tag)
+		switch normalized {
+		case "tag.禁转", "禁转", "独占", "tag.独占":
+			return true
+		}
+	}
+	return false
+}
+
+// collectTTGTags 汇总标签来源：标准化标签、uploadData.tags、源站「标签」参数。
+// 参数/返回：uploadData 为发布 payload；返回标签切片（可能为空）。
+// 失败场景：uploadData 为空或标签字段缺失时返回空切片。
+// 副作用：无。
+func collectTTGTags(uploadData map[string]any) []string {
+	if uploadData == nil {
+		return nil
+	}
+	tags := make([]string, 0, 8)
+	appendFrom := func(value any) {
+		switch v := value.(type) {
+		case []string:
+			for _, item := range v {
+				if trimmed := strings.TrimSpace(item); trimmed != "" {
+					tags = append(tags, trimmed)
+				}
+			}
+		case []any:
+			for _, item := range v {
+				if trimmed := strings.TrimSpace(toStringAny(item, "")); trimmed != "" {
+					tags = append(tags, trimmed)
+				}
+			}
+		case string:
+			for _, item := range strings.Split(v, ",") {
+				if trimmed := strings.TrimSpace(item); trimmed != "" {
+					tags = append(tags, trimmed)
+				}
+			}
+		}
+	}
+
+	if standardized, ok := uploadData["standardized_params"].(map[string]any); ok && standardized != nil {
+		appendFrom(standardized["tags"])
+	}
+	appendFrom(uploadData["tags"])
+	if sourceParams, ok := uploadData["source_params"].(map[string]any); ok && sourceParams != nil {
+		appendFrom(sourceParams["标签"])
+		appendFrom(sourceParams["tags"])
+	}
+	return tags
 }

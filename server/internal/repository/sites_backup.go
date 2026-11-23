@@ -24,6 +24,7 @@ const (
 	siteBackupDefaultRatioThreshold         = 3.0
 	siteBackupDefaultSeedSpeedLimit         = 5
 	siteBackupDefaultCanPublish             = 1
+	siteBackupDefaultPublishMode            = SitePublishModeUpload
 	siteBackupDefaultDupeCheckEnabled       = 0
 	siteBackupDefaultDupeSizeToleranceBytes = DefaultDupeSizeToleranceBytes
 	siteBackupDefaultAudioTrackPolicy       = 2
@@ -37,7 +38,7 @@ func (r *SiteRepository) siteBackupSelectSQL() string {
 	return fmt.Sprintf(`
 		SELECT s.id, s.site, s.nickname, s.base_url, s.special_tracker_domain,
 			s.%s AS group_name, s.description, s.migration, s.cookie, s.passkey,
-			s.speed_limit, s.ratio_threshold, s.seed_speed_limit, s.can_publish,
+			s.speed_limit, s.ratio_threshold, s.seed_speed_limit, s.can_publish, s.publish_mode,
 			s.forbidden_transfer_sites, s.dupe_check_enabled, s.dupe_size_tolerance_bytes,
 			s.dupe_rules, s.audio_track_policy, s.tags, s.sort_order
 		FROM sites s
@@ -61,6 +62,7 @@ type siteBackupValues struct {
 	RatioThreshold         float64
 	SeedSpeedLimit         int
 	CanPublish             int
+	PublishMode            int // 发种方式：0=正式发种 / 1=候选申请（站点设置页维护）
 	ForbiddenTransferSites string
 	DupeCheckEnabled       int
 	DupeSizeToleranceBytes int64
@@ -85,6 +87,7 @@ func (v siteBackupValues) updateArgs(siteID int64) []any {
 		v.RatioThreshold,
 		v.SeedSpeedLimit,
 		v.CanPublish,
+		v.PublishMode,
 		v.ForbiddenTransferSites,
 		v.DupeCheckEnabled,
 		v.DupeSizeToleranceBytes,
@@ -112,6 +115,7 @@ func (v siteBackupValues) asExportMap() map[string]any {
 		"ratio_threshold":           v.RatioThreshold,
 		"seed_speed_limit":          v.SeedSpeedLimit,
 		"can_publish":               v.CanPublish != 0,
+		"publish_mode":              v.PublishMode,
 		"forbidden_transfer_sites":  siteStringListFromAny(v.ForbiddenTransferSites),
 		"dupe_check_enabled":        v.DupeCheckEnabled != 0,
 		"dupe_size_tolerance_bytes": v.DupeSizeToleranceBytes,
@@ -138,6 +142,7 @@ func siteBackupValuesFromRow(row map[string]any) siteBackupValues {
 		RatioThreshold:         normalizeSiteBackupRatio(row["ratio_threshold"]),
 		SeedSpeedLimit:         toIntWithDefault(row["seed_speed_limit"], siteBackupDefaultSeedSpeedLimit),
 		CanPublish:             normalizeSiteBackupToggle(row["can_publish"], siteBackupDefaultCanPublish),
+		PublishMode:            normalizeSitePublishMode(row["publish_mode"]),
 		ForbiddenTransferSites: encodeSiteStringList(row["forbidden_transfer_sites"]),
 		DupeCheckEnabled:       normalizeSiteBackupToggle(row["dupe_check_enabled"], siteBackupDefaultDupeCheckEnabled),
 		DupeSizeToleranceBytes: toInt64WithDefault(row["dupe_size_tolerance_bytes"], siteBackupDefaultDupeSizeToleranceBytes),
@@ -165,6 +170,7 @@ func siteBackupValuesFromImport(item map[string]any) siteBackupValues {
 		RatioThreshold:         normalizeSiteBackupRatio(item["ratio_threshold"]),
 		SeedSpeedLimit:         toIntWithDefault(item["seed_speed_limit"], siteBackupDefaultSeedSpeedLimit),
 		CanPublish:             normalizeSiteBackupToggle(item["can_publish"], siteBackupDefaultCanPublish),
+		PublishMode:            normalizeSitePublishMode(item["publish_mode"]),
 		ForbiddenTransferSites: encodeSiteStringList(item["forbidden_transfer_sites"]),
 		DupeCheckEnabled:       normalizeSiteBackupToggle(item["dupe_check_enabled"], siteBackupDefaultDupeCheckEnabled),
 		DupeSizeToleranceBytes: toInt64WithDefault(item["dupe_size_tolerance_bytes"], siteBackupDefaultDupeSizeToleranceBytes),
@@ -367,6 +373,7 @@ func siteBackupUpdateSQL(groupColumn string) string {
 			ratio_threshold = ?,
 			seed_speed_limit = ?,
 			can_publish = ?,
+			publish_mode = ?,
 			forbidden_transfer_sites = ?,
 			dupe_check_enabled = ?,
 			dupe_size_tolerance_bytes = ?,
@@ -410,6 +417,9 @@ func mergeSiteBackup(cur, in siteBackupValues) (siteBackupValues, bool) {
 	}
 	if cur.CanPublish == siteBackupDefaultCanPublish {
 		merged.CanPublish = in.CanPublish
+	}
+	if cur.PublishMode == siteBackupDefaultPublishMode {
+		merged.PublishMode = in.PublishMode
 	}
 	if cur.DupeCheckEnabled == siteBackupDefaultDupeCheckEnabled {
 		merged.DupeCheckEnabled = in.DupeCheckEnabled

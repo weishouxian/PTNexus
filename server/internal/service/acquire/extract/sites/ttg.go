@@ -24,6 +24,8 @@ var (
 	reTTGBreakTag   = regexp.MustCompile(`(?i)<br\s*/?>`)
 	reTTGAnyTag     = regexp.MustCompile(`(?is)<[^>]+>`)
 	reTTGMultiNL    = regexp.MustCompile(`\n{3,}`)
+	// 标题里的方括号块（不跨括号）：TTG 的 h1 会把中文片名/类型塞在这里。
+	reTTGTitleBracketBlock = regexp.MustCompile(`\[[^\[\]]*\]`)
 )
 
 // ttgDeclarationKeywords 判定「简述」首块是不是发布者声明。
@@ -45,9 +47,10 @@ func ExtractTTG(input Input, runtime Runtime) (SeedData, error) {
 		return SeedData{}, errors.New("详情页内容为空")
 	}
 
-	title := extractTTGTitle(page, runtime)
+	title, subtitle := extractTTGTitle(page, runtime)
 	if title == "" {
-		title = strings.TrimSpace(input.FallbackTitle)
+		// 列表页带来的 fallback 标题同样可能带中文别名块，统一按同一口径清洗。
+		title, subtitle = splitTTGTitleBracketAlias(input.FallbackTitle)
 	}
 
 	descrHTML := ""
@@ -114,7 +117,7 @@ func ExtractTTG(input Input, runtime Runtime) (SeedData, error) {
 
 	data := SeedData{
 		Title:     title,
-		Subtitle:  "",
+		Subtitle:  strings.TrimSpace(subtitle),
 		MediaInfo: strings.TrimSpace(mediainfo),
 		Intro: IntroData{
 			Statement:   strings.TrimSpace(statement),
@@ -147,13 +150,86 @@ func ExtractTTG(input Input, runtime Runtime) (SeedData, error) {
 	return data, nil
 }
 
-// extractTTGTitle 从页面 <h1> 取主标题。
-func extractTTGTitle(pageHTML string, runtime Runtime) string {
+// extractTTGTitle 从页面 <h1> 取主标题与方括号别名（副标题）。
+func extractTTGTitle(pageHTML string, runtime Runtime) (string, string) {
 	match := reTTGMainTitle.FindStringSubmatch(pageHTML)
 	if len(match) < 2 {
+		return "", ""
+	}
+	return splitTTGTitleBracketAlias(sanitizeTTGText(match[1], runtime, false))
+}
+
+// splitTTGTitleBracketAlias 把标题拆成「主标题 + 副标题」。
+//
+// TTG 的 h1 在英文发布名后面附「[中文片名 / 港译名 | 类型: 剧情 / 喜剧]」这类补充信息，
+// 它不属于发布标题，留着会让主标题、做种命名、目标站标题都带上中文别名；
+// 但中文片名又是检索豆瓣/PTGen 的优质关键词，因此剥下来回填到副标题，而不是直接丢弃。
+// 判定口径：方括号内含中文或 `|` 才剥（如 [玩具总动员5 / 反斗奇兵5(港) | 类型: …]）；
+// 纯英文方括号（如 [Extended Cut]）保留在主标题里，避免误删版本信息。
+func splitTTGTitleBracketAlias(title string) (string, string) {
+	trimmed := strings.TrimSpace(title)
+	if trimmed == "" {
+		return "", ""
+	}
+	if !strings.Contains(trimmed, "[") {
+		return trimmed, ""
+	}
+	aliases := make([]string, 0, 2)
+	cleaned := reTTGTitleBracketBlock.ReplaceAllStringFunc(trimmed, func(block string) string {
+		inner := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(block, "["), "]"))
+		if inner == "" {
+			return ""
+		}
+		if strings.Contains(inner, "|") || ttgContainsCJK(inner) {
+			if alias := cleanTTGTitleAlias(inner); alias != "" {
+				aliases = append(aliases, alias)
+			}
+			return ""
+		}
+		return block
+	})
+	// 剥离后会留下连续空白（如「WiKi  *国粤双语」），统一收敛成单空格。
+	mainTitle := strings.TrimSpace(strings.Join(strings.Fields(cleaned), " "))
+	return mainTitle, strings.Join(aliases, " / ")
+}
+
+// stripTTGTitleBracketAlias 只保留剥离后的主标题，供不关心副标题的调用方使用。
+func stripTTGTitleBracketAlias(title string) string {
+	mainTitle, _ := splitTTGTitleBracketAlias(title)
+	return mainTitle
+}
+
+// reTTGTitleAliasNoiseWords 只描述音轨/字幕/版本的标签词。
+// 说明：TTG 的方括号里偶尔是「[国语中字]」这类属性标签而不是片名，当副标题会污染 PTGen 检索。
+var reTTGTitleAliasNoiseWords = regexp.MustCompile(`(?i)国语|粤语|国配|台配|双语|多语|中字|简繁|简体|繁体|字幕|内封|内嵌|外挂|原盘|DIY|重制|修复|加长|完整版|导演剪辑|无删减|特效`)
+
+// cleanTTGTitleAlias 从方括号内容里取片名别名：丢掉「| 类型: …」这类附加字段与属性标签。
+func cleanTTGTitleAlias(inner string) string {
+	if idx := strings.Index(inner, "|"); idx >= 0 {
+		inner = inner[:idx]
+	}
+	alias := strings.TrimSpace(strings.Join(strings.Fields(inner), " "))
+	if alias == "" || isTTGTitleAliasNoise(alias) {
 		return ""
 	}
-	return strings.TrimSpace(sanitizeTTGText(match[1], runtime, false))
+	return alias
+}
+
+// isTTGTitleAliasNoise 判断别名是否只剩音轨/字幕/版本标签（如「国语中字」），这类不该进副标题。
+func isTTGTitleAliasNoise(alias string) bool {
+	rest := reTTGTitleAliasNoiseWords.ReplaceAllString(alias, "")
+	rest = strings.Trim(rest, " \t()（）[]【】/\\·、-—+&")
+	return rest == ""
+}
+
+// ttgContainsCJK 判断文本是否含中日韩汉字。
+func ttgContainsCJK(text string) bool {
+	for _, r := range text {
+		if (r >= 0x4E00 && r <= 0x9FFF) || (r >= 0x3400 && r <= 0x4DBF) || (r >= 0xF900 && r <= 0xFAFF) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractTTGDeclaration 取「简述」首块声明，同时返回剥掉该块后的 HTML（供正文解析）。

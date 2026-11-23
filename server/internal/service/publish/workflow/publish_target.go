@@ -8,8 +8,9 @@ import (
 	"regexp"
 	"strings"
 
-	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 	parserextract "github.com/pt-nexus/server/internal/service/acquire/extract"
+	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
+	"github.com/pt-nexus/server/internal/service/descclean"
 	processingmedia "github.com/pt-nexus/server/internal/service/processing/media"
 	processingtitle "github.com/pt-nexus/server/internal/service/processing/title"
 	publishpublisher "github.com/pt-nexus/server/internal/service/publish/publisher"
@@ -59,6 +60,10 @@ func PublishTorrentToTarget(
 		}
 		logLines = append(logLines, trimmed)
 	}
+
+	// 声明统一补 [quote] 包裹：源站/库里可能只存了纯文本（如 TTG 的「XX官组作品，感谢原制作者发布。」），
+	// 而各目标站的声明区块都按 [quote] 渲染，缺包裹会掉格式；函数幂等，已包裹的原样保留。
+	uploadData = ensureUploadDataStatementQuote(uploadData)
 
 	siteCode := strings.TrimSpace(toStringAny(targetInfo["site"], ""))
 	baseURL := acquirefetch.NormalizeSiteBaseURL(toStringAny(targetInfo["base_url"], ""))
@@ -124,6 +129,9 @@ func PublishTorrentToTarget(
 		appendLog(fmt.Sprintf("发布结果：发布到 %s 成功 (测试模式)", targetName))
 	} else if result.IsExistingTorrent {
 		appendLog(fmt.Sprintf("发布结果：种子已存在于 %s，已自动更新信息", targetName))
+	} else if publishpublisher.IsOfferPublishMode(targetInfo) {
+		// 候选模式没有种子落地，日志不能说「成功发布」——否则用户会以为种子已经在站点上了。
+		appendLog(fmt.Sprintf("发布结果：候选申请已提交到 %s（等待站点审核，审核通过后再正式发种）", targetName))
 	} else {
 		appendLog(fmt.Sprintf("发布结果：成功发布到 %s", targetName))
 	}
@@ -360,6 +368,25 @@ func stripPublishTitleExcludedTokens(title string) string {
 	stripped = strings.Join(strings.Fields(stripped), " ")
 	stripped = publishTitleDanglingDotPattern.ReplaceAllString(stripped, ".")
 	return strings.Trim(stripped, " .")
+}
+
+// ensureUploadDataStatementQuote 给发布参数里的声明补 [quote] 包裹。
+// 参数/返回：uploadData 为发布字段；声明可能挂在顶层 key，也可能挂在 intro 子 map，两处都处理；返回同一个 map。
+// 失败场景：nil 入参时返回空 map。
+// 副作用：原地修改 uploadData / intro 里的 statement 值。
+func ensureUploadDataStatementQuote(uploadData map[string]any) map[string]any {
+	if uploadData == nil {
+		return map[string]any{}
+	}
+	if raw, ok := uploadData["statement"].(string); ok {
+		uploadData["statement"] = descclean.EnsureStatementQuote(raw)
+	}
+	if intro, ok := uploadData["intro"].(map[string]any); ok && intro != nil {
+		if raw, ok := intro["statement"].(string); ok {
+			intro["statement"] = descclean.EnsureStatementQuote(raw)
+		}
+	}
+	return uploadData
 }
 
 func mapStringAny(value any) map[string]any {

@@ -168,6 +168,14 @@ func normalizeAndApplyTeamAcknowledgment(draft *SeedDraft, siteIdentifier string
 	if strings.TrimSpace(teamKey) == "" {
 		teamKey = "team.other"
 	}
+	// 声明里要写的制作组名：优先用标题解析出的原始组名；标题没解析到时退回页面字段。
+	// 未匹配到标准组（team.other）也用它兜底，保证声明不会为空。
+	groupForStatement := strings.TrimSpace(rawReleaseGroup)
+	if groupForStatement == "" {
+		if candidate := strings.TrimSpace(draft.Team); candidate != "" && !strings.HasPrefix(strings.ToLower(candidate), "team.") {
+			groupForStatement = candidate
+		}
+	}
 	draft.Team = teamKey
 	record["team"] = teamKey
 
@@ -200,14 +208,15 @@ func normalizeAndApplyTeamAcknowledgment(draft *SeedDraft, siteIdentifier string
 	statement := strings.TrimSpace(toStringAny(record["statement"], ""))
 	logx.Infof(
 		teamAckLogModule,
-		"官组致谢检查 torrent_id=%s site=%s raw_release_group=%s team_key=%s statement_len=%d",
+		"官组致谢检查 torrent_id=%s site=%s raw_release_group=%s team_key=%s statement_group=%s statement_len=%d",
 		draft.TorrentID,
 		siteIdentifier,
 		strings.TrimSpace(rawReleaseGroup),
 		teamKey,
+		groupForStatement,
 		len([]rune(statement)),
 	)
-	updated, applied, reason := processingack.ApplyTeamAcknowledgmentIfNeeded(statement, teamKey, sites)
+	updated, applied, reason := processingack.ApplyTeamAcknowledgmentIfNeeded(statement, teamKey, groupForStatement, sites)
 	if applied {
 		draft.Statement = updated
 		record["statement"] = updated

@@ -667,6 +667,7 @@ global_standard_keys:
     "CHD/CHDBits": "team.chdbits"
     "CHDWEB": "team.chdweb"
     "CMCT": "team.cmct"
+    "COLAWEB": "team.colaweb"
     "CornerMV": "team.cornermv"
     "CSPT": "team.cspt"
     "CSWEB": "team.csweb"
@@ -930,9 +931,11 @@ default_title_components:
 # 官组致谢声明配置
 team_acknowledgment:
   enabled: true
-  template: "[quote][b][color=blue][size=5]{team_name}官组作品，感谢原制作者发布。[/size][/color][/b][/quote]"
+  template: "[quote][b][color=blue][size=5]{team_name}作品，感谢原制作者发布。[/size][/color][/b][/quote]"
 
   # 排除列表
+  # 说明：team.other 只是「没匹配到标准组」的占位，不再拦截——此时会用标题解析出的
+  # 原始制作组名兜底写声明（如 COLAWEB作品）。要排除具体组请填 team.* 键。
   exclude_teams:
     - "team.other"
     - ""
@@ -956,9 +959,12 @@ team_acknowledgment:
 
   # 关键词检测（作为最后的兜底方案，已基本不需要）
   # 只在前 300 字符内检测，且必须是独立的短句
+  # 「感谢原制作者发布」用于兜住我们自己的模板：模板改成「XX作品」后不再含「官组作品」，
+  # 制作组名较长时第一条 quote 会超过 max_statement_length 而漏检，重复抓取就会叠声明。
   detection_keywords:
     - "官组作品"
     - "官方作品"
+    - "感谢原制作者发布"
     - "官种"
     - "Official Release"
     - "高清杜比"

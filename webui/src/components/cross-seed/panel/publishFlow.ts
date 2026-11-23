@@ -191,7 +191,10 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       const addResult = rawResult.auto_add_result
       let downloaderName = '自动检测'
 
-      if (addResult.limit_reached) {
+      if (addResult.offer_mode === true) {
+        // 候选申请不产生种子文件，后端明确跳过了加下载器；这里不能显示成下载器失败。
+        downloaderName = '候选申请'
+      } else if (addResult.limit_reached) {
         downloaderName = '限制触发'
       } else if (addResult.downloader_id) {
         const downloader = downloaderList.value.find((d) => d.id === addResult.downloader_id)
@@ -700,7 +703,9 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
         if (result.auto_add_result) {
           // 获取实际的下载器名称
           let downloaderName = '自动检测'
-          if (result.auto_add_result.downloader_id) {
+          if (result.auto_add_result.offer_mode === true) {
+            downloaderName = '候选申请'
+          } else if (result.auto_add_result.downloader_id) {
             const downloader = downloaderList.value.find(
               (d) => d.id === result.auto_add_result.downloader_id,
             )
@@ -729,6 +734,11 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
             ElNotification.warning({
               title: `发布成功但添加失败 - ${siteName}`,
               message: result.downloaderStatus.message || '自动添加到下载器失败',
+            })
+          } else if (result.offer_mode === true) {
+            ElNotification.success({
+              title: `候选已提交 - ${siteName}`,
+              message: '候选申请已提交，等待站点审核（候选不产生种子文件）',
             })
           } else {
             ElNotification.success({

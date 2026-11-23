@@ -1315,6 +1315,10 @@ func (m *SchemaManager) columnSpecs() map[string][]schemaColumnSpec {
 			{name: "sort_order", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "INT NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 			// check_cookie_enabled 站点健康检测开关：1=参与定时 Cookie 检测，0=跳过该站点。
 			{name: "check_cookie_enabled", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 1", "mysql": "TINYINT(1) NOT NULL DEFAULT 1", "postgresql": "INTEGER NOT NULL DEFAULT 1"}},
+			// publish_mode 发种方式：0=正式发种（提交种子文件到站点），1=候选申请（无种子文件，站点审核通过后才获得直发权限）。
+			// 真源在「站点设置」页（sites.publish_mode），不是站点 YAML —— 同一个站点 code 可能挂多个账号，
+			// 权限是按账号的，只能按站点记录配置。
+			{name: "publish_mode", definition: map[string]string{"sqlite": "INTEGER NOT NULL DEFAULT 0", "mysql": "TINYINT(1) NOT NULL DEFAULT 0", "postgresql": "INTEGER NOT NULL DEFAULT 0"}},
 		},
 		"app_settings": {
 			{name: "setting_key", definition: map[string]string{"sqlite": "TEXT NOT NULL", "mysql": "VARCHAR(64) NOT NULL", "postgresql": "VARCHAR(64) NOT NULL"}},

@@ -40,6 +40,43 @@ type SitePublishConfig struct {
 	// 使目标站种子的 infohash 与源站不同（下载器里成为独立任务，标签/统计互不覆盖）。
 	// 文件列表与 piece 数据保持不变，可指向同一份文件直接校验做种。
 	InfoSourceTag string
+	// Offer 候选（申请上传）表单配置。
+	// 是否走候选**不由 YAML 决定**：权限是按账号的，同一站点 code 可能挂多个账号，
+	// 因此开关存在数据库 sites.publish_mode，由「站点设置」页维护；YAML 只描述候选表单长什么样。
+	Offer SiteOfferConfig
+}
+
+// SiteOfferConfig 描述站点「候选/申请上传」表单的提交参数。
+//
+// 候选表单与正式发种表单是两套完全不同的页面：没有种子文件字段、提交端点是 takeoffer.php 之类，
+// 字段名也不同（简介叫 msg、海报叫 picture、做种条件叫 seeding_env）。因此单独一张表描述。
+type SiteOfferConfig struct {
+	// FormPath 候选表单页路径（相对 base_url），默认 offer.php。
+	FormPath string
+	// SubmitPath 候选提交端点路径，默认 takeoffer.php。
+	SubmitPath string
+	// ListPath 候选区列表页路径（如 TTG 的 viewoffers.php），用于提交成功后按名称回查候选链接。
+	// 站点提交端点只回 302 且 body 不带链接时，这里配了才会多走一次 GET；留空则跳过回查。
+	ListPath string
+	// Fields 逻辑字段 → 站点字段名，缺省用内置默认（name/picture/msg/type/seeding_env）。
+	// 常用逻辑字段：name / picture / description / subtitle / imdb_url / category / seeding_env。
+	Fields map[string]string
+	// Static 固定提交值（如 seeding_env 的做种条件），按逻辑字段名声明。
+	Static map[string]string
+	// CopyUploadFields 为 true 时，候选表单视为「发种表单去掉种子文件」的同一张表：
+	// 分类、媒介、编码、音频、分辨率、地区、制作组、标签、static_fields 全部复用发种映射结果。
+	// CHDBits（offers.php?add_offer=1）属于这类；TTG 候选页只有 5 个字段，保持 false 只提交分类。
+	CopyUploadFields bool
+	// PictureScheme 指定海报字段强制使用的协议前缀，取值 "http" / "https"；留空表示原样提交。
+	// 彩虹岛实测（2026-11-23）：候选提交端点的海报校验只认 http:// 开头的地址，
+	// https:// 会被判成「图片必须是jpg, gif 或png格式。」（同一张 jpg，换成 http 才放行；
+	// 报错与图片真实格式无关，站点并不回源检查）。留空的站点（TTG 等）保持原样。
+	PictureScheme string
+	// OmitFields 声明「根本不提交」的字段，取值可写逻辑字段名（picture / description …）
+	// 也可直接写站点字段名，装配完成后统一删除。
+	// 用于「候选表单留空即可、填了反而要过校验」的栏目：彩虹岛的海报栏就是典型 ——
+	// 留空能过，填了还要满足 http:// 前缀规则，所以这里直接不提交比降级协议更稳。
+	OmitFields []string
 }
 
 // SiteDupeCheckConfig 描述站点 dupe 检索所需的参数命名规则。
@@ -134,6 +171,7 @@ func LoadSitePublishConfig(siteCode string) (*SitePublishConfig, error) {
 		TypeByTag:          mapStringMap(raw["type_by_tag"]),
 		DupeCheck:          mapDupeCheckConfig(raw["dupe_check"]),
 		InfoSourceTag:      strings.TrimSpace(toStringAny(raw["info_source_tag"])),
+		Offer:              mapOfferConfig(raw["offer"]),
 	}
 	publishConfigCache.Store(trimmed, cfg)
 	return cfg, nil
@@ -195,6 +233,26 @@ func mapDupeCheckConfig(value any) SiteDupeCheckConfig {
 		SearchAreaValue: strings.TrimSpace(toStringAny(item["search_area_value"])),
 		SearchAreas:     mapStringMap(item["search_areas"]),
 		ParamTemplates:  templates,
+	}
+}
+
+// mapOfferConfig 解析站点候选（offer）提交配置。
+// 参数/返回：value 为 YAML 中的 offer 节点；返回解析后的配置，缺省路径由调用方兜底。
+// 副作用：无。
+func mapOfferConfig(value any) SiteOfferConfig {
+	item, ok := value.(map[string]any)
+	if !ok {
+		return SiteOfferConfig{}
+	}
+	return SiteOfferConfig{
+		FormPath:         strings.TrimSpace(toStringAny(item["form_path"])),
+		SubmitPath:       strings.TrimSpace(toStringAny(item["submit_path"])),
+		ListPath:         strings.TrimSpace(toStringAny(item["list_path"])),
+		Fields:           mapStringMap(item["fields"]),
+		Static:           mapStringMap(item["static"]),
+		CopyUploadFields: toBoolAny(item["copy_upload_fields"]),
+		PictureScheme:    strings.TrimSpace(toStringAny(item["picture_scheme"])),
+		OmitFields:       toStringSlice(item["omit_fields"]),
 	}
 }
 

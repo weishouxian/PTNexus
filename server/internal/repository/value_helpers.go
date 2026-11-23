@@ -77,6 +77,24 @@ func toIntWithDefault(value any, fallback int) int {
 	return int(parsed)
 }
 
+// SitePublishModeUpload / SitePublishModeOffer 是 sites.publish_mode 的取值。
+// Upload 表示提交种子文件正式发种；Offer 表示只提交候选申请（无种子文件，站点审核通过后才可直发）。
+const (
+	SitePublishModeUpload = 0
+	SitePublishModeOffer  = 1
+)
+
+// normalizeSitePublishMode 归一 sites.publish_mode：只认 1（候选申请），其余（含 NULL、脏值）一律按 0（正式发种）。
+// 参数/返回：value 为数据库或请求里的原始值；返回 0 或 1。
+// 说明：候选模式是「例外路径」，fail-safe 方向应当是默认的正式发种，因此不做猜测映射。
+// 副作用：无。
+func normalizeSitePublishMode(value any) int {
+	if toIntWithDefault(value, SitePublishModeUpload) == SitePublishModeOffer {
+		return SitePublishModeOffer
+	}
+	return SitePublishModeUpload
+}
+
 // DefaultDupeSizeToleranceBytes 是 dupe 校验的默认体积容差（字节）。
 // 对应站点管理页展示的「体积容差 1024 MB」（1 MB = 1024² 字节，即 1 GiB）。
 // 站点未显式配置 dupe_size_tolerance_bytes 时使用该值；0 为合法配置（要求体积完全一致）。

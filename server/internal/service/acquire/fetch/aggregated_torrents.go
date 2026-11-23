@@ -176,20 +176,53 @@ func appendUniqueString(items []string, value string) []string {
 	return append(items, value)
 }
 
+var (
+	rePlainTorrentID    = regexp.MustCompile(`^\d+$`)
+	rePlainTorrentUUID  = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+	reInfoHashOnly      = regexp.MustCompile(`(?i)^[0-9a-f]{40}$`)
+	reQueryTorrentID    = regexp.MustCompile(`(?i)[?&](?:id|torrent_id)=(\d+)`)
+	reNumericDetailPath = regexp.MustCompile(`(?i)/(?:detail|details|torrent|torrents|t)/(\d+)(?:/|$)`)
+	reUUIDDetailPath    = regexp.MustCompile(`(?i)/torrents?/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:/|$)`)
+)
+
+// extractTorrentIDFromDetails 从 torrents.details 解析源站种子 ID（批量获取/聚合列表共用）。
+// 参数/返回：details 支持 NexusPHP 的 details.php?id=、裸数字 ID、自研站的 /torrent/{id}
+// （好学）、/torrents/{id}（可乐、肉丝）、/#/torrent/detail/{id}（YemaPT）、/detail/{id}
+// （M-Team）、/t/{id}/（TTG）以及 UUID 形态详情页；fallback 为 hash 兜底。
+// 失败场景：解析不出 ID 时返回空串——hash 是 infohash 不是种子 ID，绝不能再当 ID 传给源站
+// （否则站点侧会报「种子 ID 无效：<40 位 hash>」，批量获取里每个种子都失败）。
+// 副作用：无。
 func extractTorrentIDFromDetails(details string, fallback string) string {
 	trimmed := strings.TrimSpace(details)
 	if trimmed == "" {
-		return fallback
+		return normalizeTorrentIDFallback(fallback)
 	}
-	patterns := []*regexp.Regexp{
-		regexp.MustCompile(`id=(\d+)`),
-		regexp.MustCompile(`torrent_id\s*[:=]\s*(\d+)`),
-		regexp.MustCompile(`/details\.php\?id=(\d+)`),
+	if rePlainTorrentID.MatchString(trimmed) {
+		return trimmed
 	}
-	for _, pattern := range patterns {
-		if matches := pattern.FindStringSubmatch(trimmed); len(matches) > 1 {
-			return matches[1]
-		}
+	if matches := reQueryTorrentID.FindStringSubmatch(trimmed); len(matches) > 1 {
+		return matches[1]
 	}
-	return fallback
+	if matches := reNumericDetailPath.FindStringSubmatch(trimmed); len(matches) > 1 {
+		return matches[1]
+	}
+	if matches := reUUIDDetailPath.FindStringSubmatch(trimmed); len(matches) > 1 {
+		return matches[1]
+	}
+	return normalizeTorrentIDFallback(fallback)
+}
+
+// normalizeTorrentIDFallback 校验 hash 兜底是否可作为种子 ID 使用。
+// 参数/返回：value 为 torrents.hash；只有裸数字或 UUID 形态才返回，40 位 infohash 返回空串。
+// 失败场景：不适用。
+// 副作用：无。
+func normalizeTorrentIDFallback(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || reInfoHashOnly.MatchString(trimmed) {
+		return ""
+	}
+	if rePlainTorrentID.MatchString(trimmed) || rePlainTorrentUUID.MatchString(trimmed) {
+		return trimmed
+	}
+	return ""
 }

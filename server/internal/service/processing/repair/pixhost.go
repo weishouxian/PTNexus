@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	neturl "net/url"
@@ -422,14 +421,53 @@ func downloadPosterImage(target string) ([]byte, string, error) {
 	return data, contentType, nil
 }
 
+// posterImageExtensionByMIME 是「Content-Type → 临时文件扩展名」的固定映射。
+//
+// ⚠️ 必须用固定映射，不能用 mime.ExtensionsByType：
+//   - 该函数返回的是内部 map 的迭代结果，**顺序不确定**；
+//   - 容器内 /etc/mime.types 里是 `image/jpeg jpeg jpg jpe jfif`，于是有概率取到 `.jpe` / `.jfif`；
+//   - 末日图床（Lsky Pro）的扩展名白名单只认 jpg/jpeg/png/gif/webp/bmp，
+//     拿到 `.jpe` 会直接回「不支持的文件类型」，海报转存就失败、回退原始链接。
+//
+// 本表只列图床实际接受的格式，统一给最通用的扩展名。
+var posterImageExtensionByMIME = map[string]string{
+	"image/jpeg":     ".jpg",
+	"image/jpg":      ".jpg",
+	"image/pjpeg":    ".jpg",
+	"image/png":      ".png",
+	"image/gif":      ".gif",
+	"image/webp":     ".webp",
+	"image/bmp":      ".bmp",
+	"image/x-ms-bmp": ".bmp",
+}
+
+// posterImageExtension 依据响应头 Content-Type（必要时嗅探文件头）决定 poster 临时文件扩展名。
+// 参数/返回：contentType 为 HTTP 响应头里的类型；data 为图片原始字节；返回带点的扩展名。
+// 失败场景：无（类型不可识别时兜底 .jpg）。
+// 副作用：无。
+func posterImageExtension(contentType string, data []byte) string {
+	normalize := func(value string) string {
+		v := strings.ToLower(strings.TrimSpace(value))
+		if semi := strings.Index(v, ";"); semi >= 0 {
+			v = strings.TrimSpace(v[:semi])
+		}
+		return v
+	}
+
+	if ext, ok := posterImageExtensionByMIME[normalize(contentType)]; ok {
+		return ext
+	}
+	// 声明缺失或与实际内容不符时（豆瓣偶发返回 image/*），按文件头嗅探一次。
+	if len(data) > 0 {
+		if ext, ok := posterImageExtensionByMIME[normalize(http.DetectContentType(data))]; ok {
+			return ext
+		}
+	}
+	return ".jpg"
+}
+
 func writePosterTempFile(data []byte, contentType string) (string, error) {
-	ext := ".jpg"
-	if extensions, extErr := mime.ExtensionsByType(contentType); extErr == nil && len(extensions) > 0 {
-		ext = extensions[0]
-	}
-	if !strings.HasPrefix(ext, ".") {
-		ext = "." + ext
-	}
+	ext := posterImageExtension(contentType, data)
 
 	tmpFile, err := os.CreateTemp("", "ptnexus-poster-*"+ext)
 	if err != nil {

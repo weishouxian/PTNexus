@@ -18,6 +18,17 @@ func Publish(input publisher.PublishInput) (publisher.PublishResult, error) {
 	// 因此新增站点只需写配置、不必为每个站点各写一份钩子代码。
 	input = publishsites.AttachSiteDupeCheck(input)
 
+	// 候选（offer）模式：站点设置里把该站「发种方式」选为候选时改走候选提交（无种子文件）。
+	// 开关真源是数据库 sites.publish_mode（站点设置页维护），不是站点 YAML。
+	if publisher.IsOfferPublishMode(input.TargetInfo) {
+		switch siteCode {
+		case "ttg":
+			return publishsites.PublishTTGOffer(input)
+		default:
+			return publisher.PublishOffer(input, nil)
+		}
+	}
+
 	switch siteCode {
 	case "cbg":
 		return publishsites.PublishCBG(input)

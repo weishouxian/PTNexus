@@ -259,6 +259,19 @@
           </template>
         </el-table-column>
         <el-table-column
+          prop="publish_mode"
+          label="发种方式"
+          width="100"
+          align="center"
+        >
+          <template #default="scope">
+            <el-tag v-if="Number(scope.row.publish_mode) === 1" type="warning" size="small">
+              候选
+            </el-tag>
+            <el-tag v-else type="info" size="small">直发</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column
           prop="dupe_check_enabled"
           label="Dupe 校验"
           width="100"
@@ -569,6 +582,15 @@
         <el-form-item label="可发种站" prop="can_publish">
           <el-switch v-model="siteForm.can_publish" />
           <div class="form-tip">关闭后，该站点在发种选择时将置灰不可选择。</div>
+        </el-form-item>
+        <el-form-item label="发种方式" prop="publish_mode">
+          <el-select v-model="siteForm.publish_mode" style="width: 100%">
+            <el-option :value="0" label="正式发种（提交种子文件）" />
+            <el-option :value="1" label="候选申请（无直发权限，等站点审核）" />
+          </el-select>
+          <div class="form-tip">
+            选「候选申请」时只提交名称、海报、简介、分类与做种条件，不提交种子文件；站点审核通过后再改回「正式发种」。
+          </div>
         </el-form-item>
         <el-form-item label="检测 Cookie" prop="check_cookie_enabled">
           <el-switch v-model="siteForm.check_cookie_enabled" />
@@ -957,6 +979,8 @@ type SiteConfig = {
   has_cookie?: boolean
   has_passkey?: boolean
   can_publish?: boolean | number
+  /** 发种方式：0=正式发种 / 1=候选申请（无直发权限时提交候选） */
+  publish_mode?: number | string | null
   /** 是否参与定时/一键 Cookie 检测 */
   check_cookie_enabled?: boolean | number
   /** 站点是否声明了 dupe 查重能力（后端按站点 YAML 标注） */
@@ -1009,6 +1033,8 @@ type SiteForm = {
   ratio_threshold: number
   seed_speed_limit: number
   can_publish: boolean
+  /** 发种方式：0=正式发种（提交种子文件）/ 1=候选申请（无种子文件，站点审核） */
+  publish_mode: number
   check_cookie_enabled: boolean
   sort_order: number
   dupe_check_enabled: boolean
@@ -1270,6 +1296,7 @@ const siteForm = ref<SiteForm>({
   ratio_threshold: 3.0,
   seed_speed_limit: 5,
   can_publish: true,
+  publish_mode: 0,
   check_cookie_enabled: true,
   sort_order: 0,
   dupe_check_enabled: false,
@@ -1975,6 +2002,7 @@ const normalizeSiteForm = (site: SiteConfig): SiteForm => ({
   seed_speed_limit:
     typeof site.seed_speed_limit === 'number' ? site.seed_speed_limit : Number(site.seed_speed_limit) || 5,
   can_publish: site.can_publish == null ? true : Boolean(site.can_publish),
+  publish_mode: Number(site.publish_mode) === 1 ? 1 : 0,
   check_cookie_enabled:
     site.check_cookie_enabled == null ? true : Boolean(site.check_cookie_enabled),
   sort_order: typeof site.sort_order === 'number' ? site.sort_order : Number(site.sort_order) || 0,
