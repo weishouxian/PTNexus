@@ -142,6 +142,15 @@
                       >{{ siteName }}
                     </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
+                    <span
+                      v-if="canRemoveSiteLink(props.row, siteName)"
+                      class="site-link-remove"
+                      :class="{ 'is-busy': removingSiteLinkKey === siteLinkKey(props.row, siteName) }"
+                      title="删除站点连接（只清除该站点的详情链接地址）"
+                      @click.stop.prevent="confirmRemoveSiteLink(props.row, siteName)"
+                    >
+                      <el-icon><Close /></el-icon>
+                    </span>
                   </el-tag>
                 </div>
                 <!-- 对于有链接的站点，使用链接 -->
@@ -168,6 +177,15 @@
                       >{{ siteName }}
                     </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
+                    <span
+                      v-if="canRemoveSiteLink(props.row, siteName)"
+                      class="site-link-remove"
+                      :class="{ 'is-busy': removingSiteLinkKey === siteLinkKey(props.row, siteName) }"
+                      title="删除站点连接（只清除该站点的详情链接地址）"
+                      @click.stop.prevent="confirmRemoveSiteLink(props.row, siteName)"
+                    >
+                      <el-icon><Close /></el-icon>
+                    </span>
                   </el-tag>
                 </a>
                 <!-- 对于其他站点，使用可点击的div -->
@@ -196,6 +214,15 @@
                       >{{ siteName }}
                     </span>
                     <div>({{ formatBytes(props.row.sites[siteName].uploaded) }})</div>
+                    <span
+                      v-if="canRemoveSiteLink(props.row, siteName)"
+                      class="site-link-remove"
+                      :class="{ 'is-busy': removingSiteLinkKey === siteLinkKey(props.row, siteName) }"
+                      title="删除站点连接（只清除该站点的详情链接地址）"
+                      @click.stop.prevent="confirmRemoveSiteLink(props.row, siteName)"
+                    >
+                      <el-icon><Close /></el-icon>
+                    </span>
                   </el-tag>
                 </div>
               </template>
@@ -480,7 +507,7 @@
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="200" align="center" header-align="center">
+      <el-table-column label="操作" width="288" align="center" header-align="center">
         <template #default="scope">
           <div
             style="
@@ -507,6 +534,20 @@
               :disabled="!scope.row.hash || scope.row.downloaderIds?.length === 0"
             >
               改位置
+            </el-button>
+            <el-button
+              type="success"
+              size="small"
+              plain
+              :loading="reseedRunningKey !== '' && reseedRunningKey === rowReseedKey(scope.row)"
+              :disabled="
+                rowReseedHashes(scope.row).length === 0 ||
+                (reseedRunningKey !== '' && reseedRunningKey !== rowReseedKey(scope.row))
+              "
+              title="向所有可辅种站点（已配置 Cookie/Passkey 且 IYUU 收录）发起一次辅种"
+              @click.stop="reseedRow(scope.row)"
+            >
+              辅种
             </el-button>
 <!--            <el-button
               size="small"
@@ -1129,7 +1170,7 @@ import { useTorrentsViewState } from '@/stores/torrentsViewState'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { ISourceInfo, Torrent, SiteData, Downloader, PublishSiteStatus, PublishStatusGroup } from '@/types'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
-import { ElMessage } from '@/utils/uiNotify'
+import { ElMessage, ElNotification } from '@/utils/uiNotify'
 
 const emits = defineEmits(['ready'])
 
@@ -1939,6 +1980,175 @@ const fetchData = async () => {
   }
 }
 
+// ── 列表行内辅种：把单个种子向「所有可辅种站点」发起一次 IYUU 辅种 ──
+// 可辅种站点 = 已配置 Cookie/Passkey 且 IYUU 收录（由 /api/reseed/status 的 can_reseed 判定）。
+const reseedRunningKey = ref('')
+const reseedTaskId = ref('')
+let reseedPollTimer: ReturnType<typeof setInterval> | null = null
+let reseedTaskNotified = false
+// 站点集合按需加载一次并记住失败的 Promise 重置，避免每点一行都请求一次状态接口。
+let reseedTargetsPromise: Promise<{ tokenConfigured: boolean; sites: string[] }> | null = null
+
+interface ReseedSiteSummary {
+  nickname?: string
+  can_reseed?: boolean
+}
+
+// 行的唯一标识：优先 unique_id，退化用 hash，用于锁定「正在辅种」的那一行。
+const rowReseedKey = (row: Torrent) => row.unique_id || row.hash || ''
+
+// 该行可用于 IYUU 查询的 infohash：聚合行的 hashes 优先，再补主 hash，统一小写去重。
+const rowReseedHashes = (row: Torrent): string[] => {
+  const collected = new Set<string>()
+  const push = (value?: string) => {
+    const trimmed = String(value ?? '').trim().toLowerCase()
+    if (trimmed) collected.add(trimmed)
+  }
+  if (Array.isArray(row.hashes)) row.hashes.forEach(push)
+  push(row.hash)
+  return Array.from(collected)
+}
+
+const loadReseedTargets = () => {
+  if (!reseedTargetsPromise) {
+    reseedTargetsPromise = axios
+      .get('/api/reseed/status')
+      .then((response) => {
+        const data = (response.data ?? {}) as {
+          token_configured?: boolean
+          sites?: ReseedSiteSummary[]
+        }
+        const sites = Array.isArray(data.sites) ? data.sites : []
+        return {
+          tokenConfigured: data.token_configured === true,
+          sites: sites
+            .filter((site) => site.can_reseed !== false)
+            .map((site) => String(site.nickname ?? '').trim())
+            .filter((name) => name !== ''),
+        }
+      })
+      .catch((error: unknown) => {
+        reseedTargetsPromise = null
+        throw error
+      })
+  }
+  return reseedTargetsPromise
+}
+
+const stopReseedPolling = () => {
+  if (reseedPollTimer) {
+    clearInterval(reseedPollTimer)
+    reseedPollTimer = null
+  }
+}
+
+const refreshReseedProgress = async () => {
+  if (!reseedTaskId.value) return
+  try {
+    const response = await axios.get('/api/reseed/progress', {
+      params: { task_id: reseedTaskId.value },
+    })
+    const task = response.data?.task as
+      | { isRunning?: boolean; success?: boolean | null; message?: string }
+      | undefined
+    if (!task || task.isRunning) return
+
+    stopReseedPolling()
+    reseedRunningKey.value = ''
+    reseedTaskId.value = ''
+    if (reseedTaskNotified) return
+    reseedTaskNotified = true
+    ElNotification({
+      title: task.success ? '辅种完成' : '辅种结束',
+      message: task.message || (task.success ? '辅种任务已完成' : '辅种任务未完成'),
+      type: task.success ? 'success' : 'warning',
+      duration: 12000,
+    })
+    // 辅种会回填 torrents 里的站点记录，刷新一次让展开行立刻看到新站点。
+    await fetchDataWithoutLoadingControl()
+  } catch (error: unknown) {
+    // 轮询失败只停表，不打扰用户：任务本身仍在后端跑，可到辅种页查看记录。
+    stopReseedPolling()
+    reseedRunningKey.value = ''
+    console.warn('查询辅种进度失败:', error)
+  }
+}
+
+const startReseedPolling = (taskId: string) => {
+  stopReseedPolling()
+  reseedTaskId.value = taskId
+  reseedTaskNotified = false
+  reseedPollTimer = setInterval(() => {
+    void refreshReseedProgress()
+  }, 2000)
+}
+
+const reseedRow = async (row: Torrent) => {
+  if (reseedRunningKey.value) return
+  const hashes = rowReseedHashes(row)
+  if (hashes.length === 0) {
+    ElMessage.warning('该种子缺少 infohash，无法辅种')
+    return
+  }
+  const key = rowReseedKey(row)
+  reseedRunningKey.value = key
+  let started = false
+  try {
+    const targets = await loadReseedTargets()
+    if (!targets.tokenConfigured) {
+      ElMessage.warning('未配置 IYUU Token，请先到「设置 → IYUU设置」填写后再辅种')
+      return
+    }
+    if (targets.sites.length === 0) {
+      ElMessage.warning('没有可辅种的站点：请先到「设置 → 站点」为站点配置 Cookie / Passkey')
+      return
+    }
+    try {
+      await ElMessageBox.confirm(
+        `将对「${row.name}」向 ${targets.sites.length} 个可辅种站点发起 IYUU 辅种，命中后会把种子加入对应下载器。是否继续？`,
+        '辅种',
+        {
+          confirmButtonText: '开始辅种',
+          cancelButtonText: '取消',
+          type: 'info',
+          closeOnClickModal: false,
+        },
+      )
+    } catch {
+      return
+    }
+    const response = await axios.post('/api/reseed/run', {
+      sites: targets.sites,
+      hashes,
+      // 指定种子试跑：不再叠加路径/下载器/体积筛选，交由后端按 hash 精确命中。
+      paths: [],
+      skip_checking: true,
+      tags: [],
+      tag_by_site: false,
+    })
+    if (!response.data?.success) {
+      ElMessage.error(response.data?.message || '启动辅种失败')
+      return
+    }
+    // 后端 message 会列出全部目标站，列表页只需要一个简短回执，完成后另有通知汇总。
+    ElMessage.success(
+      `已启动辅种：向 ${targets.sites.length} 个可辅种站点查询，共 ${Number(response.data.total ?? 0)} 个种子组`,
+    )
+    started = true
+    startReseedPolling(String(response.data.task_id ?? ''))
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? ((error.response?.data as { message?: string } | undefined)?.message || error.message)
+      : error instanceof Error
+        ? error.message
+        : '启动辅种失败'
+    ElMessage.error(message)
+  } finally {
+    // 未真正启动（缺 Token/无站点/取消确认/接口报错）时立刻解锁，成功则保持 loading 到任务结束。
+    if (!started) reseedRunningKey.value = ''
+  }
+}
+
 const startCrossSeed = async (row: Torrent) => {
   // 在开始转种流程前，先重置 store，防止旧数据污染
   crossSeedStore.reset()
@@ -2665,6 +2875,7 @@ const triggerIYUUQueryForFiltered = async () => {
 
 onUnmounted(() => {
   stopIyuuBatchPolling()
+  stopReseedPolling()
   if (relativeTimeTimer) {
     clearInterval(relativeTimeTimer)
     relativeTimeTimer = null
@@ -2922,6 +3133,68 @@ const siteTagTooltip = (row: Torrent, siteName: string): string => {
 
 /** 判断该行是否存在任何发布记录。 */
 const hasPublishRecords = (row: Torrent) => Boolean(row.publish_sites && row.publish_sites.length)
+
+// 删除「站点连接」= 清掉该站点在这颗种子下的详情链接地址（torrents.details）。
+// 只对「绿色」标签开放：绿色代表该站点已发布成功/有详情链接，才有链接可删；
+// 做种记录、发种记录与下载器任务都不动，因此删除后站点仍留在列表里（标签变蓝/无链接）。
+const removingSiteLinkKey = ref('')
+const siteLinkKey = (row: Torrent, siteName: string) => `${row.name}__${row.size}__${siteName}`
+
+/**
+ * 该站点是否允许删除链接。
+ * 参数：row 为列表行；siteName 为站点昵称。
+ * 返回：有做种记录、有详情链接且标签为绿色（ElementPlus success）时为 true。
+ */
+const canRemoveSiteLink = (row: Torrent, siteName: string): boolean => {
+  const siteData = row.sites?.[siteName]
+  if (!siteData) return false
+  if (!hasLink(siteData, siteName)) return false
+  return getTagType(siteData, row, siteName) === 'success'
+}
+
+/**
+ * 二次确认后删除站点连接。
+ * 参数：row 为列表行；siteName 为站点昵称。
+ * 返回：无（内部处理提示与刷新）。
+ */
+const confirmRemoveSiteLink = async (row: Torrent, siteName: string) => {
+  if (removingSiteLinkKey.value) return
+  try {
+    await ElMessageBox.confirm(
+      `是否确认删除站点连接？将清除「${row.name}」在站点「${siteName}」的详情链接地址；做种记录、发种记录与下载器任务都不受影响。`,
+      '删除站点连接',
+      {
+        type: 'warning',
+        confirmButtonText: '确认删除',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+
+  const key = siteLinkKey(row, siteName)
+  removingSiteLinkKey.value = key
+  try {
+    const response = await axios.post('/api/data/delete_site_link', {
+      name: row.name,
+      size: row.size,
+      site: siteName,
+    })
+    const result = response.data
+    if (result?.success) {
+      ElMessage.success(result.message || `已删除站点「${siteName}」的链接地址`)
+      await fetchData()
+    } else {
+      ElMessage.error(result?.error || '删除站点连接失败')
+    }
+  } catch (error) {
+    console.error('删除站点连接失败:', error)
+    ElMessage.error('删除站点连接失败')
+  } finally {
+    removingSiteLinkKey.value = ''
+  }
+}
 
 /**
  * 生成列表「发布」列的汇总徽标（按失败优先顺序）。
@@ -3429,6 +3702,37 @@ watch(visibleColumns, () => {
   align-items: center;
   line-height: 1.2;
   padding: 0;
+  position: relative;
+}
+
+/* 站点标签右上角的「删除站点连接」×：只对绿色（已发布/有链接）站点出现。 */
+.site-link-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 11px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.site-link-remove:hover {
+  opacity: 1;
+  background: var(--el-color-danger);
+}
+
+.site-link-remove.is-busy {
+  opacity: 0.4;
+  cursor: progress;
 }
 
 /* 站点标签内的「发布状态前缀符号」：色块本身已按状态着色，符号再叠一层形状区分。 */

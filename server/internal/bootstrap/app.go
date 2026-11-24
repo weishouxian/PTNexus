@@ -23,6 +23,7 @@ import (
 	"github.com/pt-nexus/server/internal/service/autoseed"
 	"github.com/pt-nexus/server/internal/service/bangumi"
 	migrationflow "github.com/pt-nexus/server/internal/service/migrationflow"
+	"github.com/pt-nexus/server/internal/service/reseed"
 	"github.com/pt-nexus/server/internal/service/scheduledseed"
 	"github.com/pt-nexus/server/internal/service/sitehealth"
 	"github.com/pt-nexus/server/internal/service/trafficdaily"
@@ -202,6 +203,9 @@ func NewApp() (*App, error) {
 	sitesHandler.SetSiteHealth(alertRepo, siteHealthService)
 	torrentsHandler := handler.NewTorrentsHandler(torrentRepo)
 	torrentDataHandler := handler.NewTorrentDataHandler(torrentDataService)
+	// IYUU 指定站点辅种：以目标站为维度，把本地已做种资源在目标站重新做种。
+	reseedService := reseed.NewService(repository.NewReseedRepository(store), torrentDataRepo, migrateRepo, store, cfgManager)
+	reseedHandler := handler.NewReseedHandler(reseedService)
 	statsHandler := handler.NewStatsHandler(statsService)
 	localQueryHandler := handler.NewLocalQueryHandler(localQueryService)
 	crossSeedHandler := handler.NewCrossSeedHandler(crossSeedService)
@@ -248,6 +252,7 @@ func NewApp() (*App, error) {
 		autoSeedHandler,
 		resourceInfoHandler,
 		bangumiHandler,
+		reseedHandler,
 	)
 
 	return &App{Engine: engine, trackerWorker: trackerService, dailyWorker: trafficDailyService}, nil
@@ -273,6 +278,7 @@ func registerRoutes(
 	autoSeedHandler *handler.AutoSeedHandler,
 	resourceInfoHandler *handler.ResourceInfoHandler,
 	bangumiHandler *handler.BangumiHandler,
+	reseedHandler *handler.ReseedHandler,
 ) {
 	engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "服务正常", "service": "pt-nexus-go"})
@@ -349,12 +355,19 @@ func registerRoutes(
 		api.POST("/refresh_data", torrentDataHandler.RefreshData)
 		api.GET("/cached_sites", torrentDataHandler.CachedSites)
 		api.POST("/data/delete_cached_site", torrentDataHandler.DeleteCachedSite)
+		api.POST("/data/delete_site_link", torrentDataHandler.DeleteSiteLink)
 		api.POST("/data/update_publish_at", torrentDataHandler.UpdatePublishAt)
 		api.POST("/data/delete", torrentDataHandler.DeleteData)
 		api.POST("/iyuu_query", torrentDataHandler.IYUUQuery)
 		api.POST("/data/resolve_torrent_url", torrentDataHandler.ResolveTorrentURL)
 		api.POST("/iyuu_query_batch", torrentDataHandler.IYUUQueryBatch)
 		api.GET("/iyuu_query_batch_progress", torrentDataHandler.IYUUQueryBatchProgress)
+		// IYUU 指定站点辅种：状态/启动/进度/停止/记录。
+		api.GET("/reseed/status", reseedHandler.Status)
+		api.POST("/reseed/run", reseedHandler.Run)
+		api.GET("/reseed/progress", reseedHandler.Progress)
+		api.POST("/reseed/stop", reseedHandler.Stop)
+		api.GET("/reseed/records", reseedHandler.Records)
 
 		api.GET("/chart_data", statsHandler.ChartData)
 		api.GET("/speed_data", statsHandler.SpeedData)

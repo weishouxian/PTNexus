@@ -27,6 +27,11 @@ const router = createRouter({
       component: () => import('../views/CrossSeedDataView.vue'),
     },
     {
+      path: '/reseed',
+      name: 'reseed',
+      component: () => import('../views/ReseedView.vue'),
+    },
+    {
       path: '/scheduled-seeding',
       name: 'scheduled-seeding',
       component: () => import('../views/ScheduledSeedingView.vue'),

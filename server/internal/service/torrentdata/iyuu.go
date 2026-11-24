@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pt-nexus/server/internal/platform/logx"
+	iyyusvc "github.com/pt-nexus/server/internal/service/iyuu"
 	"github.com/pt-nexus/server/internal/repository"
 )
 
@@ -226,7 +226,7 @@ func (s *TorrentDataService) groupsByPath(savePath string, limit int, anchorName
 // 失败场景：IYUU API 调用失败、数据库读写失败。
 // 副作用：发起远程 HTTP 请求；写入数据库（INSERT/UPDATE torrents）；更新内存批量任务状态（若 taskID 非空）。
 func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuuQueryGroup, forceQuery bool, taskID string, pathFilters []string) (map[string]any, error) {
-	client := newIYUUClient()
+	client := iyyusvc.NewClient()
 
 	cfg := s.cfg.Get()
 	token := strings.TrimSpace(toString(cfg["iyuu_token"], ""))
@@ -249,11 +249,13 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 	configuredSet := toStringSet(configuredSites)
 	excluded := map[string]struct{}{"青蛙": {}, "柠檬不甜": {}}
 
-	sidSha1, filteredSites, err := s.getFilteredSidSha1AndSites(ctx, client, token, configuredSites)
+	siteFieldToNickname, _ := s.repo.SiteFieldToNicknameMap()
+
+	sidSha1, filteredSites, err := iyyusvc.ResolveSidSha1(ctx, client, token, configuredSites, nil, siteFieldToNickname, true)
 	if err != nil {
 		return nil, err
 	}
-	sitesByID := map[int64]iyuuSite{}
+	sitesByID := map[int64]iyyusvc.Site{}
 	iyuuSupportedNicknames := map[string]struct{}{}
 	for _, site := range filteredSites {
 		sitesByID[site.ID] = site
@@ -262,7 +264,6 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 		}
 	}
 
-	siteFieldToNickname, _ := s.repo.SiteFieldToNicknameMap()
 
 	// 初始化 group state
 	states := make([]*iyuuGroupState, 0, len(groups))
@@ -369,7 +370,7 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 		sort.Strings(uniqueHashes)
 
 		totalBatches := (len(uniqueHashes) + maxHashesPerRequest - 1) / maxHashesPerRequest
-		iyuuInfof("批量查询 attempt %d/3: %d 个hash，共 %d 批", attempt+1, len(uniqueHashes), totalBatches)
+		iyyusvc.Infof("批量查询 attempt %d/3: %d 个hash，共 %d 批", attempt+1, len(uniqueHashes), totalBatches)
 		s.iyuuLogLine("INFO", fmt.Sprintf("批量查询 attempt %d/3: %d 个hash，共 %d 批", attempt+1, len(uniqueHashes), totalBatches))
 		if taskID != "" {
 			s.iyuuTasks.UpdateTask(taskID, func(task *IYUUBatchTask) {
@@ -386,12 +387,12 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 			batch := uniqueHashes[start:end]
 
 			batchStart := time.Now()
-			results, err := client.queryCrossSeedBatch(ctx, token, batch, sidSha1)
+			results, err := client.QueryCrossSeedBatch(ctx, token, batch, sidSha1)
 			if err != nil {
 				return nil, err
 			}
 			cost := time.Since(batchStart)
-			iyuuInfof("attempt %d/3, batch %d/%d: hash=%d 耗时=%s", attempt+1, batchIndex+1, totalBatches, len(batch), cost.Round(time.Millisecond))
+			iyyusvc.Infof("attempt %d/3, batch %d/%d: hash=%d 耗时=%s", attempt+1, batchIndex+1, totalBatches, len(batch), cost.Round(time.Millisecond))
 			s.iyuuLogLine("INFO", fmt.Sprintf("attempt %d/3, batch %d/%d 完成：hash=%d，耗时=%s", attempt+1, batchIndex+1, totalBatches, len(batch), cost.Round(time.Millisecond)))
 
 			for _, h := range batch {
@@ -517,7 +518,7 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 		insertedCount, insertErr := s.repo.InsertMissingIYUUSiteTorrents(name, size, baseSavePath, baseDownloaderID, selectedHash, matchedSites, now)
 		if insertErr != nil {
 			failedGroups++
-			iyuuErrorf("写入缺失站点失败 name=%s size=%d err=%v", name, size, insertErr)
+			iyyusvc.Errorf("写入缺失站点失败 name=%s size=%d err=%v", name, size, insertErr)
 		} else {
 			newRecords += insertedCount
 		}
@@ -525,7 +526,7 @@ func (s *TorrentDataService) performIYUUQuery(ctx context.Context, groups []iyuu
 		filledDetails, err := s.repo.UpdateIYUUCheckAndFillDetails(name, size, matchedSites, now)
 		if err != nil {
 			failedGroups++
-			iyuuErrorf("更新 iyuu_last_check/details 失败 name=%s size=%d err=%v", name, size, err)
+			iyyusvc.Errorf("更新 iyuu_last_check/details 失败 name=%s size=%d err=%v", name, size, err)
 			continue
 		}
 		updatedRecords += filledDetails
@@ -602,70 +603,6 @@ func (s *TorrentDataService) iyuuPathFilters() []string {
 		return nil
 	}
 	return paths
-}
-
-// getFilteredSidSha1AndSites 获取过滤后的 sid_sha1 和可辅种站点列表（仅保留 torrents 表存在的站点昵称）。
-// 参数/返回：configuredSites 为当前 torrents 表出现过的站点列表；返回 sid_sha1 与站点列表。
-// 失败场景：IYUU API 调用失败、缓存读写失败（读写失败会降级为重新获取）。
-// 副作用：可能读取/写入本地缓存文件；发起远程 HTTP 请求。
-func (s *TorrentDataService) getFilteredSidSha1AndSites(ctx context.Context, client *iyuuClient, token string, configuredSites []string) (string, []iyuuSite, error) {
-	siteList := append([]string{}, configuredSites...)
-	if sid, sites, ok := loadIYUUSiteCache(siteList); ok {
-		return sid, sites, nil
-	}
-
-	supported, err := client.getSupportedSites(ctx, token)
-	if err != nil {
-		return "", nil, err
-	}
-
-	siteFieldToNickname, _ := s.repo.SiteFieldToNicknameMap()
-	siteSet := toStringSet(siteList)
-
-	ids := make([]int64, 0, len(supported))
-	filtered := make([]iyuuSite, 0, len(supported))
-	seen := map[int64]struct{}{}
-	for _, site := range supported {
-		if site.ID <= 0 {
-			continue
-		}
-		if _, ok := seen[site.ID]; ok {
-			continue
-		}
-
-		dbNick := ""
-		if strings.TrimSpace(site.Site) != "" {
-			if nick, ok := siteFieldToNickname[site.Site]; ok && strings.TrimSpace(nick) != "" {
-				dbNick = strings.TrimSpace(nick)
-				if _, ok := siteSet[dbNick]; ok {
-					seen[site.ID] = struct{}{}
-					ids = append(ids, site.ID)
-					filtered = append(filtered, site)
-					continue
-				}
-			}
-		}
-
-		if strings.TrimSpace(site.Nickname) != "" {
-			if _, ok := siteSet[strings.TrimSpace(site.Nickname)]; ok {
-				seen[site.ID] = struct{}{}
-				ids = append(ids, site.ID)
-				filtered = append(filtered, site)
-			}
-		}
-	}
-	if len(ids) == 0 {
-		return "", nil, errors.New("没有找到在 torrents 表中存在的 IYUU 支持站点")
-	}
-
-	sidSha1, err := client.reportExisting(ctx, token, ids)
-	if err != nil {
-		return "", nil, err
-	}
-	if err := saveIYUUSiteCache(sidSha1, filtered, siteList); err != nil {
-		logx.Warnf(iyuuLogModule, "写入 IYUU 缓存失败 err=%v", err)
-	}
-	return sidSha1, filtered, nil
 }
 
 func normalizeIYUUBatchInput(torrents []map[string]any, maxGroups int) []iyuuQueryGroup {

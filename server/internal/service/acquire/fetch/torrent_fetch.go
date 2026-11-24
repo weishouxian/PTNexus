@@ -242,6 +242,11 @@ func DownloadTorrentForSource(sourceInfo map[string]any, torrentID string) (stri
 			// 部分站点在限流/鉴权失败时仍返回 HTTP 200，真正原因只写在 JSON 体里
 			// （M-Team 的「相同種子當天最多下載10次」即为此形态），因此要连同响应摘要一起记录。
 			message := extractJSONErrorMessage(body)
+			if message == "" {
+				// 大部分 NexusPHP/自研站鉴权失败时仍返回 HTTP 200 的 HTML 页面，
+				// 只有从正文能判断是「Cookie 失效」「Passkey 无效」还是「无权下载」。
+				message = extractHTMLAuthErrorMessage(body)
+			}
 			logx.Warnf(sourceDownloadLogModule, "候选内容无效 source_site=%s torrent_id=%s candidate=%s bytes=%d resp=%s",
 				siteName, trimmedID, candidate, len(body), mteamapi.BodySnippet(body))
 			if message != "" {
@@ -1041,6 +1046,45 @@ func extractJSONErrorMessage(body []byte) string {
 		return message
 	}
 	return strings.TrimSpace(parsed.Msg)
+}
+
+// extractHTMLAuthErrorMessage 从非 torrent 的 HTML 响应正文里识别鉴权类失败原因。
+// 参数/返回：body 为站点响应字节；返回可读结论，判断不出时返回空串。
+// 失败场景：不适用。
+// 副作用：无。
+//
+// 站点在 Cookie 失效、Passkey 错误或权限不足时通常返回登录页/错误页（甚至 HTTP 200），
+// 只报「内容不是 torrent」会让用户无法区分是配置问题还是资源问题。
+func extractHTMLAuthErrorMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	text := strings.ToLower(string(body))
+	if len(text) > 16384 {
+		text = text[:16384]
+	}
+	switch {
+	case strings.Contains(text, "invalid passkey"),
+		strings.Contains(text, "passkey 错误"),
+		strings.Contains(text, "passkey不正确"),
+		strings.Contains(text, "passkey 不正确"),
+		strings.Contains(text, "校验码错误"),
+		strings.Contains(text, "密钥错误"):
+		return "Passkey 无效，请更新站点配置中的 Passkey"
+	case strings.Contains(text, "login.php"),
+		strings.Contains(text, "请先登录"),
+		strings.Contains(text, "登录后继续"),
+		strings.Contains(text, "您还未登录"):
+		return "登录页（Cookie 已失效，请更新站点配置中的 Cookie）"
+	case strings.Contains(text, "没有权限"),
+		strings.Contains(text, "无权下载"),
+		strings.Contains(text, "permission denied"),
+		strings.Contains(text, "access denied"):
+		return "帐号无权下载该种子"
+	case strings.Contains(text, "passkey"):
+		return "错误页并提及 passkey（可能是 Passkey 无效或未配置）"
+	}
+	return ""
 }
 
 func extractDownloadCandidatesFromDetail(html, baseURL, siteCode, detailURL string) []string {

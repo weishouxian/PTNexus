@@ -77,6 +77,11 @@ func (m *SchemaManager) EnsureSchema() error {
 		return fmt.Errorf("创建站点提醒表失败: %w", err)
 	}
 
+	// IYUU 辅种记录表（三方言通用，GORM 推导列结构）。
+	if err := NewReseedRepository(m.store).Migrate(); err != nil {
+		return fmt.Errorf("创建辅种记录表失败: %w", err)
+	}
+
 	for tableName, columns := range m.columnSpecs() {
 		if err := m.ensureTableColumns(tableName, columns); err != nil {
 			return err

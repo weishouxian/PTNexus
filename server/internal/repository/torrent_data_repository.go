@@ -490,6 +490,26 @@ func (r *TorrentDataRepository) DeleteTorrentsByHashes(hashes []string) (int64, 
 	return deleted, nil
 }
 
+// ClearSiteLinkByNameAndSize 清空「一种多站」某站点在这颗种子下的详情链接（torrents.details）。
+// 参数/返回：name+size 与列表同一口径定位聚合行，site 为站点昵称；返回被清空的记录数与错误。
+// 失败场景：数据库更新失败时返回 error；入参无有效值时返回 0 且不执行 SQL。
+// 副作用：只把匹配行的 details 置空，做种记录、发种日志与下载器任务都保留。
+func (r *TorrentDataRepository) ClearSiteLinkByNameAndSize(name string, size int64, site string) (int64, error) {
+	trimmedName := strings.TrimSpace(name)
+	trimmedSite := strings.TrimSpace(site)
+	if trimmedName == "" || size <= 0 || trimmedSite == "" {
+		return 0, nil
+	}
+	result := r.store.DB.Exec(
+		"UPDATE torrents SET details = '' WHERE name = ? AND size = ? AND LOWER(TRIM(sites)) = ? AND details IS NOT NULL AND TRIM(details) != ''",
+		trimmedName, size, strings.ToLower(trimmedSite),
+	)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
+}
+
 // UpdateSavePathByHashes 更新 hash 列表对应记录的 save_path。
 // 参数/返回：hashes 为 torrents.hash（大小写与首尾空格不敏感、自动去重）；newPath 为新保存路径；返回受影响的记录数与错误。
 // 失败场景：数据库更新失败时返回 error；入参无有效值或 newPath 为空时返回 0 且不执行 SQL。
