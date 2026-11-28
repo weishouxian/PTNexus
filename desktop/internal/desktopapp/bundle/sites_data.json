@@ -1357,7 +1357,7 @@
     "site": "zrpt",
     "allow_episode_publish": false,
     "nickname": "自然",
-    "base_url": "zrpt.cc",
+    "base_url": "naturept.top",
     "special_tracker_domain": null,
     "group": "-Nature,-NatureWeb",
     "migration": 0,
@@ -1444,6 +1444,17 @@
     "group": "-COLAWEB",
     "description": "ColaPT",
     "migration": 1,
+    "speed_limit": 50
+  },
+  {
+    "site": "musopia",
+    "allow_episode_publish": false,
+    "nickname": "音乐乌托邦",
+    "base_url": "www.musopia.vip",
+    "special_tracker_domain": null,
+    "group": "-ZHENGLIFAN@Musopia",
+    "description": "Musopia",
+    "migration": 0,
     "speed_limit": 50
   }
 ]
