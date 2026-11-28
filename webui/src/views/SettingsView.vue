@@ -21,6 +21,12 @@
           </el-icon>
           <span>站点管理</span>
         </el-menu-item>
+        <el-menu-item index="/settings/menu">
+          <el-icon>
+            <Menu />
+          </el-icon>
+          <span>菜单显示</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
@@ -33,7 +39,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { Download, Setting, Tickets } from '@element-plus/icons-vue'
+import { Download, Menu, Setting, Tickets } from '@element-plus/icons-vue'
 
 const route = useRoute()
 

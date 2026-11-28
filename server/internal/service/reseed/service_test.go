@@ -2,9 +2,12 @@ package reseed
 
 import (
 	"errors"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/repository"
 	acquirefetch "github.com/pt-nexus/server/internal/service/acquire/fetch"
 )
@@ -159,6 +162,33 @@ func TestEffectiveTags(t *testing.T) {
 	}
 }
 
+// TestEffectiveTagsSiteNamePlaceholder 校验标签里的「站点/{站点名称}」占位符按目标站展开，
+// 这样默认标签也能存「站点/站名」这种动态标签。
+func TestEffectiveTagsSiteNamePlaceholder(t *testing.T) {
+	params := Params{Tags: []string{siteNameTagTemplate, "辅种", siteNameTagTemplate}}
+	tags := effectiveTags(params, " 财神 ")
+	if len(tags) != 2 || tags[0] != "站点/财神" || tags[1] != "辅种" {
+		t.Fatalf("占位符应展开为「站点/财神」并与手动标签去重，实际 %+v", tags)
+	}
+
+	// 占位符与勾选框同时开启时不能重复写入同一个站名标签。
+	both := Params{Tags: []string{siteNameTagTemplate}, TagBySite: true}
+	if got := effectiveTags(both, "天空"); len(got) != 1 || got[0] != "站点/天空" {
+		t.Fatalf("占位符与勾选框应合并为一条「站点/天空」，实际 %+v", got)
+	}
+
+	// 站名未知时丢弃占位符标签，但保留同一组里的静态标签。
+	if got := effectiveTags(params, ""); len(got) != 1 || got[0] != "辅种" {
+		t.Fatalf("站名为空时应丢弃占位符标签、保留静态标签，实际 %+v", got)
+	}
+
+	// 前后缀混写也能替换，例如「辅种-{站点名称}」。
+	mixed := Params{Tags: []string{"辅种-{站点名称}"}}
+	if got := effectiveTags(mixed, "财神"); len(got) != 1 || got[0] != "辅种-财神" {
+		t.Fatalf("前缀混写的占位符应被替换，实际 %+v", got)
+	}
+}
+
 // TestRecordTags 校验记录里只在真正写入下载器时才带标签。
 func TestRecordTags(t *testing.T) {
 	params := Params{Tags: []string{"辅种"}, TagBySite: true}
@@ -190,5 +220,65 @@ func TestClassifyDownloadError(t *testing.T) {
 		if strings.TrimSpace(message) == "" {
 			t.Fatalf("%s：失败说明不能为空", item.name)
 		}
+	}
+}
+
+// TestNormalizeTagList 校验默认标签清洗：去空白、忽略大小写去重、超长截断、超量截断。
+func TestNormalizeTagList(t *testing.T) {
+	tags := normalizeTagList([]any{" 辅种 ", "", "PT", "pt", "站点/财神", "站点/财神"})
+	want := []string{"辅种", "PT", "站点/财神"}
+	if len(tags) != len(want) {
+		t.Fatalf("期望 %d 个标签，实际 %d 个：%+v", len(want), len(tags), tags)
+	}
+	for i := range want {
+		if tags[i] != want[i] {
+			t.Fatalf("第 %d 个标签期望 %q，实际 %q", i, want[i], tags[i])
+		}
+	}
+
+	long := strings.Repeat("长", maxDefaultTagRunes+5)
+	got := normalizeTagList([]string{long})
+	if len(got) != 1 || len([]rune(got[0])) != maxDefaultTagRunes {
+		t.Fatalf("超长标签应截断到 %d 个字符，实际 %+v", maxDefaultTagRunes, got)
+	}
+
+	many := make([]any, 0, maxDefaultTags+5)
+	for i := 0; i < maxDefaultTags+5; i++ {
+		many = append(many, "标签"+strconv.Itoa(i))
+	}
+	if got := normalizeTagList(many); len(got) != maxDefaultTags {
+		t.Fatalf("标签数量应上限为 %d，实际 %d", maxDefaultTags, len(got))
+	}
+
+	if got := normalizeTagList(nil); len(got) != 0 {
+		t.Fatalf("空值应返回空列表，实际 %+v", got)
+	}
+}
+
+// TestDefaultTagsRoundTrip 校验默认标签的保存与读取（走真实配置管理器，落临时配置文件）。
+func TestDefaultTagsRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	manager, err := config.NewManager(config.RuntimePaths{ConfigFile: filepath.Join(dir, "config.json")})
+	if err != nil {
+		t.Fatalf("创建配置管理器失败：%v", err)
+	}
+	service := &Service{cfg: manager}
+
+	if got := service.DefaultTags(); len(got) != 0 {
+		t.Fatalf("初始默认标签应为空，实际 %+v", got)
+	}
+	if err := service.SetDefaultTags([]string{" 辅种 ", "站点/财神", "辅种"}); err != nil {
+		t.Fatalf("保存默认标签失败：%v", err)
+	}
+	got := service.DefaultTags()
+	if len(got) != 2 || got[0] != "辅种" || got[1] != "站点/财神" {
+		t.Fatalf("默认标签读取结果不符合预期：%+v", got)
+	}
+
+	if err := service.SetDefaultTags(nil); err != nil {
+		t.Fatalf("清空默认标签失败：%v", err)
+	}
+	if got := service.DefaultTags(); len(got) != 0 {
+		t.Fatalf("清空后应为空，实际 %+v", got)
 	}
 }

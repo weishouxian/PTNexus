@@ -74,6 +74,55 @@ func (h *ReseedHandler) Stop(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "已请求停止，当前种子处理完后退出"})
 }
 
+// SetDefaultTags 保存默认辅种标签：辅种页保存后，「一种多站」行内辅种也会带上同一组标签。
+// 参数/返回：请求体 {"tags": ["站点/财神"]}；成功返回保存后的标签。
+// 失败场景：请求体格式错误、tags 不是数组、配置写入失败。
+// 副作用：写入全局配置（与设置中心其他保存动作同一路径）。
+func (h *ReseedHandler) SetDefaultTags(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	raw, exists := payload["tags"]
+	if !exists {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "缺少 tags 参数（传空数组表示清空）"})
+		return
+	}
+	items, ok := raw.([]any)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "tags 必须是字符串数组"})
+		return
+	}
+	tags := make([]string, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			tags = append(tags, text)
+		}
+	}
+	if err := h.service.SetDefaultTags(tags); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": "保存默认标签失败: " + err.Error()})
+		return
+	}
+	saved := h.service.DefaultTags()
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": defaultTagsMessage(saved),
+		"data":    saved,
+	})
+}
+
+// defaultTagsMessage 按保存结果给出回执文案（清空时也说明清楚）。
+// 参数/返回：tags 为保存后的标签列表；返回提示文本。
+// 失败场景：无。
+// 副作用：无。
+func defaultTagsMessage(tags []string) string {
+	if len(tags) == 0 {
+		return "已清空默认标签：辅种不再自动打标签"
+	}
+	return "默认标签已保存：" + strings.Join(tags, "、") + "（辅种页与「一种多站」一键辅种都会带上）"
+}
+
 // Records 分页查询辅种记录。
 // 参数/返回：查询参数 page/page_size/target_site/status/keyword；返回记录列表与总数。
 // 失败场景：数据库查询失败返回 500。

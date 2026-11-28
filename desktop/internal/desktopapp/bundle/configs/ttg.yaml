@@ -8,6 +8,9 @@ form_fields:
   subtitle: "subtitle"
   imdb_url: "imdb_c"
   douban_url: "douban_id"
+  # 新版 upload.php 的标题是三栏：name（主标题原样，点号保留）/ subtitle（副标题 ≤55，不用 [] 包裹）
+  # / highlight（副标题右侧加粗标签，如 "*内封简繁字幕"）。副标题由 Go 侧 adjustTTGTitle 落到 subtitle，
+  # 不再拼进 name，也不需要 NexusPHP 默认的 small_descr（站点无此字段）。
 
 # 匿名发布：跟随全局设置 upload_settings.anonymous_upload（默认开启）。
 # TTG 的匿名字段为 anonymity，值为 yes/no（非 NexusPHP 默认的 uplver）。
@@ -32,9 +35,9 @@ source_parsers:
       "BluRay原盘": "category.movie"
       "影视2160p": "category.movie"
       "UHD原盘": "category.movie"
-      "纪录片720p": "category.documentary"
-      "纪录片1080i/p": "category.documentary"
-      "纪录片BluRay原盘": "category.documentary"
+      "纪录片720p": "category.documentaries"
+      "纪录片1080i/p": "category.documentaries"
+      "纪录片BluRay原盘": "category.documentaries"
       "欧美剧720p(单集)": "category.tv_series"
       "欧美剧1080i/p(单集)": "category.tv_series"
       "高清日剧": "category.tv_series"
@@ -52,3 +55,24 @@ source_parsers:
 mappings:
   tag:
     "default": null
+
+# 候选（offer）提交配置：这里只描述「候选表单长什么样」，不决定是否走候选。
+# 是否走候选在「设置 → 站点设置」里该站点的「发种方式」下拉框中切换，
+# 落库为 sites.publish_mode（0=正式发种 / 1=候选申请）—— 权限是按账号的，
+# 同一站点 code 可能挂多个账号，只能按站点记录单独配。
+# TTG 候选页 offer.php 提交到 takeoffer.php，字段名与正式发种完全不同（简介叫 msg、海报叫 picture）。
+offer:
+  form_path: "offer.php"
+  submit_path: "takeoffer.php"
+  # 候选区列表页：takeoffer.php 成功只回 302，body 不带候选链接，
+  # 配了这里就会在提交后按名称回查一次，把候选链接补进发布日志。
+  list_path: "viewoffers.php"
+  fields:
+    name: "name"
+    picture: "picture"
+    description: "msg"
+    category: "type"
+    seeding_env: "seeding_env"
+  static:
+    # 候选页要求填做种条件，按自己的保种承诺填写
+    seeding_env: "7x24小时在线"

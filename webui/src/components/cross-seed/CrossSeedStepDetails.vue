@@ -6,6 +6,15 @@
           <div class="full-width-form-column">
             <el-form label-position="top" class="fill-height-form">
               <div class="title-section">
+                <!-- 标题字符集门禁：发布标题（由下方标题组件拼装）出现汉字/中文标点时标红并禁止发种 -->
+                <el-alert
+                  v-if="titleChineseChars.length > 0"
+                  type="error"
+                  show-icon
+                  :closable="false"
+                  class="title-charset-alert"
+                  :title="titleChineseWarning"
+                />
                 <el-form-item label="原始/待解析标题">
                   <el-input v-model="torrentData.original_main_title">
                     <template #append>
@@ -27,6 +36,7 @@
                           (!param.value || param.value.toUpperCase() === 'NOGROUP'),
                         'required-field-empty':
                           param.key === '年份' && (!param.value || param.value.trim() === ''),
+                        'title-charset-invalid': findChineseChars(param.value).length > 0,
                       }"
                     >
                       <el-input
@@ -47,6 +57,7 @@
                           (!param.value || param.value.toUpperCase() === 'NOGROUP'),
                         'required-field-empty':
                           param.key === '年份' && (!param.value || param.value.trim() === ''),
+                        'title-charset-invalid': findChineseChars(param.value).length > 0,
                       }"
                     >
                       <el-input
@@ -626,6 +637,7 @@ import { computed } from 'vue'
 import { Close, Monitor, Refresh, WarningFilled, Headset } from '@element-plus/icons-vue'
 import { useCrossSeedPanelContext } from './crossSeedPanelContext'
 import MediaInfoSummaryCard from './MediaInfoSummaryCard.vue'
+import { findChineseChars } from '@/utils/titleCharset'
 
 const {
   activeTab,
@@ -669,6 +681,8 @@ const {
   stopBDInfoSSE,
   filteredDeclarationsCount,
   filteredDeclarationsList,
+  titleChineseChars,
+  titleChineseWarning,
 } = useCrossSeedPanelContext()
 
 // 缩略图加载失败时隐藏该缩略图元素（原图仍正常展示，不因缩略图失效破图）。

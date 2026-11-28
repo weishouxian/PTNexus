@@ -442,15 +442,25 @@ func classifyDownloadError(err error) (string, string) {
 // 这样辅种和转种/发种写入下载器的站点标签同名，可按同一个标签统一筛选。
 const siteNameTagPrefix = "站点/"
 
+// siteNameTagPlaceholder 是标签里的「目标站名」占位符，写成 `站点/{站点名称}`。
+// 有了它，默认标签也能存「站点/站名」这种随目标站变化的标签：
+// 保存时存占位符，辅种时按每个种子的目标站替换成 `站点/财神` 这类实体标签。
+// 占位符写法与设置中心「下载器标签/分类设置」里的 `站点/{站点名称}` 保持一致。
+const siteNameTagPlaceholder = "{站点名称}"
+
+// siteNameTagTemplate 是占位符的完整写法，前端「保存为默认」时按它写进默认标签。
+const siteNameTagTemplate = siteNameTagPrefix + siteNameTagPlaceholder
+
 // effectiveTags 计算单个种子实际写入下载器的标签。
 // 参数/返回：params 为任务参数，site 为目标站昵称；返回去重后的标签列表。
 // 失败场景：不适用。
 // 副作用：无。
 func effectiveTags(params Params, site string) []string {
+	site = strings.TrimSpace(site)
 	tags := make([]string, 0, len(params.Tags)+1)
 	seen := map[string]struct{}{}
 	for _, tag := range params.Tags {
-		trimmed := strings.TrimSpace(tag)
+		trimmed := expandSiteNameTag(strings.TrimSpace(tag), site)
 		if trimmed == "" {
 			continue
 		}
@@ -462,14 +472,28 @@ func effectiveTags(params Params, site string) []string {
 	}
 	if params.TagBySite {
 		// 与设置里的站点标签同一口径：「站点/财神」，而不是裸站名。
-		if trimmed := strings.TrimSpace(site); trimmed != "" {
-			siteTag := siteNameTagPrefix + trimmed
+		if site != "" {
+			siteTag := siteNameTagPrefix + site
 			if _, ok := seen[siteTag]; !ok {
 				tags = append(tags, siteTag)
 			}
 		}
 	}
 	return tags
+}
+
+// expandSiteNameTag 把标签里的 `{站点名称}` 占位符替换成实际目标站名。
+// 参数/返回：tag 为原始标签，site 为目标站昵称；返回替换后的标签。
+// 失败场景：无（不含占位符时原样返回；含占位符但站名为空时返回空串表示丢弃该标签）。
+// 副作用：无。
+func expandSiteNameTag(tag, site string) string {
+	if !strings.Contains(tag, siteNameTagPlaceholder) {
+		return tag
+	}
+	if site == "" {
+		return ""
+	}
+	return strings.TrimSpace(strings.ReplaceAll(tag, siteNameTagPlaceholder, site))
 }
 
 // describeAuthIssues 把「站点 → 凭据问题」拼成一行结论，供任务消息展示。

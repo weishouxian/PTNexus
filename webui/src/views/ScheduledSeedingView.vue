@@ -245,6 +245,7 @@
 import { onMounted, ref } from 'vue'
 import axios from 'axios'
 import { ElMessage } from '@/utils/uiNotify'
+import { ensureSiteOrderLoaded, sortSitesByManagedOrder } from '@/utils/siteOrder'
 import { Refresh } from '@element-plus/icons-vue'
 import TaskFormDialog from '@/components/scheduled-seed/TaskFormDialog.vue'
 import PublishLogsDrawer from '@/components/scheduled-seed/PublishLogsDrawer.vue'
@@ -309,7 +310,8 @@ const parseSeeds = (seedsJson: string): SeedItem[] => {
 const parseTargetSites = (json: string): string[] => {
   try {
     const parsed = JSON.parse(json)
-    return Array.isArray(parsed) ? parsed : []
+    // 目标站点标签按「站点管理」顺序展示，而不是按保存时的勾选顺序。
+    return Array.isArray(parsed) ? sortSitesByManagedOrder(parsed.map((item) => String(item))) : []
   } catch {
     return []
   }
@@ -592,6 +594,8 @@ const handleExpandChange = () => {
 }
 
 onMounted(async () => {
+  // 目标站标签顺序按「站点管理」排序，先确保顺序缓存就绪。
+  void ensureSiteOrderLoaded()
   await fetchTasks()
   emits('ready', fetchTasks)
 })

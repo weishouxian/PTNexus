@@ -529,6 +529,7 @@ import CrossSeedPanel from '@/components/CrossSeedPanel.vue'
 import SiteTagChips from '@/components/SiteTagChips.vue'
 import { useCrossSeedStore } from '@/stores/crossSeed'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
+import { ensureSiteOrderLoaded, sortSitesByManagedOrder } from '@/utils/siteOrder'
 import type { WorkingTorrent } from '@/components/cross-seed/panel/types'
 
 const globalDownloader = useGlobalDownloaderStore()
@@ -713,7 +714,8 @@ const sourceSiteNames = computed(() => {
     .map((item) => item.source_site)
     .filter(Boolean)
     .forEach((site) => names.add(site))
-  return [...names]
+  // 站点筛选下拉按「站点管理」页的顺序，规则里出现的其它站点排最后。
+  return sortSitesByManagedOrder([...names])
 })
 
 function emptyRule(): Rule {

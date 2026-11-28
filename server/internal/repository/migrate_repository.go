@@ -697,7 +697,8 @@ func (r *MigrateRepository) ListTorrentsByNames(names []string) ([]map[string]an
 
 func (r *MigrateRepository) ListSitesStatus() ([]map[string]any, error) {
 	rows := make([]map[string]any, 0)
-	err := r.store.DB.Table("sites").Select("nickname, site, cookie, passkey, migration").Where("nickname IS NOT NULL AND nickname != ''").Order("nickname").Scan(&rows).Error
+	// 排序与「站点管理」页一致，前端站点按钮 / 选项都按这个顺序渲染。
+	err := r.store.DB.Table("sites").Select("nickname, site, cookie, passkey, migration").Where("nickname IS NOT NULL AND nickname != ''").Order(siteManagedOrderBy("")).Scan(&rows).Error
 	if err != nil {
 		return nil, err
 	}

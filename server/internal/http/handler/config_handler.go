@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/service"
+	"github.com/pt-nexus/server/internal/service/settings"
 )
 
 type ConfigHandler struct {
@@ -108,9 +108,66 @@ func (h *ConfigHandler) SaveTags(c *gin.Context) {
 }
 
 // GetMenuVisibility 返回前端导航菜单的显隐开关。
-// 参数/返回：无参数；data 为各菜单项显示状态。
-// 失败场景：无（环境变量缺失时按隐藏返回）。
-// 副作用：无，仅读取进程环境变量，不落库。
+// 参数/返回：无参数；data 为 key -> 是否显示，未保存的菜单项按默认显示；
+// env 为受环境变量控制的菜单项状态（false 表示设置页里也不展示该项）。
+// 失败场景：无（配置缺失时按默认口径返回）。
+// 副作用：无，仅读取内存配置。
 func (h *ConfigHandler) GetMenuVisibility(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": config.ResolveMenuVisibility()})
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    h.settings.GetMenuVisibility(),
+		"env":     h.settings.MenuVisibilityEnv(),
+	})
+}
+
+// SaveMenuVisibility 保存前端导航菜单的显隐开关。
+// 参数/返回：body 为 {"items": {"home": true, ...}}；返回保存后的完整显隐配置。
+// 失败场景：请求体格式错误返回 400，配置写入失败返回 500。
+// 副作用：写入应用配置并持久化。
+func (h *ConfigHandler) SaveMenuVisibility(c *gin.Context) {
+	var payload struct {
+		Items map[string]bool `json:"items"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	if err := h.settings.SaveMenuVisibility(payload.Items); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "菜单显示设置已保存",
+		"data":    h.settings.GetMenuVisibility(),
+	})
+}
+
+// GetSiteDataRefresh 返回站点数据页的定时刷新配置。
+// 参数/返回：无参数；data 为 {"enabled":bool,"time":"HH:mm"}，未配置时默认关闭、06:00。
+// 失败场景：无（配置缺失按默认口径返回）。
+// 副作用：无，仅读取内存配置。
+func (h *ConfigHandler) GetSiteDataRefresh(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.settings.GetSiteDataRefresh()})
+}
+
+// SaveSiteDataRefresh 保存站点数据页的定时刷新配置。
+// 参数/返回：body 为 {"enabled":true,"time":"06:00"}；返回保存后的配置。
+// 失败场景：请求体格式错误或时间不是 HH:mm 返回 400，写入失败返回 500。
+// 副作用：写入应用配置并持久化，后台调度器下一分钟起按新配置执行。
+func (h *ConfigHandler) SaveSiteDataRefresh(c *gin.Context) {
+	var payload settings.SiteDataRefreshConfig
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体格式错误"})
+		return
+	}
+	if err := h.settings.SaveSiteDataRefresh(payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "定时刷新设置已保存",
+		"data":    h.settings.GetSiteDataRefresh(),
+	})
 }

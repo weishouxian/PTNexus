@@ -16,3 +16,6 @@ frontend/node_modules/
 frontend/package-lock.json
 frontend/package.json.md5
 frontend/wailsjs/
+
+# Embedded BDInfo binaries, synced from server/bdinfo at package time (tens of MB)
+internal/desktopapp/bundle/bdinfo/

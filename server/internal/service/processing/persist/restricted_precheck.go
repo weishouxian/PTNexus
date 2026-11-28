@@ -1,9 +1,6 @@
 package persist
 
 import (
-	"strings"
-
-	"github.com/pt-nexus/server/internal/config"
 	processingtagging "github.com/pt-nexus/server/internal/service/processing/tagging"
 )
 
@@ -19,13 +16,8 @@ type FetchRestrictionPrecheckResult struct {
 //
 // 「禁转」命中即短路 —— 禁转资源永久不可转发，没必要再花时间做抓取修复。
 // 「限转」不短路 —— 限转是限时约束（如发布后 N 天内禁转），到期可正常转发，提前备好截图/简介更合理。
-// 「分集」是否短路取决于全局总开关 ALLOW_EPISODE_PUBLISH：
-//   - 关闭（默认）⇒ 同样短路，与既有行为一致；
-//   - 开启 ⇒ 不短路，让分集种子正常走修复流程。否则自动发种虽然放行了下载，
-//     下游却因修复被跳过而拿不到完整信息，发布时仍然是残缺数据。
-//
-// 判据只认全局开关，不看具体站点 —— 这里发生在抓取阶段，尚无目标站概念；
-// 目标站级别的开关留到发布时由 publish_entry 裁决。
+// 「分集」也不短路 —— 能否发布只由目标站的 allow_episode_publish 决定，
+// 抓取阶段先按正常流程把截图/简介备齐，避免站点开启分集后发布时数据残缺。
 func DetectFetchRestrictionPrecheck(
 	draft *SeedDraft,
 	siteIdentifier string,
@@ -38,16 +30,12 @@ func DetectFetchRestrictionPrecheck(
 		return FetchRestrictionPrecheckResult{}
 	}
 
-	allowEpisode := config.AllowsEpisodePublish()
-
 	restricted := processingtagging.DetectRestrictedTags(draft.RawTags)
 	// 「限转」不短路修复：限转通常为限时约束（如发布后 N 天内禁转），到期后可正常转发，
-	// 提前把截图/简介备好比等到限转期过了再补更合理。仅「禁转」与「分集」参与短路判定。
+	// 提前把截图/简介备好比等到限转期过了再补更合理。仅「禁转」参与短路判定。
 	restricted = filterOutLimitedTransferTag(restricted)
-	if allowEpisode {
-		// 分集开关打开时，把「分集」从短路名单里剔除；禁转照旧拦截。
-		restricted = filterOutEpisodeTag(restricted)
-	}
+	// 「分集」同样从短路名单剔除：分集发布只看目标站配置，抓取阶段不拦。
+	restricted = filterOutEpisodeTag(restricted)
 	if len(restricted) > 0 {
 		return FetchRestrictionPrecheckResult{
 			Matched:        true,
@@ -56,44 +44,12 @@ func DetectFetchRestrictionPrecheck(
 			Reason:         "源站显式标签命中受限规则",
 		}
 	}
-	if allowEpisode {
-		// 分集标签已被放行：不再做自动分集检测短路，直接进入正常修复流程。
-		_ = siteIdentifier
-		return FetchRestrictionPrecheckResult{}
-	}
-
-	description := strings.TrimSpace(strings.Join([]string{draft.Statement, draft.Body}, "\n"))
-	completion := processingtagging.CheckCompletionStatusWithDownloaderContext(
-		draft.Title,
-		draft.Subtitle,
-		description,
-		processingtagging.CompletionCheckContext{
-			SavePath:     savePath,
-			TorrentName:  torrentNameForPath,
-			ContentName:  draft.Title,
-			DownloaderID: downloaderID,
-			RootConfig:   rootConfig,
-		},
-	)
-	episodeTagResult := processingtagging.DetectEpisodeTag(processingtagging.EpisodeTagInput{
-		Title:            draft.Title,
-		Subtitle:         draft.Subtitle,
-		TorrentName:      torrentNameForPath,
-		Type:             draft.Type,
-		ExistingTags:     draft.RawTags,
-		TorrentFileNames: draft.TorrentFileNames,
-		Completion:       completion,
-	})
-	if episodeTagResult.Matched {
-		return FetchRestrictionPrecheckResult{
-			Matched:        true,
-			SkipRepairs:    true,
-			RestrictedTags: []string{processingtagging.StandardEpisodeTag},
-			Reason:         episodeTagResult.Reason,
-		}
-	}
 
 	_ = siteIdentifier
+	_ = savePath
+	_ = torrentNameForPath
+	_ = downloaderID
+	_ = rootConfig
 	return FetchRestrictionPrecheckResult{}
 }
 

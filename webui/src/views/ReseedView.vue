@@ -183,13 +183,35 @@
             >
               <el-option v-for="tag in tagOptions" :key="tag" :label="tag" :value="tag" />
             </el-select>
-            <el-checkbox v-model="form.tag_by_site" :disabled="!tokenConfigured">按目标站名打标签（站点/站名）</el-checkbox>
+            <el-button
+              size="small"
+              plain
+              :loading="savingDefaultTags"
+              :disabled="!tokenConfigured || savingDefaultTags"
+              @click="saveDefaultTags"
+            >
+              保存为默认
+            </el-button>
             <el-tooltip
-              content="勾选后每个种子额外打上「站点/目标站名」标签（如「站点/财神」），与设置里标签/分类设置的站点标签同名，可与上面的手动标签叠加"
+              content="保存后：辅种页每次打开自动带出这组标签；「一种多站」列表里的「辅种」按钮也会带上它们。勾选了下面的「按目标站名打标签」时，默认里存的是站点/站名，按每个种子命中的目标站自动替换"
               placement="top"
             >
               <el-icon class="hint-icon"><QuestionFilled /></el-icon>
             </el-tooltip>
+            <el-checkbox v-model="form.tag_by_site" :disabled="!tokenConfigured">
+              按目标站名打标签（站点/站名）
+            </el-checkbox>
+            <el-tooltip
+              content="勾选后每个种子额外打上「站点/目标站名」标签（如「站点/财神」），与设置里标签/分类设置的站点标签同名，可与上面的手动标签叠加。想让「站点/站名」成为默认标签，勾选后点「保存为默认」即可"
+              placement="top"
+            >
+              <el-icon class="hint-icon"><QuestionFilled /></el-icon>
+            </el-tooltip>
+          </div>
+          <div v-if="tagsDifferFromDefault" class="tag-default-hint">
+            当前标签尚未保存为默认：「一种多站」一键辅种仍会用默认标签
+            <template v-if="defaultTagsDisplay.length > 0">（{{ defaultTagsDisplay.join('、') }}）</template>
+            <template v-else>（当前未设置默认标签）</template>
           </div>
         </el-form-item>
 
@@ -477,6 +499,7 @@ import axios from 'axios'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled, QuestionFilled } from '@element-plus/icons-vue'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
+import { ensureSiteOrderLoaded, sortSitesByManagedOrder } from '@/utils/siteOrder'
 
 interface ReseedSiteRow {
   nickname: string
@@ -565,6 +588,17 @@ const pickerTotal = ref(0)
 const torrentHashMap = ref<Record<string, string[]>>({})
 const torrentCache = ref<Record<string, TorrentPickerItem>>({})
 const tagOptions = ref<string[]>([])
+// 默认标签：存在后端全局配置里（不是浏览器本地），保存后辅种页每次带出，
+// 「一种多站」列表里的行内辅种也会带上同一组标签。
+const defaultTags = ref<string[]>([])
+const savingDefaultTags = ref(false)
+// 站名占位符：默认标签里存这个写法，执行时按每个种子命中的目标站替换成「站点/财神」，
+// 因此「站点/站名」这种随站变化的标签也能保存为默认（后端 executor.expandSiteNameTag 负责替换）。
+// 写法与设置中心「下载器标签/分类设置」里的「站点/{站点名称}」保持同一口径。
+const SITE_NAME_TAG = '站点/{站点名称}'
+const SITE_NAME_TAG_LABEL = '站点/站名'
+// 只在首次拉状态时把默认标签灌进表单，后续刷新不覆盖用户正在编辑的标签。
+let tagsInitialized = false
 
 const starting = ref(false)
 const running = ref(false)
@@ -750,6 +784,73 @@ const readStoredTags = (): string[] => {
   }
 }
 
+// 比较「当前标签」与「默认标签」是否一致：排序去空后逐项比对，避免顺序差异误报。
+const normalizeTagSet = (list: string[]) =>
+  Array.from(new Set(list.map((item) => item.trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, 'zh-CN'),
+  )
+
+// 把一组标签拆成「静态标签」与「是否含站名占位符」：
+// 占位符只在表单里以勾选「按目标站名打标签」的形式呈现，不直接显示给用户。
+const splitSiteNameTag = (list: string[]) => {
+  const tags: string[] = []
+  let withSiteName = false
+  list.forEach((item) => {
+    const text = String(item ?? '').trim()
+    if (!text) return
+    if (text === SITE_NAME_TAG) {
+      withSiteName = true
+      return
+    }
+    tags.push(text)
+  })
+  return { tags, withSiteName }
+}
+
+// 本次实际要写的标签：勾选「按目标站名打标签」时补上占位符，保存为默认时一并存下来。
+const selectedTags = computed(() =>
+  form.tag_by_site ? [...form.tags, SITE_NAME_TAG] : [...form.tags],
+)
+
+// 默认标签展示文案：把占位符写成「站点/站名」，避免用户看到花括号不知道是什么。
+const defaultTagsDisplay = computed(() =>
+  defaultTags.value.map((tag) => (tag === SITE_NAME_TAG ? SITE_NAME_TAG_LABEL : tag)),
+)
+
+const tagsDifferFromDefault = computed(
+  () =>
+    normalizeTagSet(selectedTags.value).join('\n') !== normalizeTagSet(defaultTags.value).join('\n'),
+)
+
+// saveDefaultTags 把当前标签保存成默认标签：辅种页下次打开自动带出，
+// 「一种多站」行内辅种也从 /api/reseed/status 读同一份配置。
+// 勾选「按目标站名打标签」时存的是占位符 `站点/{站点名称}`，辅种时按目标站展开，
+// 所以「站点/站名」这种随站变化的标签也能当默认值。
+const saveDefaultTags = async () => {
+  if (savingDefaultTags.value) return
+  savingDefaultTags.value = true
+  try {
+    const response = await axios.post('/api/reseed/default_tags', { tags: selectedTags.value })
+    if (!response.data?.success) {
+      ElMessage.error(response.data?.message || '保存默认标签失败')
+      return
+    }
+    defaultTags.value = Array.isArray(response.data?.data) ? response.data.data : [...selectedTags.value]
+    window.localStorage.setItem(TAG_STORAGE_KEY, JSON.stringify(form.tags))
+    collectTagOptions()
+    ElMessage.success(response.data?.message || '默认标签已保存')
+  } catch (error: unknown) {
+    const message = axios.isAxiosError(error)
+      ? (error.response?.data as { message?: string } | undefined)?.message || error.message
+      : error instanceof Error
+        ? error.message
+        : '保存默认标签失败'
+    ElMessage.error(message)
+  } finally {
+    savingDefaultTags.value = false
+  }
+}
+
 const collectTagOptions = () => {
   const pool = new Set<string>(readStoredTags())
   // 站点标签与设置里标签/分类设置同一口径：建议项是「站点/站名」，不是裸站名。
@@ -874,13 +975,20 @@ const selectedHashes = computed(() => {
 
 const fetchStatus = async () => {
   try {
+    // 站点顺序真源是「站点管理」页：先确保顺序缓存就绪，站点下拉/多选都按它排。
+    await ensureSiteOrderLoaded()
     const response = await axios.get('/api/reseed/status')
     if (!response.data?.success && response.data?.success !== undefined) {
       ElMessage.error(response.data?.message || '读取辅种状态失败')
       return
     }
     tokenConfigured.value = Boolean(response.data?.token_configured)
-    siteOptions.value = Array.isArray(response.data?.sites) ? response.data.sites : []
+    const rawSites = Array.isArray(response.data?.sites) ? (response.data.sites as ReseedSiteRow[]) : []
+    // 后端已按 sort_order 返回，这里再按同一份顺序归一，避免旧后端 / 缓存顺序不一致。
+    const siteByName = new Map(rawSites.map((site) => [site.nickname, site]))
+    siteOptions.value = sortSitesByManagedOrder(rawSites.map((site) => site.nickname))
+      .map((name) => siteByName.get(name))
+      .filter((site): site is ReseedSiteRow => Boolean(site))
     // 站点凭据/支持情况可能变了：把已选中但已不可辅种的站点剔除，避免提交后被后端拒。
     const selectable = new Set(
       siteOptions.value.filter((site) => site.can_reseed !== false).map((site) => site.nickname),
@@ -890,6 +998,20 @@ const fetchStatus = async () => {
     }
     iyuuSiteListKnown.value = response.data?.iyuu_site_list_known !== false
     siteHiddenCount.value = Number(response.data?.site_hidden ?? 0) || 0
+    const statusTags = Array.isArray(response.data?.default_tags)
+      ? (response.data.default_tags as unknown[]).filter(
+          (item): item is string => typeof item === 'string' && item.trim() !== '',
+        )
+      : []
+    defaultTags.value = statusTags
+    if (!tagsInitialized) {
+      tagsInitialized = true
+      // 默认标签优先；没配过才回落到上次手动输入过的标签，避免老用户升级后标签被清空。
+      // 默认里若含站名占位符，转成「按目标站名打标签」勾选状态，而不是把花括号显示在标签框里。
+      const saved = splitSiteNameTag(statusTags.length > 0 ? statusTags : readStoredTags())
+      form.tags = saved.tags
+      form.tag_by_site = saved.withSiteName
+    }
     pathOptions.value = Array.isArray(response.data?.paths) ? response.data.paths : []
     downloaderOptions.value = Array.isArray(response.data?.downloaders)
       ? response.data.downloaders
@@ -937,7 +1059,7 @@ const fetchRecords = async () => {
       records.value.forEach((row) => {
         if (row.target_site) sites.add(row.target_site)
       })
-      recordSiteOptions.value = Array.from(sites).sort()
+      recordSiteOptions.value = sortSitesByManagedOrder(Array.from(sites))
       collectTagOptions()
     } else {
       ElMessage.error(response.data?.message || '读取辅种记录失败')
@@ -1195,6 +1317,16 @@ onBeforeUnmount(() => {
 
 .tag-select {
   width: 260px;
+}
+
+/* 默认标签与当前标签不一致时的行内提示：独占一行，不挤在输入框旁边 */
+.tag-default-hint {
+  flex-basis: 100%;
+  width: 100%;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .downloader-select {

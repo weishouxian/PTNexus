@@ -127,6 +127,60 @@ func (h *SitesHandler) UpdateSite(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("站点 '%s' 的信息已成功更新。", nickname)})
 }
 
+// SiteDetail 返回单个站点的完整配置，供「站点数据」页的就地编辑弹窗回填。
+// 参数/返回：query 参数 site 为站点标识（代码优先，兼容昵称）；返回 {"success":true,"site":{...}}。
+// 失败场景：缺少标识 → 400；站点不存在 → 404。
+// 副作用：无。
+func (h *SitesHandler) SiteDetail(c *gin.Context) {
+	code := strings.TrimSpace(c.Query("site"))
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点标识。"})
+		return
+	}
+	site, err := h.repo.GetSiteDetail(code)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("读取站点配置失败: %v", err)})
+		return
+	}
+	if site == nil {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": fmt.Sprintf("未找到站点 '%s'。", code)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "site": site})
+}
+
+// PatchSite 只更新请求里出现的字段（站点数据页「编辑站点」弹窗调用）。
+// 参数/返回：请求体需含 site 与至少一个可编辑字段；返回 {"success":true}。
+// 与 UpdateSite 的区别：不做全量覆盖 —— 弹窗没提交的 Dupe 规则、标签、禁转名单等原样保留。
+// 失败场景：请求体非法 / 缺少站点标识 / 无可更新字段 → 400；站点不存在 → 404。
+// 副作用：更新 sites 表对应行的白名单列。
+func (h *SitesHandler) PatchSite(c *gin.Context) {
+	payload := map[string]any{}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请求体必须是 JSON 对象。"})
+		return
+	}
+	code := strings.TrimSpace(toString(payload["site"], ""))
+	if code == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "必须提供站点标识。"})
+		return
+	}
+	updated, err := h.repo.PatchSiteDetails(code, payload)
+	if errors.Is(err, repository.ErrNoPatchField) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "没有可更新的字段。"})
+		return
+	}
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "message": fmt.Sprintf("更新站点配置失败: %v", err)})
+		return
+	}
+	if !updated {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": fmt.Sprintf("未找到站点 '%s'。", code)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "站点配置已更新。"})
+}
+
 // UpdateSiteDupe 只更新站点的 dupe 查重配置（开关 / 体积容差 / 按媒介规则）。
 // 参数/返回：请求体需含 id 与 dupe 相关字段；返回 {"success":true}。
 // 说明：与全量更新分开，避免 dupe 弹窗把站点的其它字段覆盖成空值。

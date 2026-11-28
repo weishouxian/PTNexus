@@ -37,18 +37,13 @@
           <img src="/favicon.ico" alt="Logo" height="32" class="brand-logo" />
           PT Nexus
         </div>
-        <el-menu-item index="/">首页</el-menu-item>
-        <el-menu-item index="/info">流量统计</el-menu-item>
-        <el-menu-item index="/torrents">一种多站</el-menu-item>
-        <el-menu-item index="/reseed">辅种</el-menu-item>
-        <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
-        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
-        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
-        <el-menu-item index="/publish-logs">发种日志</el-menu-item>
-        <el-menu-item index="/sites">做种检索</el-menu-item>
-        <el-menu-item index="/resource-info">资源信息</el-menu-item>
-        <el-menu-item index="/bangumi">番组数据</el-menu-item>
-        <el-menu-item index="/settings">设置</el-menu-item>
+        <el-menu-item
+          v-for="item in visibleMainMenuItems"
+          :key="item.key"
+          :index="item.path"
+        >
+          {{ item.label }}
+        </el-menu-item>
       </el-menu>
       <div
         class="right-buttons-container desktop-no-drag"
@@ -107,15 +102,6 @@
             :value="item.id"
           />
         </el-select>
-        <el-button
-          type="success"
-          @click="handleGlobalRefresh"
-          :loading="isRefreshing"
-          :disabled="isRefreshing"
-          plain
-        >
-          刷新
-        </el-button>
       </div>
       <DesktopWindowControls
         v-if="showDesktopWindowControlsInNav"
@@ -136,16 +122,6 @@
         </div>
       </div>
       <div class="mobile-top-actions">
-        <el-button
-          type="success"
-          plain
-          @click="handleGlobalRefresh"
-          :loading="isRefreshing"
-          :disabled="isRefreshing"
-          size="small"
-        >
-          刷新
-        </el-button>
         <el-button type="primary" plain :icon="Menu" @click="mobileMenuVisible = true" size="small">
           菜单
         </el-button>
@@ -192,18 +168,13 @@
         router
         @select="mobileMenuVisible = false"
       >
-        <el-menu-item index="/">首页</el-menu-item>
-        <el-menu-item index="/info">流量统计</el-menu-item>
-        <el-menu-item index="/torrents">一种多站</el-menu-item>
-        <el-menu-item index="/reseed">辅种</el-menu-item>
-        <el-menu-item index="/scheduled-seeding">定时发种</el-menu-item>
-        <el-menu-item v-if="showAutoSeedMenu" index="/auto-seed">自动发种</el-menu-item>
-        <el-menu-item index="/publish-progress">下载器发布进度</el-menu-item>
-        <el-menu-item index="/publish-logs">发种日志</el-menu-item>
-        <el-menu-item index="/sites">做种检索</el-menu-item>
-        <el-menu-item index="/resource-info">资源信息</el-menu-item>
-        <el-menu-item index="/bangumi">番组数据</el-menu-item>
-        <el-menu-item index="/settings">设置</el-menu-item>
+        <el-menu-item
+          v-for="item in visibleMainMenuItems"
+          :key="item.key"
+          :index="item.path"
+        >
+          {{ item.label }}
+        </el-menu-item>
         <el-menu-item index="/settings/general" class="mobile-settings-sub-item">
           基础设置
         </el-menu-item>
@@ -212,6 +183,9 @@
         </el-menu-item>
         <el-menu-item index="/settings/cookie" class="mobile-settings-sub-item">
           站点管理
+        </el-menu-item>
+        <el-menu-item index="/settings/menu" class="mobile-settings-sub-item">
+          菜单显示
         </el-menu-item>
       </el-menu>
 
@@ -279,6 +253,7 @@ import { useDesktopWindowControls } from '@/desktop/windowControls'
 import VersionUpdate from '@/components/VersionUpdate.vue'
 import SiteAlertsBell from '@/components/SiteAlertsBell.vue'
 import { ElMessage } from '@/utils/uiNotify'
+import { ensureSiteOrderLoaded } from '@/utils/siteOrder'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 
 const route = useRoute()
@@ -331,6 +306,7 @@ const currentRouteTitle = computed(() => routeTitleMap[activeRoute.value] || '�
 const desktopCompactSubtitle = computed(() =>
   isLoginPage.value ? '登录' : currentRouteTitle.value,
 )
+// 刷新入口统一收在各页面工具栏，顶栏不再放全局刷新按钮。
 const showMobileNav = computed(() => isMobile.value && !isDesktopShell.value)
 const showDesktopCompactTitleBar = computed(() => isWindowsDesktop.value && isLoginPage.value)
 const showDesktopWindowControlsInNav = computed(() => isWindowsDesktop.value && !isLoginPage.value)
@@ -563,23 +539,62 @@ const handleRefreshLoadingChange = (event: Event) => {
   isRefreshing.value = !!customEvent.detail?.refreshing
 }
 
-// 菜单显隐：由后端环境变量控制（默认隐藏「自动发种」）。
-// 仅影响导航菜单渲染，路由与后端接口保持可用，直接访问链接仍能打开页面。
-const showAutoSeedMenu = ref(false)
+// 菜单显隐：由设置页保存到配置里；只影响导航菜单渲染，路由与后端接口保持可用。
+interface MainMenuItem {
+  key: string
+  path: string
+  label: string
+}
+
+const mainMenuDefinitions: MainMenuItem[] = [
+  { key: 'home', path: '/', label: '首页' },
+  { key: 'info', path: '/info', label: '流量统计' },
+  { key: 'torrents', path: '/torrents', label: '一种多站' },
+  { key: 'reseed', path: '/reseed', label: '辅种' },
+  { key: 'scheduled_seeding', path: '/scheduled-seeding', label: '定时发种' },
+  { key: 'auto_seed', path: '/auto-seed', label: '自动发种' },
+  { key: 'publish_progress', path: '/publish-progress', label: '下载器发布进度' },
+  { key: 'publish_logs', path: '/publish-logs', label: '发种日志' },
+  { key: 'sites', path: '/sites', label: '做种检索' },
+  { key: 'site_data', path: '/site-data', label: '站点数据' },
+  { key: 'resource_info', path: '/resource-info', label: '资源信息' },
+  { key: 'bangumi', path: '/bangumi', label: '番组数据' },
+  { key: 'settings', path: '/settings', label: '设置' },
+]
+
+const menuVisibility = ref<Record<string, boolean>>({})
 let menuVisibilityLoaded = false
 
-const loadMenuVisibility = async () => {
-  if (menuVisibilityLoaded) return
+const isMenuVisible = (key: string) => {
+  // 设置菜单始终保留，避免把入口藏起来后无法恢复。
+  if (key === 'settings') return true
+  if (Object.prototype.hasOwnProperty.call(menuVisibility.value, key)) {
+    return menuVisibility.value[key] !== false
+  }
+  // 配置还没加载时保持原行为：只有自动发种默认隐藏。
+  return key !== 'auto_seed'
+}
+
+const visibleMainMenuItems = computed(() =>
+  mainMenuDefinitions.filter((item) => isMenuVisible(item.key)),
+)
+
+const loadMenuVisibility = async (force = false) => {
+  if (menuVisibilityLoaded && !force) return
   // 未登录时请求会被 401 拦截，等登录完成后再拉取。
   if (!localStorage.getItem('token')) return
   menuVisibilityLoaded = true
   try {
     const response = await axios.get('/api/config/menu_visibility')
-    showAutoSeedMenu.value = response.data?.data?.auto_seed === true
+    menuVisibility.value = response.data?.data ?? {}
   } catch (error) {
     menuVisibilityLoaded = false
     console.error('加载菜单显隐配置失败:', error)
   }
+}
+
+const handleMenuVisibilityChanged = () => {
+  void loadMenuVisibility(true)
 }
 
 // 加载背景设置
@@ -696,8 +711,11 @@ onMounted(() => {
   // 顶部下载器选择与候选列表：选择结果由服务端持久化，页面侧会 await 同一份缓存。
   void globalDownloader.loadSelection()
   void globalDownloader.fetchDownloaders()
+  // 站点展示顺序（与站点管理页一致）全局只拉一次，各页面排序共用这份缓存。
+  void ensureSiteOrderLoaded()
   window.addEventListener('background-updated', handleBackgroundUpdate)
   window.addEventListener('app-global-refresh-loading', handleRefreshLoadingChange as EventListener)
+  window.addEventListener('ptn:menu-visibility-changed', handleMenuVisibilityChanged)
   window.addEventListener('resize', updateIsMobile)
   window.addEventListener('keydown', handleGlobalEscClose)
 })
@@ -709,6 +727,7 @@ onUnmounted(() => {
     'app-global-refresh-loading',
     handleRefreshLoadingChange as EventListener,
   )
+  window.removeEventListener('ptn:menu-visibility-changed', handleMenuVisibilityChanged)
   window.removeEventListener('keydown', handleGlobalEscClose)
 })
 </script>

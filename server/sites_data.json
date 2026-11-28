@@ -684,7 +684,7 @@
   },
   {
     "site": "ilolicon",
-    "allow_episode_publish": true,
+    "allow_episode_publish": false,
     "nickname": "爱萝莉",
     "base_url": "mua.xloli.cc",
     "special_tracker_domain": null,
@@ -724,7 +724,7 @@
   },
   {
     "site": "crabpt",
-    "allow_episode_publish": false,
+    "allow_episode_publish": true,
     "nickname": "蟹黄堡",
     "base_url": "crabpt.vip",
     "special_tracker_domain": null,
@@ -940,7 +940,7 @@
   },
   {
     "site": "xingyunge",
-    "allow_episode_publish": true,
+    "allow_episode_publish": false,
     "nickname": "星陨阁",
     "base_url": "pt.xingyungept.org",
     "special_tracker_domain": null,
@@ -1141,7 +1141,7 @@
     "site": "playletpt",
     "allow_episode_publish": false,
     "nickname": "PlayLet",
-    "base_url": "playletpt.xyz",
+    "base_url": "playlet.cc",
     "special_tracker_domain": null,
     "group": "-GodDramas",
     "migration": 0,
@@ -1437,7 +1437,7 @@
   },
   {
     "site": "colapt",
-    "allow_episode_publish": true,
+    "allow_episode_publish": false,
     "nickname": "可乐",
     "base_url": "www.colapt.com",
     "special_tracker_domain": null,

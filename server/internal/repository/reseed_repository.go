@@ -167,7 +167,7 @@ type ReseedSiteRow struct {
 
 // ListSites 返回 sites 表全部站点（含无凭据的）；辅种页只展示其中已配置 Cookie/Passkey 的站点，
 // 由服务层（reseed.filterCredentialSites）筛选。
-// 参数/返回：无参数；返回站点精简列表（按昵称排序）。
+// 参数/返回：无参数；返回站点精简列表（排序与「站点管理」页一致）。
 // 失败场景：数据库查询失败。
 // 副作用：只读数据库。
 func (r *ReseedRepository) ListSites() ([]ReseedSiteRow, error) {
@@ -185,7 +185,7 @@ func (r *ReseedRepository) ListSites() ([]ReseedSiteRow, error) {
 	if err := r.store.DB.Table("sites").
 		Select("nickname, site, base_url, cookie, passkey, migration").
 		Where("nickname IS NOT NULL AND nickname != ''").
-		Order("nickname ASC").
+		Order(siteManagedOrderBy("")).
 		Scan(&rows).Error; err != nil {
 		return []ReseedSiteRow{}, err
 	}

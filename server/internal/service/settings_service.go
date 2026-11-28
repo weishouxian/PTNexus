@@ -19,6 +19,11 @@ func NewSettingsService(cfg *config.Manager) *SettingsService {
 	return settingspkg.NewSettingsService(cfg)
 }
 
+// MenuVisibilityKeys 返回设置页需要渲染的导航菜单键名。
+func MenuVisibilityKeys() []string {
+	return settingspkg.MenuVisibilityKeys()
+}
+
 // IsInvalidSettingsError 判断错误是否属于前端提交内容不合法。
 func IsInvalidSettingsError(err error) bool {
 	return settingspkg.IsInvalidSettingsError(err)

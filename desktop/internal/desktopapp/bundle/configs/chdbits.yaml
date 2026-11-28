@@ -366,3 +366,36 @@ mappings:
 type_by_tag:
   "tag.动画": "category.animation"
   "tag.动漫": "category.animation"
+
+# 候选（offer）提交配置
+# 是否走候选在「设置 → 站点设置 → 发种方式」切换（落库 sites.publish_mode），
+# 这里只描述候选表单长什么样，不决定开关。
+#
+# 彩虹岛实测（ptchdbits.co/offers.php?add_offer=1，登录态）：
+#   - 候选表单 = 发种表单去掉种子文件，字段名与 upload.php 完全一致：
+#     分类 type / 媒介 medium_sel / 编码 codec_sel / 音频 audiocodec_sel /
+#     分辨率 standard_sel / 地区 processing_sel / 制作组 team_sel / 标签为 6 个独立 checkbox；
+#   - 简介字段叫 body（不是 descr），海报 picture，IMDb 链接 url，副标题 small_descr（独立一栏）；
+#   - 提交端点是 offers.php?new_offer=1；候选详情页是 offers.php?id=N&off_details=1；
+#   - 失败页形如 <h2>错误！</h2><td class="text">你必须输入标题！</td>；
+#   - ⚠️ 海报（picture）候选栏**留空即可通过**，填了才走 `^http://…\.(jpg|gif|png)$` 校验：
+#     同一张 jpg 用 https:// 提交会被回「图片必须是jpg, gif 或png格式。」——站点只跑正则、
+#     不回源检查图片，报错与图片真实格式无关（实测 http://example.com/a.jpg 放行，https:// 被拒）。
+#     所以下方 omit_fields 直接不提交该字段，从根上避开这类误报，别再被文案带偏去查图片格式。
+# 因为表单几乎同构，开启 copy_upload_fields 复用整套发种映射（含 static_fields 与 checkbox_tags）。
+offer:
+  form_path: "offers.php?add_offer=1"
+  submit_path: "offers.php?new_offer=1"
+  # 候选区列表页：提交成功后按名称回查，补出候选详情链接（站点成功时不一定回链接）。
+  list_path: "offers.php"
+  copy_upload_fields: true
+  # 候选不提交的字段：海报栏留空即通过，填了反而要过 http:// 前缀校验，索性不发。
+  # 若将来站点改成必填，删掉这一行并改用 picture_scheme: "http"（把 https 降级）。
+  omit_fields: ["picture"]
+  fields:
+    name: "name"
+    subtitle: "small_descr"
+    description: "body"
+    picture: "picture"
+    imdb_url: "url"
+    category: "type"

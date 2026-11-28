@@ -4,12 +4,25 @@
       <!-- 第一行：主标题 -->
       <div class="preview-row main-title-row">
         <div class="row-label">主标题：</div>
-        <div class="row-content main-title-content">
+        <div
+          :class="[
+            'row-content',
+            'main-title-content',
+            { 'main-title-content--invalid': titleChineseChars.length > 0 },
+          ]"
+        >
           {{
             torrentData.final_publish_parameters?.['主标题 (预览)'] ||
             torrentData.original_main_title ||
             '暂无数据'
           }}
+        </div>
+      </div>
+      <!-- 标题字符集门禁：含汉字/中文标点时标红提示，发布按钮同时被禁用 -->
+      <div v-if="titleChineseChars.length > 0" class="preview-row main-title-warning-row">
+        <div class="row-label"></div>
+        <div class="row-content">
+          <el-alert type="error" show-icon :closable="false" :title="titleChineseWarning" />
         </div>
       </div>
 
@@ -411,6 +424,8 @@ const {
   getProxyImageUrl,
   getPixhostThumbnailOnly,
   handleImageErrorWithProxy,
+  titleChineseChars,
+  titleChineseWarning,
 } = useCrossSeedPanelContext()
 
 // 缩略图加载失败时隐藏该缩略图元素（原图仍正常展示）。
@@ -511,5 +526,15 @@ const resourceInfoScreenshotImages = computed<string[]>(() => {
   object-fit: contain;
   border-radius: 3px;
   border: 1px solid var(--el-border-color-lighter);
+}
+
+/* 主标题含汉字/中文标点：标题文字标红，下方紧跟 error 提示条 */
+.main-title-content--invalid {
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
+
+.main-title-warning-row {
+  margin-top: -4px;
 }
 </style>

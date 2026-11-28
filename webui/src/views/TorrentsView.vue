@@ -89,6 +89,16 @@
               <el-button type="primary" @click="openFilterDialog" plain class="filter-trigger">
                 筛选
               </el-button>
+              <!-- 顶栏刷新在该页已收起，刷新按钮挪到这里，紧挨筛选按钮 -->
+              <el-button
+                type="success"
+                plain
+                :loading="syncingDownloaderData"
+                :disabled="syncingDownloaderData"
+                @click="handleHeaderRefresh"
+              >
+                刷新
+              </el-button>
             </span>
       </div>
     </div>
@@ -1170,6 +1180,7 @@ import { useTorrentsViewState } from '@/stores/torrentsViewState'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 import type { ISourceInfo, Torrent, SiteData, Downloader, PublishSiteStatus, PublishStatusGroup } from '@/types'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
+import { sortSitesByManagedOrder } from '@/utils/siteOrder'
 import { ElMessage, ElNotification } from '@/utils/uiNotify'
 
 const emits = defineEmits(['ready'])
@@ -1279,6 +1290,27 @@ const syncDownloadersAndReload = async (
   }
 
   return outcome
+}
+
+// 页面工具栏上的刷新按钮（顶栏刷新在本页已收起，按钮挪到筛选按钮旁）。
+// 行为与顶栏一致：先同步下载器数据，再按最新缓存重载列表，并给出刷新范围提示。
+const handleHeaderRefresh = async () => {
+  if (syncingDownloaderData.value) return
+  const targetDownloaderId = (globalDownloader.selectedDownloaderId || '').trim()
+  const downloaderName = targetDownloaderId
+    ? globalDownloader.downloaders.find((item) => item.id === targetDownloaderId)?.name ||
+      targetDownloaderId
+    : ''
+  const scopeLabel = downloaderName ? `下载器「${downloaderName}」` : '全部下载器'
+
+  ElMessage.info(`后台正在刷新${scopeLabel}的缓存...`)
+  const outcome = await syncDownloadersAndReload({ downloaderId: targetDownloaderId })
+  // 后台已有刷新任务时会返回 success=false，必须显式判断，避免误报刷新成功。
+  if (outcome && outcome.success === false) {
+    ElMessage.warning(outcome.message || '后台刷新未执行，请稍后再试。')
+    return
+  }
+  ElMessage.success(`${scopeLabel}数据已刷新！`)
 }
 
 const fetchDataWithSpinner = async () => {
@@ -1608,17 +1640,18 @@ const changeLocationCommonPaths = computed(() => {
 // 用于跟踪在源站点选择弹窗中进行IYUU查询的站点
 const sourceSiteQueryLoading = ref<Record<string, boolean>>({})
 
-const sorted_all_sites = computed(() => {
-  const collator = new Intl.Collator('zh-CN', { numeric: true })
-  return [...all_sites.value].sort(collator.compare)
-})
+/**
+ * 站点展示顺序：统一按「站点管理」页的排序（sort_order），不再按拼音重排，
+ * 否则用户看到的站点筛选/站点标签顺序会和站点管理页对不上。
+ */
+const sorted_all_sites = computed(() => sortSitesByManagedOrder(all_sites.value))
 
 /**
  * 展开行要渲染的站点列表。
  * all_discovered_sites 只统计「做种过」的站点，发布过但从未做种的站点（如发布失败、站点已存在）
  * 不在其中；这里把该行 publish_sites 里的站点补进渲染列表，否则这些站点的发布结果在展开行看不到。
  * 参数：row 为列表行。
- * 返回：站点名数组（已排序，做种过的站点保持原顺序在前）。
+ * 返回：站点名数组（已按站点管理顺序排序，做种过的站点在前）。
  */
 const expandedSiteNames = (row: Torrent): string[] => {
   const base = sorted_all_sites.value
@@ -1626,10 +1659,9 @@ const expandedSiteNames = (row: Torrent): string[] => {
   if (published.length === 0) return base
 
   const known = new Set(base.map((site) => site.toLowerCase()))
-  const collator = new Intl.Collator('zh-CN', { numeric: true })
-  const extra = published.filter((site) => !known.has(site.toLowerCase()))
+  const extra = Array.from(new Set(published.filter((site) => !known.has(site.toLowerCase()))))
   if (extra.length === 0) return base
-  return [...base, ...Array.from(new Set(extra)).sort(collator.compare)]
+  return [...base, ...sortSitesByManagedOrder(extra)]
 }
 
 const siteSearch = ref('')
@@ -1987,7 +2019,11 @@ const reseedTaskId = ref('')
 let reseedPollTimer: ReturnType<typeof setInterval> | null = null
 let reseedTaskNotified = false
 // 站点集合按需加载一次并记住失败的 Promise 重置，避免每点一行都请求一次状态接口。
-let reseedTargetsPromise: Promise<{ tokenConfigured: boolean; sites: string[] }> | null = null
+let reseedTargetsPromise: Promise<{
+  tokenConfigured: boolean
+  sites: string[]
+  defaultTags: string[]
+}> | null = null
 
 interface ReseedSiteSummary {
   nickname?: string
@@ -2009,6 +2045,9 @@ const rowReseedHashes = (row: Torrent): string[] => {
   return Array.from(collected)
 }
 
+// 默认标签里的站名占位符写成「站点/站名」给用户看（实际替换由后端按目标站完成）。
+const describeReseedTag = (tag: string) => (tag === '站点/{站点名称}' ? '站点/站名' : tag)
+
 const loadReseedTargets = () => {
   if (!reseedTargetsPromise) {
     reseedTargetsPromise = axios
@@ -2017,14 +2056,20 @@ const loadReseedTargets = () => {
         const data = (response.data ?? {}) as {
           token_configured?: boolean
           sites?: ReseedSiteSummary[]
+          default_tags?: unknown[]
         }
         const sites = Array.isArray(data.sites) ? data.sites : []
+        const rawTags = Array.isArray(data.default_tags) ? data.default_tags : []
         return {
           tokenConfigured: data.token_configured === true,
           sites: sites
             .filter((site) => site.can_reseed !== false)
             .map((site) => String(site.nickname ?? '').trim())
             .filter((name) => name !== ''),
+          // 默认标签来自辅种页保存的全局配置：列表页一键辅种也带上，两个入口口径一致。
+          defaultTags: rawTags
+            .filter((item): item is string => typeof item === 'string' && item.trim() !== '')
+            .map((item) => item.trim()),
         }
       })
       .catch((error: unknown) => {
@@ -2103,9 +2148,13 @@ const reseedRow = async (row: Torrent) => {
       ElMessage.warning('没有可辅种的站点：请先到「设置 → 站点」为站点配置 Cookie / Passkey')
       return
     }
+    const tagHint =
+      targets.defaultTags.length > 0
+        ? `，并打上默认标签「${targets.defaultTags.map(describeReseedTag).join('、')}」`
+        : ''
     try {
       await ElMessageBox.confirm(
-        `将对「${row.name}」向 ${targets.sites.length} 个可辅种站点发起 IYUU 辅种，命中后会把种子加入对应下载器。是否继续？`,
+        `将对「${row.name}」向 ${targets.sites.length} 个可辅种站点发起 IYUU 辅种${tagHint}，命中后会把种子加入对应下载器。是否继续？`,
         '辅种',
         {
           confirmButtonText: '开始辅种',
@@ -2123,7 +2172,7 @@ const reseedRow = async (row: Torrent) => {
       // 指定种子试跑：不再叠加路径/下载器/体积筛选，交由后端按 hash 精确命中。
       paths: [],
       skip_checking: true,
-      tags: [],
+      tags: targets.defaultTags,
       tag_by_site: false,
     })
     if (!response.data?.success) {

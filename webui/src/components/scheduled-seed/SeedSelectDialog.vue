@@ -274,6 +274,7 @@ import type { TableInstance, Sort } from 'element-plus'
 import type { ElTree } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { ensureSiteOrderLoaded, sortSitesByManagedOrder } from '@/utils/siteOrder'
 
 type SeedRow = {
   torrent_id: string
@@ -381,11 +382,8 @@ const downloaderMap = new Map<string, string>()
 const seedSitesCache = new Map<string, string[]>()
 const seedSitesLoading = ref<Set<string>>(new Set())
 
-// 站点筛选的计算属性
-const sortedSites = computed(() => {
-  const collator = new Intl.Collator('zh-CN', { numeric: true })
-  return [...allSites.value].sort(collator.compare)
-})
+// 站点筛选的计算属性：顺序统一按「站点管理」页的排序，与列表页站点筛选保持一致。
+const sortedSites = computed(() => sortSitesByManagedOrder(allSites.value))
 
 const filteredSiteOptions = computed(() => {
   if (!siteSearch.value) return sortedSites.value
@@ -754,10 +752,13 @@ const handleConfirm = () => {
 }
 
 watch(() => props.visible, (val) => {
-  if (!val) {
-    // 关闭时清理选择状态
-    tableRef.value?.clearSelection()
+  if (val) {
+    // 站点筛选的展示顺序依赖「站点管理」排序：打开弹窗时确保顺序缓存已就绪。
+    void ensureSiteOrderLoaded()
+    return
   }
+  // 关闭时清理选择状态
+  tableRef.value?.clearSelection()
 })
 </script>
 

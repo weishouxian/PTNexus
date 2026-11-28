@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
+	"github.com/pt-nexus/server/internal/repository"
 	"github.com/pt-nexus/server/internal/service/downloaderclient"
 	"github.com/pt-nexus/server/internal/service/reversemapping"
 )
@@ -299,7 +300,8 @@ func (s *CrossSeedService) QueryData(params CrossSeedQueryParams) (map[string]an
 		}
 	}
 
-	targetSites, err := s.repo.RawStrings("SELECT nickname FROM sites WHERE migration IN (2, 3) ORDER BY sort_order, nickname", "nickname")
+	// 目标站顺序与「站点管理」页一致：sort_order=0/空视为未排序，排在已排序站点之后。
+	targetSites, err := s.repo.RawStrings("SELECT nickname FROM sites WHERE migration IN (2, 3) ORDER BY CASE WHEN sort_order = 0 OR sort_order IS NULL THEN 1 ELSE 0 END, sort_order, nickname", "nickname")
 	if err != nil {
 		targetSites = []string{}
 	}
@@ -557,6 +559,31 @@ func (s *CrossSeedService) GetSeedSites(torrentName string) (map[string]any, err
 			"site_name": siteName,
 			"nickname":  nickname,
 		})
+	}
+
+	// 站点卡片按「站点管理」页的顺序展示：先取排好的昵称顺序，再映射回站点条目。
+	orderedNames := make([]string, 0, len(sites))
+	for _, item := range sites {
+		orderedNames = append(orderedNames, toString(item["nickname"], ""))
+	}
+	orderedNames = repository.SortSiteNicknamesByPublishOrder(s.repo.DB(), orderedNames)
+	byNickname := make(map[string]map[string]any, len(sites))
+	for _, item := range sites {
+		key := toString(item["nickname"], "")
+		if _, exists := byNickname[key]; !exists {
+			byNickname[key] = item
+		}
+	}
+	if len(orderedNames) == len(sites) {
+		reordered := make([]map[string]any, 0, len(sites))
+		for _, name := range orderedNames {
+			if item, ok := byNickname[name]; ok {
+				reordered = append(reordered, item)
+			}
+		}
+		if len(reordered) == len(sites) {
+			sites = reordered
+		}
 	}
 
 	return map[string]any{

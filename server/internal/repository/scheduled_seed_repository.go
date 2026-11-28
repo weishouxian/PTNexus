@@ -553,7 +553,8 @@ func (r *ScheduledSeedRepository) GetSeedSites(name string) ([]string, error) {
 	).Pluck("sites", &sites).Error; err != nil {
 		return nil, fmt.Errorf("查询种子发布站点失败: %w", err)
 	}
-	return sites, nil
+	// 展开行里的站点标签按「站点管理」页顺序展示，与列表页站点筛选口径一致。
+	return SortSiteNicknamesByPublishOrder(r.store.DB, sites), nil
 }
 
 // ListAvailableSeeds 查询正在做种的可选种子列表（从 seed_parameters 表 JOIN torrents 表）。

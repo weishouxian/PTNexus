@@ -82,6 +82,16 @@ func (m *SchemaManager) EnsureSchema() error {
 		return fmt.Errorf("创建辅种记录表失败: %w", err)
 	}
 
+	// 站点账号数据表（上传量/下载量/等级/做种数等，三方言通用）。
+	if err := NewSiteProfileRepository(m.store).Migrate(); err != nil {
+		return fmt.Errorf("创建站点账号数据表失败: %w", err)
+	}
+
+	// 站点账号日快照表（按天记一份累计值，用于算当天增量：上传/下载/做种积分/魔力值）。
+	if err := NewSiteProfileDailyRepository(m.store).Migrate(); err != nil {
+		return fmt.Errorf("创建站点账号日快照表失败: %w", err)
+	}
+
 	for tableName, columns := range m.columnSpecs() {
 		if err := m.ensureTableColumns(tableName, columns); err != nil {
 			return err

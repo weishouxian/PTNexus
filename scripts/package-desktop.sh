@@ -408,6 +408,29 @@ sync_frontend_dist() {
   sync_frontend_dist_tree "$WEBUI_DIST" "$TARGET_DIST"
 }
 
+# bdinfo_platform_dir 返回 server/bdinfo 下与当前构建目标匹配的子目录名。
+# 单文件 exe 只内嵌本机平台可用的 BDInfo（跨平台构建请同步调整此处）。
+bdinfo_platform_dir() {
+  local os arch
+  os="$(uname -s)"
+  arch="$(uname -m)"
+  case "$os" in
+    MINGW*|MSYS*|CYGWIN*|Windows_NT)
+      echo "windows"
+      ;;
+    Linux)
+      case "$arch" in
+        x86_64|amd64) echo "linux-amd64" ;;
+        aarch64|arm64) echo "linux-arm64" ;;
+        *) echo "" ;;
+      esac
+      ;;
+    *)
+      echo ""
+      ;;
+  esac
+}
+
 # sync_embedded_bundle 把站点清单与站点映射同步到 desktop 内嵌资源目录。
 # 单文件 exe 依赖该目录（go:embed）在无外挂文件时也能完整运行，构建前必须刷新。
 sync_embedded_bundle() {
@@ -435,7 +458,36 @@ sync_embedded_bundle() {
     done < <(cd "$bundle_dir/configs" && find . -type f -print | sed 's|^\./||')
   fi
 
-  printf 'synced-from: server/sites_data.json + server/configs\n' >"$bundle_dir/SOURCE.txt"
+  # 同步 BDInfo 工具目录。
+  # 单文件 exe 没有 sidecar 目录，BDInfo 必须随 bundle 内嵌，否则运行时
+  # resolveBDInfoBinaryPath 找不到可执行文件，会报「未找到 BDInfo 可执行文件」。
+  # 安装包模式（package）由 build/windows/sidecar/bdinfo 提供，主 exe 不重复内嵌。
+  local bdinfo_dir
+  bdinfo_dir=""
+  if [[ "${PTNEXUS_BUNDLE_BDINFO:-0}" == "1" ]]; then
+    bdinfo_dir="$(bdinfo_platform_dir)"
+  fi
+  if [[ -z "$bdinfo_dir" ]]; then
+    # 清理历史残留，避免 package 模式把上百 MB 的 bdinfo 打进主 exe。
+    rm -rf "$bundle_dir/bdinfo"
+    echo "[desktop] embedded bundle: bdinfo 跳过（由 sidecar 提供）"
+  elif [[ -d "$SERVER_ROOT/bdinfo/$bdinfo_dir" ]]; then
+    mkdir -p "$bundle_dir/bdinfo/$bdinfo_dir"
+    cp -R "$SERVER_ROOT/bdinfo/$bdinfo_dir/." "$bundle_dir/bdinfo/$bdinfo_dir/"
+    # 清掉其它平台残留，避免把无关的大二进制带进 exe。
+    local stale_platform
+    for stale_platform in "$bundle_dir"/bdinfo/*/; do
+      [[ -d "$stale_platform" ]] || continue
+      [[ "$(basename "$stale_platform")" == "$bdinfo_dir" ]] && continue
+      rm -rf "$stale_platform"
+      echo "[desktop] embedded bundle: removed stale bdinfo/$(basename "$stale_platform")"
+    done
+    echo "[desktop] embedded bundle: bdinfo/$bdinfo_dir synced"
+  else
+    echo "[desktop] warning: bdinfo not found at $SERVER_ROOT/bdinfo/$bdinfo_dir (BDInfo 功能将不可用)" >&2
+  fi
+
+  printf 'synced-from: server/sites_data.json + server/configs + server/bdinfo\n' >"$bundle_dir/SOURCE.txt"
   echo "[desktop] embedded bundle synced: $bundle_dir"
 }
 
@@ -751,7 +803,8 @@ build_single_exe() {
   require_cmd go
   ensure_cache_root
   prepare_frontend_stage
-  sync_embedded_bundle
+  # 单个 exe 没有 sidecar 目录，BDInfo 必须一起内嵌才能用。
+  PTNEXUS_BUNDLE_BDINFO=1 sync_embedded_bundle
 
   echo "[desktop] building single-file exe (frontend + embedded server)"
   (

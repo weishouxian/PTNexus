@@ -26,6 +26,7 @@ import (
 	"github.com/pt-nexus/server/internal/service/reseed"
 	"github.com/pt-nexus/server/internal/service/scheduledseed"
 	"github.com/pt-nexus/server/internal/service/sitehealth"
+	"github.com/pt-nexus/server/internal/service/siteprofile"
 	"github.com/pt-nexus/server/internal/service/trafficdaily"
 )
 
@@ -201,6 +202,17 @@ func NewApp() (*App, error) {
 	configHandler := handler.NewConfigHandler(settingsService)
 	sitesHandler := handler.NewSitesHandler(siteRepo)
 	sitesHandler.SetSiteHealth(alertRepo, siteHealthService)
+	// 站点账号数据（上传量/下载量/等级/做种数）：从站点侧抓取，和下载器流量统计是两回事。
+	// 第三个仓库是「按天快照」，用来算当天增量（上传/下载/做种积分/魔力值）。
+	siteDataService := siteprofile.NewService(
+		siteRepo,
+		repository.NewSiteProfileRepository(store),
+		repository.NewSiteProfileDailyRepository(store),
+	)
+	siteDataHandler := handler.NewSiteDataHandler(siteDataService)
+	// 站点数据定时刷新：默认关闭，用户在页面顶部设置每天的执行时刻后由后台调度器触发全量抓取。
+	siteDataScheduler := siteprofile.NewScheduler(siteDataService, settingsService)
+	siteDataScheduler.Start()
 	torrentsHandler := handler.NewTorrentsHandler(torrentRepo)
 	torrentDataHandler := handler.NewTorrentDataHandler(torrentDataService)
 	// IYUU 指定站点辅种：以目标站为维度，把本地已做种资源在目标站重新做种。
@@ -253,6 +265,7 @@ func NewApp() (*App, error) {
 		resourceInfoHandler,
 		bangumiHandler,
 		reseedHandler,
+		siteDataHandler,
 	)
 
 	return &App{Engine: engine, trackerWorker: trackerService, dailyWorker: trafficDailyService}, nil
@@ -279,6 +292,7 @@ func registerRoutes(
 	resourceInfoHandler *handler.ResourceInfoHandler,
 	bangumiHandler *handler.BangumiHandler,
 	reseedHandler *handler.ReseedHandler,
+	siteDataHandler *handler.SiteDataHandler,
 ) {
 	engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "服务正常", "service": "pt-nexus-go"})
@@ -303,6 +317,8 @@ func registerRoutes(
 		api.GET("/sites", sitesHandler.Sites)
 		api.POST("/sites/update", sitesHandler.UpdateSite)
 		api.POST("/sites/update_dupe", sitesHandler.UpdateSiteDupe)
+		api.GET("/sites/detail", sitesHandler.SiteDetail)
+		api.POST("/sites/patch", sitesHandler.PatchSite)
 		api.POST("/sites/delete", sitesHandler.DeleteSite)
 		api.POST("/sites/update_cookie", sitesHandler.UpdateSiteCookie)
 		api.POST("/sites/check_cookie", sitesHandler.CheckSiteCookie)
@@ -365,6 +381,7 @@ func registerRoutes(
 		// IYUU 指定站点辅种：状态/启动/进度/停止/记录。
 		api.GET("/reseed/status", reseedHandler.Status)
 		api.POST("/reseed/run", reseedHandler.Run)
+		api.POST("/reseed/default_tags", reseedHandler.SetDefaultTags)
 		api.GET("/reseed/progress", reseedHandler.Progress)
 		api.POST("/reseed/stop", reseedHandler.Stop)
 		api.GET("/reseed/records", reseedHandler.Records)
@@ -461,6 +478,15 @@ func registerRoutes(
 		sitesAPI.POST("/set_not_exist", sitesHandler.SetNotExist)
 		sitesAPI.POST("/update_comment", sitesHandler.UpdateComment)
 		sitesAPI.GET("/status", sitesHandler.SitesStatus)
+		// 站点账号数据：GET 读库（含未抓取的占位行），POST 触发抓取后返回最新结果。
+		sitesAPI.GET("/profiles", siteDataHandler.List)
+		sitesAPI.POST("/profiles/refresh", siteDataHandler.Refresh)
+		// 手动指定保号等级：只改 site_profiles.keep_alive_level 一列，不触发抓取。
+		sitesAPI.POST("/profiles/keep-alive", siteDataHandler.SetKeepAlive)
+		// 当日增量：按天聚合各站点的上传/下载/做种积分/魔力值增量。
+		sitesAPI.GET("/profiles/daily", siteDataHandler.Daily)
+		// 上传增量趋势：按天/按月聚合，供趋势折线图使用。
+		sitesAPI.GET("/profiles/trend", siteDataHandler.Trend)
 	}
 
 	configAPI := engine.Group("/api/config")
@@ -473,8 +499,12 @@ func registerRoutes(
 		configAPI.POST("/cross_seed_review_filter", configHandler.SaveCrossSeedReviewFilter)
 		configAPI.GET("/tags", configHandler.GetTags)
 		configAPI.POST("/tags", configHandler.SaveTags)
-		// 菜单显隐由环境变量控制（默认隐藏），前端启动时读取一次。
+		// 菜单显隐：GET 供前端启动时读取，POST 供设置页保存后即时生效。
 		configAPI.GET("/menu_visibility", configHandler.GetMenuVisibility)
+		configAPI.POST("/menu_visibility", configHandler.SaveMenuVisibility)
+		// 站点数据定时刷新：页面顶部「定时刷新」读写每天执行时刻。
+		configAPI.GET("/site_data_refresh", configHandler.GetSiteDataRefresh)
+		configAPI.POST("/site_data_refresh", configHandler.SaveSiteDataRefresh)
 	}
 
 	scheduledSeedAPI := engine.Group("/api/scheduled-seed")

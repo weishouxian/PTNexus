@@ -400,6 +400,7 @@ import { Setting } from '@element-plus/icons-vue'
 import axios from 'axios'
 import type { ElTree } from 'element-plus'
 import { ElMessage } from '@/utils/uiNotify'
+import { ensureSiteOrderLoaded, sortSitesByManagedOrder } from '@/utils/siteOrder'
 import { useGlobalDownloaderStore } from '@/stores/globalDownloader'
 
 const globalDownloader = useGlobalDownloaderStore()
@@ -795,7 +796,12 @@ const getSourceSites = (sites: Record<string, SiteData>) => {
       sourceSites[siteName] = siteData
     }
   }
-  return sourceSites
+  // 标签顺序按「站点管理」页：对象 key 顺序即渲染顺序，重建一次保证一致。
+  const ordered: Record<string, SiteData> = {}
+  sortSitesByManagedOrder(Object.keys(sourceSites)).forEach((siteName) => {
+    ordered[siteName] = sourceSites[siteName]
+  })
+  return ordered
 }
 
 const openBatchFetchDialog = () => {
@@ -1148,6 +1154,8 @@ watch(
 )
 
 onMounted(async () => {
+  // 站点标签顺序依赖「站点管理」排序，先确保顺序缓存就绪。
+  void ensureSiteOrderLoaded()
   await loadFiltersFromConfig()
   // 下载器范围只由顶部菜单决定：无论顶部是“全部”还是某个下载器，都覆盖配置里保存的旧筛选值。
   await loadGlobalDownloaderSelection()

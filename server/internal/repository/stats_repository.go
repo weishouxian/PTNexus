@@ -945,6 +945,27 @@ func (r *StatsRepository) QuerySiteStats() ([]SiteStatRow, error) {
 	if err := r.store.DB.Raw(query).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
+	// 站点统计的展示顺序与「站点管理」页一致：按昵称取排好的顺序再映射回统计行。
+	if len(rows) > 1 {
+		names := make([]string, 0, len(rows))
+		for _, row := range rows {
+			names = append(names, row.SiteName)
+		}
+		ordered := SortSiteNicknamesByPublishOrder(r.store.DB, names)
+		byName := make(map[string]SiteStatRow, len(rows))
+		for _, row := range rows {
+			byName[row.SiteName] = row
+		}
+		reordered := make([]SiteStatRow, 0, len(rows))
+		for _, name := range ordered {
+			if row, ok := byName[name]; ok {
+				reordered = append(reordered, row)
+			}
+		}
+		if len(reordered) == len(rows) {
+			rows = reordered
+		}
+	}
 	return rows, nil
 }
 

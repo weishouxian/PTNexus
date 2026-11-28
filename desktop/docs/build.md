@@ -10,13 +10,17 @@
 bash scripts/package-desktop.sh single
 ```
 
-产物：`desktop/build/bin/pt-nexus.exe`（约 40 MB）。
+产物：`desktop/build/bin/pt-nexus.exe`（约 180 MB，其中 BDInfo 相关约 140 MB）。
 
 该命令内部完成三件事：
 
 1. `prepare_frontend_stage`：`pnpm -C webui run build` 并把产物同步到 `desktop/frontend/dist`（供 `go:embed`）；
-2. `sync_embedded_bundle`：把 `server/sites_data.json` 与 `server/configs/` 同步到 `desktop/internal/desktopapp/bundle/`（供 `go:embed`）；
+2. `sync_embedded_bundle`：把 `server/sites_data.json`、`server/configs/` 与**当前平台的 `server/bdinfo/<platform>`** 同步到 `desktop/internal/desktopapp/bundle/`（供 `go:embed`）。bdinfo 仅在 `single` 模式同步，安装包模式改用 `build/windows/sidecar/bdinfo`，避免重复内嵌。
 3. `go build -tags desktop,production -ldflags "-w -s"`。
+
+> BDInfo 必须内嵌：单文件模式下服务端通过 `PTNEXUS_BASE_DIR`（= 展开后的 `resources/`）查找 `bdinfo/windows/BDInfo.exe`，
+> 没有 sidecar 目录可依托。缺失时的典型现象是「未找到 BDInfo 可执行文件，请设置 PTNEXUS_BDINFO_PATH 或 PTNEXUS_BDINFO_DIR」。
+> `bundle/bdinfo/` 已在 `desktop/.gitignore` 中排除，不会把上百 MB 二进制提交进仓库。
 
 依赖：仅需要 `go` 与 `pnpm`。**不需要** `wails` CLI、NSIS、`rsync`。
 

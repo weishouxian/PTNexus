@@ -1,1 +1,1 @@
-synced-from: server/sites_data.json + server/configs
+synced-from: server/sites_data.json + server/configs + server/bdinfo

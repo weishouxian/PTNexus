@@ -22,6 +22,14 @@ const (
 	supportedFetchTimeout = 10 * time.Second
 )
 
+// 默认辅种标签存放在全局配置里（不是浏览器本地），这样辅种页保存一次后，
+// 「一种多站」列表里的一键辅种也会带上同一组标签，两个入口口径一致。
+const (
+	defaultTagsConfigKey = "reseed_default_tags"
+	maxDefaultTags       = 20
+	maxDefaultTagRunes   = 64
+)
+
 // Status 返回辅种页初始化所需的状态：Token 是否配置、是否有任务在跑、可选站点与下载器。
 // 站点列表只包含已设置 Cookie 或 Passkey 的站点（site_hidden 回传被剔除的数量），
 // 其中再按 IYUU 是否收录标记 can_reseed / disabled_reason。
@@ -93,10 +101,59 @@ func (s *Service) Status(ctx context.Context) map[string]any {
 		"site_total":           len(sites),
 		"site_hidden":          hiddenNoCredential,
 		"iyuu_site_list_known": supportedKnown,
+		"default_tags":         s.DefaultTags(),
 		"downloaders":          downloaders,
 		"running":              s.running.Load(),
 		"current_task_id":      currentTaskID,
 	}
+}
+
+// DefaultTags 读取全局配置里的默认辅种标签。
+// 参数/返回：无参数；返回清洗后的标签列表（去空/去重/截断），未配置时为空。
+// 标签里允许保留 `{站点名称}` 占位符，执行时按目标站展开成 `站点/财神`。
+// 失败场景：无（配置缺失按空处理）。
+// 副作用：只读配置。
+func (s *Service) DefaultTags() []string {
+	cfg := s.cfg.Get()
+	return normalizeTagList(cfg[defaultTagsConfigKey])
+}
+
+// SetDefaultTags 保存默认辅种标签，传空列表表示清空。
+// 参数/返回：tags 为前端提交的标签；返回保存失败原因。
+// 失败场景：配置写入数据库/文件失败。
+// 副作用：整份配置落库（与设置中心其他保存动作走同一路径）。
+func (s *Service) SetDefaultTags(tags []string) error {
+	cfg := s.cfg.Get()
+	cfg[defaultTagsConfigKey] = normalizeTagList(tags)
+	return s.cfg.Save(cfg)
+}
+
+// normalizeTagList 清洗标签列表：去空白、去重（按小写）、限长与限量。
+// 参数/返回：value 为配置值或前端入参（[]string/[]any）；返回可直接写入下载器的标签。
+// 失败场景：不适用（不认识的类型按空列表处理）。
+// 副作用：无。
+func normalizeTagList(value any) []string {
+	seen := map[string]struct{}{}
+	result := make([]string, 0, 4)
+	for _, item := range toSliceAny(value) {
+		text := strings.TrimSpace(toStringAny(item, ""))
+		if text == "" {
+			continue
+		}
+		if runes := []rune(text); len(runes) > maxDefaultTagRunes {
+			text = string(runes[:maxDefaultTagRunes])
+		}
+		key := strings.ToLower(text)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, text)
+		if len(result) >= maxDefaultTags {
+			break
+		}
+	}
+	return result
 }
 
 // filterCredentialSites 只保留已配置 Cookie 或 Passkey 的站点。
@@ -233,12 +290,20 @@ func (s *Service) Run(payload map[string]any) (map[string]any, int) {
 	if len(params.Sites) == 0 {
 		return map[string]any{"success": false, "message": "请至少选择一个目标站点"}, 400
 	}
+	// 调用方没带 tags 字段（旧页面、脚本、列表页以外的新入口）时沿用页面保存的默认标签；
+	// 显式传空数组仍表示「本次不打标签」，不会被默认值覆盖。
+	if _, provided := payload["tags"]; !provided {
+		params.Tags = s.DefaultTags()
+	}
 	// 目标站必须有 Cookie/Passkey 才能登录站点下载种子：前端已过滤，这里再兜一次，
 	// 避免旧页面/直接调接口时把无凭据站点送到执行器里逐条失败。
-	if invalid := s.missingCredentialSites(params.Sites); len(invalid) > 0 {
+	// 同时把站点顺序重排成「站点管理」页的顺序：任务消息、进度里的站点顺序与页面展示一致。
+	orderedSites, invalidSites := s.prepareTargetSites(params.Sites)
+	params.Sites = orderedSites
+	if len(invalidSites) > 0 {
 		return map[string]any{
 			"success": false,
-			"message": "以下站点未设置 Cookie / Passkey，无法辅种：" + strings.Join(invalid, "、"),
+			"message": "以下站点未设置 Cookie / Passkey，无法辅种：" + strings.Join(invalidSites, "、"),
 			"code":    "site_credential_missing",
 		}, 400
 	}
@@ -291,28 +356,48 @@ func (s *Service) Run(payload map[string]any) (map[string]any, int) {
 	}, 200
 }
 
-// missingCredentialSites 返回入参里「未在 sites 表或未配置 Cookie / Passkey」的站点昵称。
-// 参数/返回：sites 为目标站点昵称列表；返回缺少凭据的站点（全部合格时为空）。
-// 失败场景：数据库读取失败或站点表为空时返回空（不拦截，交给执行器逐条报错）。
+// prepareTargetSites 按「站点管理」页的顺序重排目标站，并挑出未配置 Cookie / Passkey 的站点。
+// 参数/返回：sites 为前端选择的目标站昵称；返回按站点管理顺序排好的列表与缺少凭据的站点。
+// 排序规则与站点管理页一致：sort_order 升序、未排序（0/空）排最后、同序号按昵称；库里没有的站点保持原相对顺序排最后。
+// 失败场景：数据库读取失败或站点表为空时原样返回站点列表、不额外拦截。
 // 副作用：只读数据库。
-func (s *Service) missingCredentialSites(sites []string) []string {
+func (s *Service) prepareTargetSites(sites []string) ([]string, []string) {
 	list, err := s.repo.ListSites()
 	if err != nil || len(list) == 0 {
-		return nil
+		return sites, nil
 	}
+	rank := make(map[string]int, len(list))
 	credential := make(map[string]struct{}, len(list))
-	for _, site := range list {
+	for index, site := range list {
+		key := strings.ToLower(strings.TrimSpace(site.Nickname))
+		if key == "" {
+			continue
+		}
+		if _, exists := rank[key]; !exists {
+			rank[key] = index
+		}
 		if site.HasCookie || site.HasPasskey {
-			credential[site.Nickname] = struct{}{}
+			credential[key] = struct{}{}
 		}
 	}
 	invalid := make([]string, 0, 2)
+	known := make([]string, 0, len(sites))
+	unknown := make([]string, 0, 2)
 	for _, name := range sites {
-		if _, ok := credential[name]; !ok {
+		key := strings.ToLower(strings.TrimSpace(name))
+		if _, ok := credential[key]; !ok {
 			invalid = append(invalid, name)
 		}
+		if _, ok := rank[key]; ok {
+			known = append(known, name)
+		} else {
+			unknown = append(unknown, name)
+		}
 	}
-	return invalid
+	sort.SliceStable(known, func(i, j int) bool {
+		return rank[strings.ToLower(strings.TrimSpace(known[i]))] < rank[strings.ToLower(strings.TrimSpace(known[j]))]
+	})
+	return append(known, unknown...), invalid
 }
 
 // resolveDownloaderName 把下载器 ID 换成配置里的显示名，用于任务消息。

@@ -1914,6 +1914,22 @@
     box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;
   }
 
+  /* 标题含汉字/中文标点：字段名与输入框一起标红，警告条由 .title-charset-alert 承担 */
+  .title-charset-invalid .el-form-item__label {
+    color: var(--el-color-danger);
+    font-weight: 600;
+  }
+  .title-charset-invalid .el-input__wrapper {
+    box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;
+  }
+  .title-charset-invalid .el-input__inner {
+    color: var(--el-color-danger);
+  }
+
+  .title-charset-alert {
+    margin-bottom: 10px;
+  }
+
   /* --- 类型和媒介未选择时的红色提示样式 --- */
   .el-select.is-empty .el-select__wrapper {
     box-shadow: 0 0 0 1px var(--el-color-danger) inset !important;

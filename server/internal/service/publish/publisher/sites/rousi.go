@@ -291,6 +291,11 @@ func rousiFetchSession(client *http.Client, baseURL string, cookie string, userA
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", "", fmt.Errorf("会话接口返回 HTTP %d: %s", resp.StatusCode, summarizeRousiResponseBody(string(body)))
 	}
+	// 站点把「未登录」的响应从 401 改成了 204 空响应（前端 session query 同样按 204 ⇒ 无会话处理），
+	// 继续走 JSON 解析只会抛出「会话接口返回非 JSON: 」这种无从下手的错误，这里归一成 Cookie 失效。
+	if resp.StatusCode == http.StatusNoContent || len(bytes.TrimSpace(body)) == 0 {
+		return "", "", fmt.Errorf("会话 Cookie 无效或已过期（HTTP %d，站点未返回会话内容），请到浏览器重新复制 %s", resp.StatusCode, rousiSessionCookieName)
+	}
 
 	payload := map[string]any{}
 	if err := json.Unmarshal(body, &payload); err != nil {

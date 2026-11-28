@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,8 +30,6 @@ const (
 	moduleAutoSeed         = "自动发种"
 	minDownloaderFreeBytes = int64(10 * 1024 * 1024 * 1024)
 )
-
-var autoSeedEpisodePattern = regexp.MustCompile(`(?i)(?:\bs\d{1,3}e\d{1,4}\b|\bep\d{1,4}\b|第\s*\d{1,4}\s*集)`)
 
 // rewriteTorrentCommentIfNeeded 在本地 .torrent 文件存在时，把详情页地址写入其 comment 字段，
 // 以便后续下载器同步时能通过 extractDetailFromComment 解析出 details。保持 infohash 不变。
@@ -1453,33 +1450,23 @@ func rejectReason(rule *repository.AutoSeedRule, item *repository.AutoSeedItem) 
 
 // restrictedTagRejectReason 判断自动发种条目是否因受限标签被拒绝下载。
 //
-// 「禁转」「限转」一律不允许下载 —— 这是转种合规红线，与分集开关无关。
-// 「分集」则由全局总开关 ALLOW_EPISODE_PUBLISH 裁决：
-//   - 关闭（默认）⇒ 分集条目不下载，避免下载一堆无法发布的分集资源；
-//   - 开启 ⇒ 允许下载，后续发布仍要逐站判断（目标站的 sites_data.json allow_episode_publish）。
+// 「禁转」「限转」一律不允许下载 —— 这是转种合规红线。
+// 「分集」不再在这里拦截：分集能否发布只看目标站的 sites_data.json allow_episode_publish，
+// 下载阶段尚无目标站概念，拦下来只会让站点开了分集也拿不到资源。
 //
-// 这里只做「是否下载」的判断，不涉及发布；因此不看具体站点配置（此时尚无目标站）。
+// 这里只做「是否下载」的判断，不涉及发布。
 func restrictedTagRejectReason(item *repository.AutoSeedItem) string {
 	if item == nil {
 		return ""
 	}
-	allowEpisode := config.AllowsEpisodePublish()
 	for _, rawTag := range parseJSONStrings(item.TagsJSON) {
 		tag := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(rawTag), "tag."))
-		for _, restricted := range []string{"分集", "禁转", "限转"} {
+		for _, restricted := range []string{"禁转", "限转"} {
 			if !strings.Contains(tag, restricted) {
-				continue
-			}
-			// 分集开关打开时放行分集标签；禁转/限转不受影响。
-			if restricted == "分集" && allowEpisode {
 				continue
 			}
 			return fmt.Sprintf("因%s标签不允许下载", restricted)
 		}
-	}
-	// RSS 标题带集号（S01E03 / EP03 / 第3集）同样按分集处理。
-	if autoSeedEpisodePattern.MatchString(item.Name) && !allowEpisode {
-		return "因分集标签不允许下载"
 	}
 	return ""
 }
@@ -1508,16 +1495,16 @@ func shouldRetryAutoSeedItem(item *repository.AutoSeedItem) bool {
 // isRetryableAutoSeedRejectReason 判断失败原因是否属于可通过修复配置后恢复的错误。
 // 参数/返回：reason 为自动发种记录的失败原因；返回 true 表示下一轮 RSS 可以重新处理。
 // 失败场景：空原因或明确的规则过滤原因不允许重试。
-// 说明：历史因分集被拒的条目，只有在全局总开关已打开时才允许重试 ——
-// 开关仍关闭时重试只会被同样理由再拒一次，白白多抓一次详情。
+// 说明：历史上因分集被拒的条目允许重试 —— 分集已不受全局开关限制，
+// 现在只会因目标站未开启 allow_episode_publish 在发布阶段被拦。
 // 副作用：无。
 func isRetryableAutoSeedRejectReason(reason string) bool {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return false
 	}
-	// 分集拒绝：开关打开后才值得重试（否则必然再次被拒）。
-	if strings.Contains(reason, "因分集标签不允许下载") && config.AllowsEpisodePublish() {
+	// 历史分集拒绝记录：现在下载阶段不再拦分集，重试不会被同样理由再拒一次。
+	if strings.Contains(reason, "因分集标签不允许下载") {
 		return true
 	}
 	for _, marker := range []string{

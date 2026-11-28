@@ -16,7 +16,10 @@ dupe_check:
     imdb: "4"
     title: "0"
   param_templates:
-    type: "cat{value}"
+    # ⚠️ 我堡搜索页的类型参数是 `cat=401`（参数名 cat、值 401），不是其它站的 `cat401=1`（值嵌参数名）。
+    # 故这里写 `cat`（不带 {value} 占位符），让 401 作为参数值提交；写成 `cat{value}` 会生成
+    # `cat401=1`，我堡不认这个参数名、类型筛选静默失效（实测 cat401=1 返回数与无类型筛选相同）。
+    type: "cat"
     medium: "medium[]"
     resolution: "standard[]"
     video_codec: "codec[]"

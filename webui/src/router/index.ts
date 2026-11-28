@@ -57,6 +57,11 @@ const router = createRouter({
       component: () => import('../views/SitesView.vue'),
     },
     {
+      path: '/site-data',
+      name: 'site-data',
+      component: () => import('../views/SiteDataView.vue'),
+    },
+    {
       path: '/resource-info',
       name: 'resource-info',
       component: () => import('../views/ResourceInfoView.vue'),
@@ -86,6 +91,11 @@ const router = createRouter({
           path: 'cookie',
           name: 'settings-cookie',
           component: () => import('../components/settings/SitesSettings.vue'),
+        },
+        {
+          path: 'menu',
+          name: 'settings-menu',
+          component: () => import('../components/settings/MenuVisibilitySettings.vue'),
         },
       ],
     },

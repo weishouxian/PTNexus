@@ -75,4 +75,4 @@ offer:
     seeding_env: "seeding_env"
   static:
     # 候选页要求填做种条件，按自己的保种承诺填写
-    seeding_env: "7x24小时在线"
+    seeding_env: "24小时在线"

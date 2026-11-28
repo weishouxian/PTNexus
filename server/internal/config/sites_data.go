@@ -21,33 +21,14 @@ type SitesDataRow struct {
 	Migration int    `json:"migration"`
 }
 
-// EnvAllowEpisodePublish 是「分集发布」全局总开关的环境变量名。
-//
-// 它是整个应用能否处理分集资源的第一道闸门，取值口径与项目既有环境变量一致
-// （UPLOAD_TEST_MODE / DEV_ENV 等都是 os.Getenv(x) == "true"）。
-//
-// 影响面（两处消费方，都以此为准，不要各写一份）：
-//  1. 自动发种下载：为 false 时带「分集」标签/RSS 标题含集号的条目一律不下载；
-//  2. 人工/队列发布：为 false 时任何站点都不允许发分集，
-//     为 true 时还要再看目标站点的 sites_data.json allow_episode_publish。
-const EnvAllowEpisodePublish = "ALLOW_EPISODE_PUBLISH"
-
-// AllowsEpisodePublish 读取分集发布的全局总开关。
-// 参数/返回：无；返回环境变量是否等于 "true"。
-// 说明：fail-closed —— 只有显式等于 "true" 才算开启；空值、1、yes 等一律视为关闭，
-// 这样即便 .env 漏配或拼错，也不会意外放开分集资源。
-// 副作用：无（进程启动后环境变量不再变化，无需缓存）。
-func AllowsEpisodePublish() bool {
-	return os.Getenv(EnvAllowEpisodePublish) == "true"
-}
-
 // SiteAllowsEpisodePublish 读取站点在 sites_data.json 中声明的分集发布开关。
 // 参数/返回：siteCode 为站点标识（大小写不敏感，可传 site 或 nickname）；返回是否允许分集发布。
 //
 // 说明：
-//  1. 默认 false —— JSON 没写该字段即为「不允许分集发布」（fail-closed）；
-//  2. 匹配顺序与 SyncSitesFromJSON 一致：先按 site（统一小写）匹配，再按 nickname（原样）匹配；
-//  3. 读文件失败同样按 false 处理 —— 配置不可读时不得放行。
+//  1. 分集发布只由站点级开关裁决，没有全局环境变量兜底；
+//  2. 默认 false —— JSON 没写该字段即为「不允许分集发布」（fail-closed）；
+//  3. 匹配顺序与 SyncSitesFromJSON 一致：先按 site（统一小写）匹配，再按 nickname（原样）匹配；
+//  4. 读文件失败同样按 false 处理 —— 配置不可读时不得放行。
 //
 // 副作用：每次调用都会读一次 sites_data.json。该文件仅在发布时查询，
 // 读取开销可忽略；这样修改 JSON 后无需重启服务即可生效。

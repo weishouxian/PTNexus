@@ -323,6 +323,12 @@ export interface CrossSeedPanelContext {
   isEnqueueing: Ref<boolean>
   isNextButtonDisabled: ComputedRef<boolean>
   nextButtonTooltipContent: ComputedRef<string>
+  /** 按当前标题组件重拼的发布标题（发布前字符集校验用）。 */
+  publishTitlePreview: ComputedRef<string>
+  /** 发布标题里出现的中文字符（去重）；非空即禁止发种，UI 需标红。 */
+  titleChineseChars: ComputedRef<string[]>
+  /** 标题含中文时的警告文案（无问题为空串）。 */
+  titleChineseWarning: ComputedRef<string>
   isScrolledToBottom: Ref<boolean>
   handleCancelClick: () => void
   goToPublishPreviewStep: () => void

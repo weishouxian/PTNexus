@@ -64,6 +64,25 @@ func toSlice(value any) []any {
 	return []any{}
 }
 
+// toStringSlice 把配置里的数组（[]any / []string）转成字符串切片，空值返回 nil。
+// 用途：多值配置（站点数据定时刷新的多个时间点）落 JSON 后再读回来是 []any。
+func toStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		result := make([]string, 0, len(typed))
+		for _, item := range typed {
+			if text := toString(item, ""); text != "" {
+				result = append(result, text)
+			}
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
 func toString(value any, fallback string) string {
 	if value == nil {
 		return fallback

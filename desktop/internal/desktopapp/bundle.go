@@ -57,15 +57,49 @@ func MaterializeBundledResources(userBaseDir string) (string, error) {
 			return os.MkdirAll(dest, 0o755)
 		}
 
+		// bdinfo 是上百 MB 的可执行文件，内容随版本稳定。已展开且大小一致时跳过重写，
+		// 否则每次启动都要重写整个 bdinfo 目录，首屏会明显变慢。
+		// 站点映射（configs/sites_data.json）仍全量覆盖，确保默认值永远跟随 exe 版本。
+		if isBDInfoBundlePath(path) {
+			if info, infoErr := entry.Info(); infoErr == nil {
+				if existing, ok := fileSize(dest); ok && existing == info.Size() {
+					return nil
+				}
+			}
+		}
+
 		payload, readErr := fs.ReadFile(root, path)
 		if readErr != nil {
 			return readErr
 		}
-		return os.WriteFile(dest, payload, 0o644)
+		return os.WriteFile(dest, payload, bundleFilePerm(path))
 	})
 	if walkErr != nil {
 		return "", fmt.Errorf("materialize bundled resources failed: %w", walkErr)
 	}
 
 	return target, nil
+}
+
+// isBDInfoBundlePath 判断内嵌路径是否属于 BDInfo 工具目录。
+func isBDInfoBundlePath(path string) bool {
+	return path == "bdinfo" || strings.HasPrefix(path, "bdinfo/") || strings.HasPrefix(path, "bdinfo\\")
+}
+
+// bundleFilePerm 返回内嵌文件展开后的权限。
+// bdinfo 下是可直接执行的外部程序，补上可执行位；其余资源保持只读。
+func bundleFilePerm(path string) os.FileMode {
+	if isBDInfoBundlePath(path) {
+		return 0o755
+	}
+	return 0o644
+}
+
+// fileSize 返回文件大小；不存在或是目录时返回 false。
+func fileSize(path string) (int64, bool) {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return 0, false
+	}
+	return info.Size(), true
 }

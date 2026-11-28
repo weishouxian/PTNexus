@@ -38,6 +38,8 @@ type Params struct {
 	// 此时忽略体积下限与数量上限，避免用户明确选了种子却被静默过滤掉。
 	Hashes []string `json:"hashes"`
 	// Tags 为加入下载器时写入的标签（qB 的 tags / Transmission 的 labels），为空表示不打标签。
+	// 标签里的 `{站点名称}` 会被替换成当前目标站名，因此默认标签可以存 `站点/{站点名称}`
+	// 这类动态标签（见 executor.expandSiteNameTag）。
 	Tags []string `json:"tags"`
 	// TagBySite 为 true 时在每个种子的标签里额外加上「站点/目标站名」，
 	// 与设置中心「下载器标签/分类设置」的站点标签同一口径，便于统一筛选。

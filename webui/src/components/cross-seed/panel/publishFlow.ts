@@ -3,6 +3,8 @@ import axios from 'axios'
 import { ElMessageBox } from 'element-plus'
 import { ElNotification } from '@/utils/uiNotify'
 import { openSSE, type EventSourceLike } from '@/desktop/sse'
+import { findChineseChars } from '@/utils/titleCharset'
+import { buildPreviewTitleWithAudio } from './audioTitlePreview'
 
 import type {
   AutoAddResult,
@@ -95,6 +97,12 @@ export type PublishFlowApi = {
   handleTagClose: (tag: string) => void
   isNextButtonDisabled: ComputedRef<boolean>
   nextButtonTooltipContent: ComputedRef<string>
+  /** 按当前标题组件重拼的发布标题（发布前字符集校验用）。 */
+  publishTitlePreview: ComputedRef<string>
+  /** 发布标题里出现的中文字符（去重）；非空即禁止发种。 */
+  titleChineseChars: ComputedRef<string[]>
+  /** 标题含中文时的警告文案（无问题为空串）。 */
+  titleChineseWarning: ComputedRef<string>
   publishWaveSummary: ComputedRef<PublishWaveSummary | null>
   groupedResults: ComputedRef<PublishDisplayResult[][]>
   showSiteLog: (siteName: string, logs: string | undefined) => void
@@ -907,7 +915,21 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     return initialRestrictedTags.value.some((tag) => isTransferRestrictedTag(tag))
   }
 
+  // 发布/入队前的标题字符集门禁：标题含中文直接拒绝，不发起任何请求。
+  const ensureTitleCharsetOk = (): boolean => {
+    if (titleChineseChars.value.length === 0) return true
+    ElNotification.error({
+      title: '标题含中文字符，禁止发种',
+      message: titleChineseWarning.value,
+      duration: 5000,
+      showClose: true,
+    })
+    return false
+  }
+
   const handlePublish = async () => {
+    if (!ensureTitleCharsetOk()) return
+
     // 受限标签确认
     const confirmed = await confirmRestrictedTags()
     if (!confirmed) return
@@ -925,6 +947,7 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
 
   const handleEnqueue = async () => {
     if (isEnqueueing.value || isLoading.value) return
+    if (!ensureTitleCharsetOk()) return
     if (selectedTargetSites.value.length === 0) {
       ElNotification.warning({ title: '提示', message: '请先选择要发布的目标站点。' })
       return
@@ -1121,6 +1144,23 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     return tags?.filter((tag) => tag && typeof tag === 'string' && tag.trim() !== '') || []
   })
 
+  // 按当前标题组件重拼出来的发布标题（音频取组件里的原值，不做多音轨替换）。
+  // 用途：发布前校验标题字符集，和后端 BuildPreviewTitleFromTitleComponents 口径一致。
+  const publishTitlePreview = computed(() =>
+    buildPreviewTitleWithAudio(torrentData.value.title_components || [], ''),
+  )
+
+  // 标题里出现的中文字符（汉字/中文标点）。非空即标红并禁止发种。
+  const titleChineseChars = computed(() => findChineseChars(publishTitlePreview.value))
+
+  // 标题含中文时的警告文案，供详情页/预览页/按钮提示复用。
+  const titleChineseWarning = computed(() => {
+    const chars = titleChineseChars.value
+    if (chars.length === 0) return ''
+    const shown = chars.slice(0, 8).join(' ')
+    return `发布标题含中文字符「${shown}${chars.length > 8 ? ' …' : ''}」，请改成纯英文标题后再发布`
+  })
+
   // 【新增】计算属性：专门用于找出并返回所有格式不正确的标签列表
   const invalidTagsList = computed(() => {
     // 定义支持中文和连字符的灵活正则表达式
@@ -1253,6 +1293,11 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
       return true
     }
 
+    // 1.6 标题必须为纯英文：命中汉字/中文标点一律禁止发种
+    if (titleChineseChars.value.length > 0) {
+      return true
+    }
+
     // 2. 检查禁转标签（仅警告，不阻止继续）
 
     // 3. 【新增】检查简介、海报、截图是否为空
@@ -1347,6 +1392,11 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     )
     if (!yearComponent || !yearComponent.value || yearComponent.value.trim() === '') {
       return '年份不能为空'
+    }
+
+    // 1.6 标题必须为纯英文：命中汉字/中文标点一律禁止发种
+    if (titleChineseChars.value.length > 0) {
+      return titleChineseWarning.value
     }
 
     // 3. 检查制作组是否为空或为NOGROUP
@@ -1991,6 +2041,9 @@ export function createPublishFlow(deps: PublishFlowDeps): PublishFlowApi {
     handleTagClose,
     isNextButtonDisabled,
     nextButtonTooltipContent,
+    publishTitlePreview,
+    titleChineseChars,
+    titleChineseWarning,
     publishWaveSummary,
     groupedResults,
     showSiteLog,

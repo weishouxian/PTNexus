@@ -4,6 +4,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"strings"
+	"unicode"
 
 	"github.com/pt-nexus/server/internal/config"
 	"github.com/pt-nexus/server/internal/platform/logx"
@@ -16,18 +17,6 @@ import (
 )
 
 const publishDetailsLogModule = "发布-详情回写"
-
-// EnvAllowEpisodePublish 是分集发布全局总开关的环境变量名。
-// 常量本体已下沉到 config 包（自动发种侧也要用），这里保留别名仅为兼容既有测试与调用方。
-// 新增用法请直接调用 config.AllowsEpisodePublish()。
-const EnvAllowEpisodePublish = config.EnvAllowEpisodePublish
-
-// globalAllowsEpisodePublish 读取分集发布的全局总开关（委托 config 包，保持单一真源）。
-// 参数/返回：无；返回环境变量是否为 true。
-// 说明：fail-closed —— 只有显式等于 "true" 才算开启。
-func globalAllowsEpisodePublish() bool {
-	return config.AllowsEpisodePublish()
-}
 
 // PublishExecutionInput 定义单站发布执行输入。
 type PublishExecutionInput struct {
@@ -160,30 +149,14 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 			otherTags = append(otherTags, tag)
 		}
 		if len(episodeTags) > 0 {
-			// 分集发布是两级门禁，缺一不可：
-			//   ① 环境变量 ALLOW_EPISODE_PUBLISH —— 全局总开关。
-			//      未配置/非 true ⇒ 整个应用一律禁止分集发布（默认关闭，fail-closed）。
-			//   ② sites_data.json 的 allow_episode_publish —— 目标站点的开关。
-			//      不配置 / false ⇒ 该站一律禁止；只有显式写 true 才允许。
-			// 两级都为 true 才放行；任一为 false 都拦截。
+			// 分集发布只由站点级开关裁决：
+			//   sites_data.json 的 allow_episode_publish —— 目标站显式写 true 才允许；
+			//   不配置 / false 一律拦截（fail-closed）。
 			siteCode := strings.TrimSpace(toStringAny(targetInfo["site"], strings.ToLower(targetSite)))
-			envAllows := globalAllowsEpisodePublish()
-			jsonAllows := config.SiteAllowsEpisodePublish(siteCode)
-
-			if !envAllows || !jsonAllows {
-				var message string
-				if !envAllows {
-					message = fmt.Sprintf(
-						"🚫 发布前标签限制: 检测到分集标签 %v，当前未开启分集发布功能",
-						episodeTags,
-					)
-				} else {
-					message = fmt.Sprintf(
-						"🚫 发布前标签限制: 检测到分集标签，不允许分集发布",
-					)
-				}
-				logx.Infof("发布-分集限制", "拦截发布 target=%s code=%s tags=%v env允许=%v json允许=%v",
-					targetNickname, siteCode, episodeTags, envAllows, jsonAllows)
+			if !config.SiteAllowsEpisodePublish(siteCode) {
+				message := "🚫 发布前标签限制: 检测到分集标签，目标站未开启分集发布"
+				logx.Infof("发布-分集限制", "拦截发布 target=%s code=%s tags=%v 站点允许=false",
+					targetNickname, siteCode, episodeTags)
 				return map[string]any{
 					"success":       false,
 					"logs":          message,
@@ -193,7 +166,7 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 					"url":           nil,
 				}, 200
 			}
-			logx.Infof("发布-分集限制", "全局开关与站点配置均已开启，放行 target=%s code=%s", targetNickname, siteCode)
+			logx.Infof("发布-分集限制", "站点配置已开启分集发布，放行 target=%s code=%s", targetNickname, siteCode)
 		}
 		if len(otherTags) > 0 && !skipRestrictedCheck {
 			message := fmt.Sprintf("🚫 发布前标签限制: 检测到禁转/限转标签 %v", otherTags)
@@ -250,6 +223,18 @@ func ExecutePublish(input PublishExecutionInput, deps PublishExecutionDeps) (map
 	}
 	if resolvedDownloaderID == "" {
 		return buildPreCheckFailure("缺少有效 downloaderId，已停止发布")
+	}
+
+	// 标题字符集门禁：发布标题只接受英文，出现汉字/中文标点直接拦截。
+	// 放在这里而不是各站点适配器里 —— 单站发布、批量转种、下载器队列与定时发种
+	// 全部汇聚到 ExecutePublish，一处拦截即可覆盖所有入口；候选模式的标题同样要提交，
+	// 一并按同一口径拦下，避免发布后被站点拒绝或判为垃圾种。
+	if publishTitle := strings.TrimSpace(toStringAny(uploadData["title"], "")); publishTitle != "" {
+		if hits := chineseTitleChars(publishTitle); len(hits) > 0 {
+			reason := fmt.Sprintf("发布标题含中文字符「%s」，请改成纯英文标题后再发布", string(hits))
+			logx.Infof("发布-标题字符集", "拦截发布 target=%s chars=%s", targetNickname, string(hits))
+			return buildPreCheckFailure(reason)
+		}
 	}
 
 	publishURL, directDownloadURL, logs, isExistingTorrent, uploadFormFields, publishErr := PublishTorrentToTarget(
@@ -633,4 +618,54 @@ func payloadBoolFlag(source map[string]any, key string) bool {
 	default:
 		return false
 	}
+}
+
+// chineseTitleChars 返回发布标题中出现的中文字符（去重，最多 8 个）。
+//
+// 口径：Unicode 汉字（含扩展 A 与兼容区）+ 常见中文标点，
+// 与前端 webui/src/utils/titleCharset.ts 保持一致，避免前后端判定不同步。
+// 参数：title 为待发布的标题；返回命中的字符，空切片表示标题可发布。
+// 副作用：无。
+func chineseTitleChars(title string) []rune {
+	if strings.TrimSpace(title) == "" {
+		return nil
+	}
+	hits := make([]rune, 0, 8)
+	seen := make(map[rune]struct{}, 8)
+	for _, r := range title {
+		if !isChineseTitleRune(r) {
+			continue
+		}
+		if _, ok := seen[r]; ok {
+			continue
+		}
+		seen[r] = struct{}{}
+		hits = append(hits, r)
+		if len(hits) >= 8 {
+			break
+		}
+	}
+	return hits
+}
+
+// isChineseTitleRune 判断单个字符是否属于「中文标题禁用字符」。
+// 参数：r 为待判断字符。
+// 返回：汉字或中文标点返回 true。
+// 副作用：无。
+func isChineseTitleRune(r rune) bool {
+	switch r {
+	case '\u3001', '\u3002', '\u30FB', // 、。・
+		'\uFF01', '\uFF08', '\uFF09', '\uFF0C', '\uFF1A', '\uFF1B', '\uFF1F', // ！（），：；？
+		'\u2014', '\u2026', '\u00B7': // —…·
+		return true
+	}
+	switch {
+	case r >= 0x3008 && r <= 0x3011: // 〈〉《》「」『』【】
+		return true
+	case r >= 0x3014 && r <= 0x3015: // 〔〕
+		return true
+	case r >= 0x301D && r <= 0x301F: // 〝〞〟
+		return true
+	}
+	return unicode.Is(unicode.Han, r)
 }

@@ -18,6 +18,22 @@ func NewSiteRepository(store *Store) *SiteRepository {
 	return &SiteRepository{store: store}
 }
 
+// siteManagedOrderBy 返回与「站点管理」页一致的站点排序子句。
+// 规则：sort_order 升序；sort_order=0 / NULL 视为未排序，排在所有已排序站点之后；同序号按昵称。
+// 参数：prefix 为表别名（如 "s"），无别名时传空串。
+// 返回：可直接拼进 ORDER BY 的片段。
+// 注意：凡是给前端渲染站点列表 / 站点选项的查询都必须走这里，否则用户看到的顺序会和站点管理页对不上。
+func siteManagedOrderBy(prefix string) string {
+	p := ""
+	if prefix != "" {
+		p = prefix + "."
+	}
+	return fmt.Sprintf(
+		"CASE WHEN %[1]ssort_order = 0 OR %[1]ssort_order IS NULL THEN 1 ELSE 0 END, %[1]ssort_order, %[1]snickname",
+		p,
+	)
+}
+
 func (r *SiteRepository) ListSourceAndTargetSites() ([]string, []string, error) {
 	sqlDB, err := r.store.DB.DB()
 	if err != nil {
@@ -35,8 +51,7 @@ func (r *SiteRepository) ListSourceAndTargetSites() ([]string, []string, error) 
 			(cookie IS NOT NULL AND cookie != '')
 			OR (passkey IS NOT NULL AND passkey != '')
 		)
-		ORDER BY sort_order, nickname
-	`)
+		ORDER BY ` + siteManagedOrderBy(""))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -54,8 +69,7 @@ func (r *SiteRepository) ListSourceAndTargetSites() ([]string, []string, error) 
 	targetRows, err := sqlDB.Query(`
 		SELECT nickname FROM sites
 		WHERE (migration = 2 OR migration = 3)
-		ORDER BY sort_order, nickname
-	`)
+		ORDER BY ` + siteManagedOrderBy(""))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -111,10 +125,11 @@ func (r *SiteRepository) ListSites(filterByTorrents string) ([]map[string]any, e
 			`, selectFields)
 		}
 	} else {
+		// 与「站点管理」页一致：sort_order=0/空视为未排序，排在已排序站点之后。
 		if r.store.DBType == "mysql" {
-			query = fmt.Sprintf("SELECT %s FROM sites s ORDER BY s.sort_order, s.nickname COLLATE utf8mb4_unicode_ci", selectFields)
+			query = fmt.Sprintf("SELECT %s FROM sites s ORDER BY CASE WHEN s.sort_order = 0 OR s.sort_order IS NULL THEN 1 ELSE 0 END, s.sort_order, s.nickname COLLATE utf8mb4_unicode_ci", selectFields)
 		} else {
-			query = fmt.Sprintf("SELECT %s FROM sites s ORDER BY s.sort_order, s.nickname", selectFields)
+			query = fmt.Sprintf("SELECT %s FROM sites s ORDER BY %s", selectFields, siteManagedOrderBy("s"))
 		}
 	}
 
@@ -250,6 +265,122 @@ func (r *SiteRepository) UpdateSiteDetails(data map[string]any) (bool, error) {
 	return r.siteExists(siteID)
 }
 
+// sitePatchField 描述「站点数据页就地编辑」允许更新的单个列及其取值转换。
+type sitePatchField struct {
+	Column string
+	Value  func(any) any
+}
+
+// sitePatchFields 是站点数据页编辑弹窗的列白名单（顺序即 SET 子句顺序）。
+//
+// ⚠️ 必须走白名单：sites 表上的 dupe_rules / tags / forbidden_transfer_sites / dupe_size_tolerance_bytes
+// 等只有「站点管理」页才该编辑，如果按全量 UPDATE 提交（UpdateSiteDetails 的行为），
+// 弹窗里没展示的配置会被一并写成默认值 —— 那等于「改个 Cookie 把查重规则和标签全清了」。
+var sitePatchFields = []sitePatchField{
+	{Column: "nickname", Value: func(value any) any { return strings.TrimSpace(toString(value, "")) }},
+	{Column: "base_url", Value: func(value any) any { return strings.TrimSpace(toString(value, "")) }},
+	{Column: "special_tracker_domain", Value: func(value any) any { return strings.TrimSpace(toString(value, "")) }},
+	{Column: "cookie", Value: func(value any) any { return strings.TrimSpace(toString(value, "")) }},
+	{Column: "passkey", Value: func(value any) any { return strings.TrimSpace(toString(value, "")) }},
+	{Column: "can_publish", Value: func(value any) any { return boolInt(value, 1) }},
+	{Column: "check_cookie_enabled", Value: func(value any) any { return boolInt(value, 1) }},
+	{Column: "publish_mode", Value: func(value any) any { return normalizeSitePublishMode(value) }},
+	{Column: "sort_order", Value: func(value any) any { return toIntWithDefault(value, 0) }},
+	{Column: "speed_limit", Value: func(value any) any { return toIntWithDefault(value, 0) }},
+	{Column: "seed_speed_limit", Value: func(value any) any { return toIntWithDefault(value, 5) }},
+	{Column: "ratio_threshold", Value: func(value any) any {
+		parsed := toFloat64WithDefault(value, 3.0)
+		if parsed <= 0 {
+			return 3.0
+		}
+		return parsed
+	}},
+}
+
+// ErrNoPatchField 表示局部更新请求里没有携带任何可更新字段（属于请求错误，不是服务端故障）。
+var ErrNoPatchField = errors.New("no updatable field")
+
+// boolInt 把开关值归一成 0/1；缺省（null / 无法解析）按 fallback。
+func boolInt(value any, fallback int) int {
+	if toIntWithDefault(value, fallback) == 0 {
+		return 0
+	}
+	return 1
+}
+
+// GetSiteDetail 按站点标识（site 代码，兼容昵称）返回该站点的完整配置行。
+// 参数/返回：code 为 sites.site 或 sites.nickname；返回该行全部列（含 Cookie / Passkey），找不到返回 nil。
+// 失败场景：标识为空、SQL 执行失败。
+// 副作用：无。
+func (r *SiteRepository) GetSiteDetail(code string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" {
+		return nil, errors.New("empty site code")
+	}
+	sqlDB, err := r.store.DB.DB()
+	if err != nil {
+		return nil, err
+	}
+	// site 代码是主键式标识；昵称只作兼容（历史接口有按昵称定位的调用）。
+	rows, err := sqlDB.Query(
+		"SELECT * FROM sites WHERE site = ? OR nickname = ? ORDER BY CASE WHEN site = ? THEN 0 ELSE 1 END LIMIT 1",
+		trimmed, trimmed, trimmed,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items, err := rowsToMaps(rows)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
+	}
+	return items[0], nil
+}
+
+// PatchSiteDetails 只更新 payload 里出现的白名单字段（站点数据页「编辑站点」弹窗用）。
+// 参数/返回：code 为站点标识；data 为请求体；返回是否命中站点。
+// 失败场景：标识为空、没有任何可更新字段、SQL 执行失败。
+// 副作用：更新 sites 表对应行；未提交的列保持原值。
+func (r *SiteRepository) PatchSiteDetails(code string, data map[string]any) (bool, error) {
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" {
+		return false, errors.New("empty site code")
+	}
+	sets := make([]string, 0, len(sitePatchFields))
+	args := make([]any, 0, len(sitePatchFields)+1)
+	for _, field := range sitePatchFields {
+		raw, exists := data[field.Column]
+		if !exists {
+			continue
+		}
+		sets = append(sets, field.Column+" = ?")
+		args = append(args, field.Value(raw))
+	}
+	if len(sets) == 0 {
+		return false, ErrNoPatchField
+	}
+	args = append(args, trimmed)
+	sql := fmt.Sprintf("UPDATE sites SET %s WHERE site = ?", strings.Join(sets, ", "))
+	if err := r.store.DB.Exec(sql, args...).Error; err != nil {
+		return false, err
+	}
+	return r.siteExistsByCode(trimmed)
+}
+
+// siteExistsByCode 判断站点标识是否存在。
+// 说明：RowsAffected 在「提交值与库内完全相同」时为 0（MySQL 默认不开 CLIENT_FOUND_ROWS），
+// 不能拿它判断存在性，否则「打开弹窗不改直接保存」会被误报成站点不存在。
+func (r *SiteRepository) siteExistsByCode(code string) (bool, error) {
+	var count int64
+	if err := r.store.DB.Table("sites").Where("site = ?", code).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
 // siteExists 判断站点主键是否存在。
 // 参数/返回：siteID 为 sites.id；返回是否存在与错误。
 // 副作用：无。
@@ -376,7 +507,7 @@ func (r *SiteRepository) SitesStatus() ([]map[string]any, error) {
 	// 排序与「站点管理」页保持一致：sort_order=0 视为未排序，排在所有已排序站点之后。
 	// 站点选择按钮的渲染顺序取自这里，必须和批量发布的目标站顺序（SortSiteNicknamesByPublishOrder）同源，
 	// 否则用户看到的按钮顺序与真实发布顺序对不上。
-	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, publish_mode, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY CASE WHEN sort_order = 0 THEN 1 ELSE 0 END, sort_order, nickname")
+	rows, err := sqlDB.Query("SELECT nickname, site, base_url, cookie, passkey, migration, can_publish, publish_mode, forbidden_transfer_sites, dupe_check_enabled, dupe_size_tolerance_bytes, tags, sort_order FROM sites ORDER BY " + siteManagedOrderBy(""))
 	if err != nil {
 		return nil, err
 	}
